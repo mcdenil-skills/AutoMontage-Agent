@@ -617,6 +617,8 @@ default/explicit пути, сохранение прежних ignore-прави
 отсутствие частичных файлов при сбое fsync/подмене ignore. Реальные короткие MP4 проверяют
 отказ silent `mix`/`replace`, выход trim за конец видео/replace audio, повторный scene с другим
 trim и допустимые video modes до renderer, публикации preview и QA.
+Schema-valid сцены без `audioMode`/`trimStartSec` проходят как `mute`/`0`, сохраняя bytes/SHA
+approved brief; короткие клипы и явные silent `mix`/`replace` продолжают отклоняться.
 Регрессии гонок проверяют narration A→B→A при копировании preview и поздние правки approved/draft
 во время последнего narration hash, fsync MP4, rename MP4 и fsync manifest. При отказе сохраняются
 прежний final и `latestRender`, а созданные staging/backup-файлы удаляются.
@@ -625,7 +627,7 @@ state и отказ от неподдержанных edit-команд. Legacy 
 
 Opt-in media regression создаёт WAV и MP4 локально, вызывает настоящие CLI preview/approval/final
 и проверяет все семь типов сцен, 1080×1920/30 FPS/9 sec, полное декодирование и narration audio.
-Цвет пикселя доказывает `trimStartSec=1`; спектр 440/880 Hz проверяет mute/mix/replace и возврат
+Цвета пикселей доказывают default trim `0` и explicit `trimStartSec=1`; спектр 440/880 Hz проверяет mute/mix/replace и возврат
 озвучки после replace. Mute использует настоящий silent MP4 и сохраняет narration.
 Девять контрольных кадров и draft watermark сохраняются при заданном
 `AUTOMONTAGE_MOTION_E2E_DIR` (каталог должен существовать); без него временные файлы удаляются.

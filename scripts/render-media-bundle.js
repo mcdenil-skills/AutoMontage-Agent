@@ -1055,11 +1055,15 @@ function prepareLessonMediaBundle(options = {}, policy) {
           const probe = probeOpenedMedia({ fileDescriptor: tracked.descriptor, stage: 'motion media probe' });
           assertTrackedCurrent(tracked, fileSystem);
           if (probe.mediaKind !== 'video') fail('motion media kind does not match the brief');
-          if (motionScene.media.audioMode !== 'mute' && (!probe.hasAudio
+          // Renderer defaults belong to this check, never to the hash-bound brief.
+          const media = { ...motionScene.media,
+            audioMode: motionScene.media.audioMode ?? 'mute',
+            trimStartSec: motionScene.media.trimStartSec ?? 0 };
+          if (media.audioMode !== 'mute' && (!probe.hasAudio
             || !probe.audioCodec || !probe.audioSampleRate || !probe.audioChannels)) {
             fail('motion media audio mode requires a usable audio stream');
           }
-          verifySceneBrollMedia({ scene: { ...motionScene, brollMedia: motionScene.media },
+          verifySceneBrollMedia({ scene: { ...motionScene, brollMedia: media },
             fps: authoritativeBrief.output.fps, probe });
         }
         const key = `${tracked.identity.dev}:${tracked.identity.ino}`;

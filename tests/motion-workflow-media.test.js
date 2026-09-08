@@ -38,7 +38,8 @@ test('real motion MP4 keeps clip trim, narration mix/replace, watermark, approva
     { scene: 'counter', label: 'Проверено', value: 7 },
     ...['mute', 'mix', 'replace'].map(audioMode => ({ scene: 'media', media: { kind: 'video',
       src: audioMode === 'mute' ? 'assets/broll/silent.mp4' : 'assets/broll/colors.mp4',
-      sha256: audioMode === 'mute' ? silentSha256 : sha256, fit: 'contain', trimStartSec: 1, audioMode } })),
+      sha256: audioMode === 'mute' ? silentSha256 : sha256, fit: 'contain',
+      ...(audioMode === 'mute' ? {} : { trimStartSec: 1, audioMode }) } })),
     { scene: 'cta', title: 'Готово', action: 'Сохраните результат' },
   ].map((scene, index) => ({ ...scene, start: index, end: index + 1 }));
   const brief = { version: 1, kind: 'motion-reel', status: 'draft', source: workspace.manifest.source.localPath, theme: 'motion-neutral', title: 'Публичная проверка', output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 270 }, scenes };
@@ -52,7 +53,15 @@ test('real motion MP4 keeps clip trim, narration mix/replace, watermark, approva
   assert.ok(Number.isFinite(previewQa.audio.voiceDb));
   execFileSync(process.execPath, [path.join(root, 'scripts/project/approve-brief.js'), workspace.dir, draft.relativePath, '--confirm-preview-viewed']);
   const manifest = readProjectManifest(workspace.dir);
+  const approvedPath = path.join(workspace.dir, manifest.currentBrief);
+  const approvedBytes = fs.readFileSync(approvedPath);
+  const approvedHash = manifest.briefs.find(entry => entry.jsonPath === manifest.currentBrief).sha256;
   cli(['motion', '--project-dir', workspace.dir, '--brief', manifest.currentBrief, '--version-label', 'media-e2e']);
+  assert.deepEqual(fs.readFileSync(approvedPath), approvedBytes);
+  assert.equal(createHash('sha256').update(approvedBytes).digest('hex'), approvedHash);
+  const defaultMedia = JSON.parse(approvedBytes).scenes[5].media;
+  assert.equal(Object.hasOwn(defaultMedia, 'audioMode'), false);
+  assert.equal(Object.hasOwn(defaultMedia, 'trimStartSec'), false);
   const final = path.join(workspace.dir, manifest.final);
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', final]));
   const video = probe.streams.find(stream => stream.codec_type === 'video');
@@ -76,12 +85,14 @@ test('real motion MP4 keeps clip trim, narration mix/replace, watermark, approva
   assert.ok(mix.clip880 < mix.narration440 * 0.3, JSON.stringify(mix));
   assert.ok(replace.clip880 > replace.narration440 * 30, JSON.stringify(replace));
   assert.ok(after.narration440 > after.clip880 * 30, JSON.stringify(after));
-  // At global 5.5 s, clip-local 0.5 s must read source 1.5 s (green), not red source 0.5 s.
-  const pixel = ffmpeg(['-ss', '5.5', '-i', final, '-vf', 'crop=4:4:538:758,scale=1:1', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']);
+  // Default mute/zero trim shows source 0.5 s (red); explicit mix trim shows 1.5 s (green).
+  const defaultPixel = ffmpeg(['-ss', '5.5', '-i', final, '-vf', 'crop=4:4:538:758,scale=1:1', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']);
+  assert.ok(defaultPixel[0] > defaultPixel[1] * 2 && defaultPixel[0] > defaultPixel[2] * 2, `default trim pixel ${[...defaultPixel]}`);
+  const pixel = ffmpeg(['-ss', '6.5', '-i', final, '-vf', 'crop=4:4:538:758,scale=1:1', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']);
   assert.ok(pixel[1] > pixel[0] * 2 && pixel[1] > pixel[2] * 2, `trim pixel ${[...pixel]}`);
   for (let index = 0; index < 9; index += 1) ffmpeg(['-ss', String(index + 0.5), '-i', final, '-frames:v', '1', path.join(work, `scene-${index + 1}.png`)]);
   ffmpeg(['-ss', '0.5', '-i', preview, '-frames:v', '1', path.join(work, 'draft-watermark.png')]);
-  const report = { work, projectDir: workspace.dir, final, previewQa, duration: Number(probe.format.duration), mute, mix, replace, after, trimPixel: [...pixel], render: readProjectManifest(workspace.dir).renders.at(-1) };
+  const report = { work, projectDir: workspace.dir, final, previewQa, duration: Number(probe.format.duration), mute, mix, replace, after, defaultPixel: [...defaultPixel], trimPixel: [...pixel], approvedHash, render: readProjectManifest(workspace.dir).renders.at(-1) };
   fs.writeFileSync(path.join(work, 'evidence.json'), JSON.stringify(report, null, 2));
   console.log(`Motion real-media evidence: ${path.join(work, 'evidence.json')}`);
 });

@@ -234,6 +234,8 @@ directory fsync следует общей платформенной полит�
 аудиопотока для `mix`/`replace` и конец обрезки по FPS проекта. Порог совпадает с lesson:
 округлённый trim + длительность сцены не превышают округлённое число кадров видео, а для
 `replace` – также аудио. Silent video разрешён в `mute`; image media сохраняет прежний путь.
+Отсутствующие `audioMode`/`trimStartSec` проверяются как `mute`/`0`, как в схеме и renderer.
+Значения нормализуются только в локальной копии preflight; approved JSON и его SHA не меняются.
 Ошибка preflight не вызывает Remotion и не публикует preview, поэтому preview QA не получает
 нового непригодного пакета. Тот же media gate действует при approval и final bundle.
 Для motion preview digest фактически скопированной narration должен совпасть с digest исходника,
