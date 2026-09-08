@@ -493,7 +493,7 @@ function refreshRuntimeState({
     editable,
     waveformAvailable: Boolean(waveformFile),
   });
-  state.assets = refreshedAssets.descriptors;
+  state.assets = base.entry.kind === 'motion-reel' ? [] : refreshedAssets.descriptors;
   runtime.assetFiles = refreshedAssets.assetFiles;
   runtime.state = state;
   return state;
@@ -1662,6 +1662,7 @@ async function startReviewServer({
   });
   const assetFiles = buildAssetFiles({ root: resolvedRoot, projectDir: resolvedProjectDir });
   const base = loadReviewBase({ projectDir: resolvedProjectDir });
+  if (base.entry.kind === 'motion-reel') editable = false;
   const state = buildReviewState({
     root: resolvedRoot,
     base,
@@ -1669,7 +1670,7 @@ async function startReviewServer({
     editable,
     waveformAvailable: Boolean(waveformFile),
   });
-  state.assets = [...assetFiles].map(([id, asset]) => descriptorForAsset(id, asset));
+  state.assets = base.entry.kind === 'motion-reel' ? [] : [...assetFiles].map(([id, asset]) => descriptorForAsset(id, asset));
   const nextAssetId = [...assetFiles.keys()].reduce((highest, id) => (
     Math.max(highest, Number(id.slice('asset-'.length)) || 0)
   ), 0) + 1;

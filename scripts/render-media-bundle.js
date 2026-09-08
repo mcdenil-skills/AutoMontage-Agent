@@ -13,6 +13,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SHA256 = /^[a-f0-9]{64}$/;
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp']);
 const VIDEO_EXTENSIONS = new Set(['.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.webm']);
+const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus']);
 const REMOTE_IMAGE = /^https?:\/\//i;
 const ASSERT_BUNDLE_CURRENT = Symbol('assertBundleCurrent');
 const ASSERT_BUNDLE_AFTER_CALLBACK = Symbol('assertBundleAfterCallback');
@@ -586,13 +587,18 @@ function prepareLessonMediaBundle(options = {}, policy) {
     || !isCanonicalBrollReference(sourceAlias)) {
     fail('trusted lesson source alias is required');
   }
-  extensionForSource(sourceAlias);
-  if (props.faceSrc !== sourceAlias || props.audioSrc !== sourceAlias) {
+  const motion = authoritativeBrief.kind === 'motion-reel';
+  if (motion && (workspace?.manifest?.projectKind !== 'motion-reel'
+    || workspace?.manifest?.source?.mediaKind !== 'audio')) fail('motion media requires an audio workspace');
+  if (motion) safeExtension(sourceAlias, AUDIO_EXTENSIONS, 'narration');
+  else extensionForSource(sourceAlias);
+  if ((motion ? Object.hasOwn(props, 'faceSrc') : props.faceSrc !== sourceAlias)
+    || props.audioSrc !== sourceAlias) {
     fail('lesson props top-level source alias does not match the trusted source alias');
   }
   const approvedSource = path.isAbsolute(authoritativeBrief.source)
     ? path.resolve(authoritativeBrief.source)
-    : path.resolve(root, authoritativeBrief.source || '');
+    : path.resolve(motion ? workspace.dir : root, authoritativeBrief.source || '');
   const resolvedSourcePath = path.resolve(sourcePath);
   if (approvedSource !== resolvedSourcePath) fail('source path does not match the approved brief');
 
@@ -1033,7 +1039,7 @@ function prepareLessonMediaBundle(options = {}, policy) {
 
     function snapshotResolved(resolved, extension, expectedSha = null, mediaRole = null) {
       if (expectedSha !== null && !SHA256.test(expectedSha)) fail('approved SHA-256 is invalid');
-      if (mediaRole !== 'image' && mediaRole !== 'video') fail('bundle media role is invalid');
+      if (!['image', 'video', 'audio'].includes(mediaRole)) fail('bundle media role is invalid');
       assertOwnedDirectoryCurrent();
       const tracked = openTracked(resolved, fileSystem);
       try {
@@ -1105,16 +1111,29 @@ function prepareLessonMediaBundle(options = {}, policy) {
 
     const sourcePublicPath = snapshotResolved(
       resolveSource(resolvedSourcePath, fileSystem),
-      extensionForSource(resolvedSourcePath),
-      null,
-      'video',
+      motion ? safeExtension(resolvedSourcePath, AUDIO_EXTENSIONS, 'narration') : extensionForSource(resolvedSourcePath),
+      motion ? authoritativeBrief.approval?.sourceSha256 || null : null,
+      motion ? 'audio' : 'video',
     );
-    clonedProps.faceSrc = sourcePublicPath;
+    if (!motion) clonedProps.faceSrc = sourcePublicPath;
     clonedProps.audioSrc = sourcePublicPath;
 
     for (let index = 0; index < authoritativeBrief.scenes.length; index += 1) {
       const approvedScene = authoritativeBrief.scenes[index];
       const clonedScene = clonedProps.scenes[index];
+      if (motion) {
+        if (!clonedScene || JSON.stringify(clonedScene) !== JSON.stringify(approvedScene)) {
+          fail('motion props do not match the authoritative brief');
+        }
+        if (approvedScene.scene === 'media') {
+          const media = approvedScene.media;
+          clonedScene.media.src = snapshotResolved(
+            resolveContainedReference({ storageRoot: workspace.dir, reference: media.src, fileSystem }),
+            extensionForStructured(media), media.sha256, media.kind,
+          );
+        }
+        continue;
+      }
       const hasLegacy = approvedScene && Object.hasOwn(approvedScene, 'brollSrc');
       const hasStructured = approvedScene && Object.hasOwn(approvedScene, 'brollMedia');
       if (!clonedScene || clonedScene.scene !== approvedScene?.scene) {
@@ -1187,10 +1206,20 @@ function prepareLessonMediaBundle(options = {}, policy) {
       }
     }
 
+    let musicPath = null;
+    if (motion && authoritativeBrief.music) {
+      const music = authoritativeBrief.music;
+      const publicPath = snapshotResolved(
+        resolveContainedReference({ storageRoot: workspace.dir, reference: music.file, fileSystem }),
+        safeExtension(music.file, AUDIO_EXTENSIONS, 'music'), music.sha256, 'audio',
+      );
+      musicPath = path.join(base.publicDirectory, ...publicPath.split('/'));
+    }
     verifyBundleFilesCurrent();
 
     return {
       props: clonedProps,
+      musicPath,
       directory,
       publicDirectory: base.publicDirectory,
       cleanup,
@@ -1257,7 +1286,26 @@ function withPreviewMediaBundle(options, operation) {
   });
 }
 
+function verifyMotionBriefMedia({ root, workspace, brief, fileSystem = fs }) {
+  const sourcePath = require('./project/workspace').resolveProjectPath(workspace.dir, brief.source, {
+    fileSystem, mustExist: true, type: 'file',
+  });
+  if (brief.source !== workspace.manifest.source.localPath) fail('motion brief uses another narration source');
+  const sourceAlias = path.basename(sourcePath);
+  const props = require('./motion/brief').buildDraftMotionProps({ brief, sourceFile: sourceAlias });
+  const lease = prepareLessonMediaBundle({ root, workspace, props, previewBrief: brief, sourcePath, sourceAlias, fileSystem }, {
+    briefKey: 'previewBrief', purpose: 'approval', requireStatus: 'draft',
+  });
+  return {
+    hasDiscovery: false,
+    assertCurrent: lease[ASSERT_BUNDLE_CURRENT],
+    assertIdentity: lease[ASSERT_BUNDLE_CURRENT],
+    close: lease.cleanup,
+  };
+}
+
 module.exports = {
+  verifyMotionBriefMedia,
   prepareRenderMediaBundle,
   withPreviewMediaBundle,
   withRenderMediaBundle,

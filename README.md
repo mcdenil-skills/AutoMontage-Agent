@@ -198,6 +198,30 @@ node scripts/build.js projects/<id>/input/source.mp4 --template lesson \
 речи и точных границ; **«СМОНТИРОВАННЫЙ ПРЕДПРОСМОТР»** показывает графику, сцены, b-roll и
 музыку. Это разные файлы и разные задачи, поэтому один плеер не подменяет другой.
 
+### Motion Reel из готовой озвучки
+
+```bash
+automontage motion narration.wav --project "Название ролика"
+# Команда сообщает папку проекта и путь draft. Агент читает transcript/words.json
+# и заменяет начальный scaffold осмысленным планом из семи motion-сцен.
+automontage preview --project-dir projects/<id> --brief brief/v01-draft.motion.json
+npm run qa:preview -- --project-dir projects/<id>
+node scripts/project/approve-brief.js projects/<id> brief/v01-draft.motion.json --confirm-preview-viewed
+automontage motion --project-dir projects/<id> --brief brief/v01-approved.motion.json --version-label first
+```
+
+Начальная команда копирует аудио в `input/narration.*`, запускает локальный Whisper и создаёт
+Markdown/JSON scaffold со статусом `draft`. Это заготовка для агентской режиссуры, а не готовый
+смысловой монтаж. Default — `motion-neutral`, 1080×1920, 30 FPS; камера не требуется.
+Повторный final берёт озвучку из manifest, поэтому передавать исходник второй раз не нужно.
+
+Только текущий полный preview с отметкой «ЧЕРНОВИК» можно явно утвердить. Утверждение связывает
+байты draft, preview и narration; approved JSON дополнительно закрепляется SHA-256 в manifest.
+Любое изменение этих данных останавливает final. `--version-label` создаёт следующую отдельную
+версию в `renders/`; прежние версии сохраняются. Декодирование и проверка геометрии/FPS/длительности
+проходят до публикации `final/`. Review показывает motion-сцены, их текст, звук и preview в режиме
+просмотра; правки и утверждение motion выполняются агентом и командами выше.
+
 Для lesson встроенная `lesson-neutral` используется по умолчанию. Dynamic сохраняет прежний
 default `craft`; приватные темы задаются явно через `--theme <id>` и `THEMES_EXT`.
 Если явный внешний id не найден, `THEMES_EXT` не задан или `theme.json` повреждён,

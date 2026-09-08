@@ -803,11 +803,11 @@ function publishBriefRevision(workspace, {
     : 'lesson';
   const pathKind = kind === 'motion-reel' ? 'motion' : kind;
   if (briefKind === 'motion-reel') {
-    const validation = validateMotionBrief(brief);
-    if (!validation.ok) throw new Error(`motion brief is invalid: ${validation.errors.join('\n')}`);
     if (brief.status !== 'draft' || status !== 'draft') {
       throw new Error('initial motion brief publication requires status draft');
     }
+    const validation = validateMotionBrief(brief);
+    if (!validation.ok) throw new Error(`motion brief is invalid: ${validation.errors.join('\n')}`);
   }
   const publishedMarkdown = briefKind === 'motion-reel'
     ? formatMotionBriefMarkdown(brief)
@@ -1432,6 +1432,8 @@ function approveBrief(workspace, draftJsonPath, {
     const draft = JSON.parse(draftSnapshot.bytes.toString('utf8'));
     if (draft.status !== 'draft') throw new Error('утвердить можно только brief со статусом draft');
     const briefKind = draftEntry.kind;
+    if (briefKind === 'motion-reel' && (persistedManifest.projectKind !== 'motion-reel'
+      || persistedManifest.source.mediaKind !== 'audio')) throw new Error('motion approval requires an audio project');
     const briefContract = briefKind === 'motion-reel'
       ? { validate: validateMotionBrief, format: formatMotionBriefMarkdown }
       : { validate: validateLessonBrief, format: formatBriefMarkdown };
@@ -1493,20 +1495,15 @@ function approveBrief(workspace, draftJsonPath, {
       ? verifyBriefBrollMedia({
         root, workspace: persistedWorkspace, brief: draft, runToolImpl, fileSystem, platform,
       })
-      : {
-        hasDiscovery: false,
-        assertCurrent() {},
-        assertIdentity() {},
-        close() {},
-      };
+      : require('../render-media-bundle').verifyMotionBriefMedia({ root, workspace: persistedWorkspace, brief: draft, fileSystem });
     let previewVerification = null;
     try {
-      const needsPreview = mediaVerification.hasDiscovery || draft.brollReviewPolicy === 'preview-required'
+      const needsPreview = briefKind === 'motion-reel' || mediaVerification.hasDiscovery || draft.brollReviewPolicy === 'preview-required'
         || draft.scenes.some(scene => scene.brollIntent);
-      if (needsPreview) approvedBrief.brollReviewPolicy = 'preview-required';
+      if (needsPreview && briefKind === 'lesson') approvedBrief.brollReviewPolicy = 'preview-required';
       previewVerification = needsPreview
         ? require('./preview-workspace').verifyApprovalPreview(persistedWorkspace, draft, draftSnapshot.bytes, { fileSystem, confirmPreviewViewed, expectedPreviewSha256 }) : null;
-      if (previewVerification) approvedBrief.brollApproval = previewVerification.receipt;
+      if (previewVerification) approvedBrief[briefKind === 'motion-reel' ? 'approval' : 'brollApproval'] = previewVerification.receipt;
       const approvedValidation = briefContract.validate(approvedBrief, { requireApproved: true });
       if (!approvedValidation.ok) throw new Error(`approved brief is invalid: ${approvedValidation.errors.join('\n')}`);
     } catch (error) {
@@ -1514,8 +1511,10 @@ function approveBrief(workspace, draftJsonPath, {
       throw error;
     }
     const approvedMarkdown = approvedMarkdownPath ? briefContract.format(approvedBrief) : null;
+    const approvedJsonBytes = `${JSON.stringify(approvedBrief, null, 2)}\n`;
     const entry = {
       kind: briefKind,
+      ...(briefKind === 'motion-reel' ? { sha256: createHash('sha256').update(approvedJsonBytes).digest('hex') } : {}),
       revision: draftEntry.revision,
       jsonPath: approvedJsonRelativePath,
       markdownPath: approvedMarkdownPath
@@ -1556,7 +1555,7 @@ function approveBrief(workspace, draftJsonPath, {
       }
       jsonStage = stageOwnedSiblingFile(
         approvedJsonPath,
-        `${JSON.stringify(approvedBrief, null, 2)}\n`,
+        approvedJsonBytes,
         { fileSystem, temporaryId, purpose: 'approval-json', platform },
       );
       stages.push(jsonStage);
@@ -1636,7 +1635,7 @@ function nextRenderPaths(workspace, label = 'render') {
     mustExist: false,
     type: 'directory',
   });
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir);
   resolveProjectPath(workspace.dir, renderDirectory, {
     label: 'next render directory',
     mustExist: true,

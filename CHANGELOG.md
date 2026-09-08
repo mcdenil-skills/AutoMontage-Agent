@@ -7,6 +7,14 @@
 
 ### Добавлено
 
+- `automontage motion <audio> --project` создаёт локальный transcript/scaffold; continuation
+  по approved brief рендерит отдельные версии MotionReel через общий finish/ducking и QA.
+  Preview/Review выбирают композицию по stored kind. Motion approval обязателен после полного
+  просмотра и связывает draft/preview/narration hashes; exact approved bytes закреплены в manifest.
+  Read-only motion Review показывает scene copy без host paths, hashes и provider settings.
+- Регрессия настоящего motion MP4 проверяет все семь типов сцен, video trim и audio mute/mix/replace.
+  Dedicated audio probe теперь определяет duration WAV/MP3 больше 64 KiB через seekable cache.
+
 - Camera-free композиция `MotionReel` с семью публичными сценами: kinetic title, card,
   steps, list, counter, media и CTA. Единая narration-дорожка, независимая нейтральная тема,
   покадровые анимации, opt-in captions и подгонка плотной кириллицы внутри сейф-зоны.

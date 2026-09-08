@@ -86,6 +86,10 @@ function validateMotionBrief(brief, { requireApproved = false } = {}) {
   if (typeof brief?.source === 'string' && !isCanonicalMotionReference(brief.source)) {
     errors.push('source: ссылка на narration должна быть канонической относительной внутри проекта');
   }
+  if (brief?.status === 'draft' && brief.approval) errors.push('draft cannot carry an approval receipt');
+  if (brief?.music && !isCanonicalMotionReference(brief.music.file)) {
+    errors.push('music.file: music must be a canonical project reference');
+  }
   if (containsExecutableMarkup(brief)) {
     errors.push('brief: executable HTML or JavaScript markup is not allowed');
   }

@@ -255,7 +255,7 @@ function verifyApprovalPreview(workspace, draft, draftBytes, { fileSystem = fs, 
   try {
     for (const [relative, sha256] of [[preview.filePath, preview.sha256], ['previews/current-preview.mp4', preview.sha256], [workspace.manifest.source.localPath, preview.sourceSha256]]) {
       const filename = resolveProjectPath(workspace.dir, relative, { fileSystem, mustExist: true, type: 'file' });
-      if (relative === workspace.manifest.source.localPath && path.resolve(draft.source) !== filename) throw new Error('preview source mismatch');
+      if (relative === workspace.manifest.source.localPath && path.resolve(draft.kind === 'motion-reel' ? workspace.dir : '.', draft.source) !== filename) throw new Error('preview source mismatch');
       const fd = fileSystem.openSync(filename, fileSystem.constants.O_RDONLY | (fileSystem.constants.O_NOFOLLOW || 0));
       opened.push({fd, filename, relative, sha256, identity:fileSystem.fstatSync(fd, { bigint: true })});
     }
@@ -280,7 +280,7 @@ function verifyApprovalPreview(workspace, draft, draftBytes, { fileSystem = fs, 
       assertIdentity();
     };
     assertCurrent();
-    return { assertCurrent, assertIdentity, close, receipt: { draftSha256, previewSha256:preview.sha256, confirmedAt:new Date().toISOString() } };
+    return { assertCurrent, assertIdentity, close, receipt: { draftSha256, previewSha256:preview.sha256, ...(draft.kind === 'motion-reel' ? { sourceSha256: preview.sourceSha256 } : {}), confirmedAt:new Date().toISOString() } };
   } catch (error) { close(); throw error; }
 }
 module.exports = { planPreview, publishCurrentPreview, verifyApprovalPreview, hashFile };

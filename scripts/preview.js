@@ -12,6 +12,8 @@ const {
 } = require('./env');
 const { REMOTION_AUDIO_ADVANCE_MS } = require('./finish-audio');
 const { loadExtTheme } = require('./load-ext-theme');
+const { validateStoredBrief } = require('./project/brief-contract');
+const { prepareMotionPreview } = require('./motion/workflow');
 const { prepareLessonPreview } = require('./lesson/preview');
 const { probeVideo } = require('./media-probe');
 const { runNodeTool, runTool } = require('./process');
@@ -149,13 +151,25 @@ function runPreview(options, dependencies = {}) {
   });
   if (process.env.AUTOMONTAGE_PREVIEW_BRIEF_HASH && process.env.AUTOMONTAGE_PREVIEW_BRIEF_HASH !== createHash('sha256').update(JSON.stringify(brief)).digest('hex')) throw new Error('preview base changed');
   const sourceSha256 = require('./project/preview-workspace').hashFile(fileSystem, sourceVideo);
-  const externalTheme = loadExtTheme(brief.theme);
+  const kind = validateStoredBrief({ manifest, briefPath: manifest.currentBrief, brief });
+  workspace.sourcePath = sourceVideo;
+  if (kind === 'motion-reel') {
+    const audio = require('./motion/source').probeAudioPath(sourceVideo, {
+      ...(dependencies.probeOpenedAudioImpl ? { probeOpenedAudioImpl: dependencies.probeOpenedAudioImpl } : {}),
+    });
+    if (Math.abs(brief.output.durationInFrames / brief.output.fps - audio.durationSec) > 1 / brief.output.fps + 0.001) {
+      throw new Error('motion narration duration does not match the draft output');
+    }
+  }
+  const externalTheme = kind === 'motion-reel' ? null : loadExtTheme(brief.theme);
   const prepareOptions = { brief, theme: externalTheme || brief.theme, sourceVideo };
   if (options.fromSec !== undefined || options.toSec !== undefined) {
     prepareOptions.fromSec = options.fromSec;
     prepareOptions.toSec = options.toSec;
   }
-  const prepared = prepareLessonPreviewImpl(prepareOptions);
+  const prepared = kind === 'motion-reel'
+    ? prepareMotionPreview({ workspace, ...prepareOptions })
+    : prepareLessonPreviewImpl(prepareOptions);
   const planned = planPreview(workspace, {
     briefPath,
     briefSha256,
@@ -202,7 +216,7 @@ function runPreview(options, dependencies = {}) {
       if (prepared.music) {
         runNodeToolImpl(path.join(ROOT, 'scripts', 'mix-music.js'), [
           planned.finishedPath,
-          prepared.music.sourcePath,
+          lease.musicPath || prepared.music.sourcePath,
           planned.mixedPath,
           ...prepared.music.mixArgs,
         ], { cwd: ROOT, stage: 'preview music mix' });
@@ -220,7 +234,7 @@ function runPreview(options, dependencies = {}) {
     if (probe.width !== expectedWidth || probe.height !== expectedHeight
       || Math.abs(probe.fps - prepared.props.fps) > 1e-6
       || Math.abs(probe.duration - expectedDuration) > Math.max(0.08, 1 / prepared.props.fps)) {
-      throw new Error('preview output metadata does not match the requested ReelScenes range');
+      throw new Error('preview output metadata does not match the requested composition range');
     }
     const generatedAt = now().toISOString();
     const published = publishCurrentPreviewImpl(workspace, planned, stagedOutput, {

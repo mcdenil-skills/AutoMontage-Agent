@@ -150,9 +150,26 @@ function runPreviewQa({ projectDir }, dependencies = {}) {
   const sourcePath = resolveProjectPath(resolvedProjectDir, manifest.source.localPath, {
     label: 'active source', fileSystem, mustExist: true, type: 'file',
   });
-  let audio = null;
+  const briefKind = require('./project/brief-contract').validateStoredBrief({ manifest, briefPath: metadata.briefPath, brief });
+  const motion = briefKind === 'motion-reel';
+  if (motion) {
+    if (metadata.briefPath !== manifest.currentBrief) {
+      const currentPath = resolveProjectPath(resolvedProjectDir, manifest.currentBrief, { fileSystem, mustExist: true, type: 'file' });
+      const current = JSON.parse(fileSystem.readFileSync(currentPath, 'utf8'));
+      const entry = manifest.briefs.find(item => item.jsonPath === manifest.currentBrief);
+      if (current.status !== 'approved' || entry?.sha256 !== hashFile(currentPath, fileSystem)
+        || current.approval?.draftSha256 !== metadata.briefSha256
+        || current.approval?.previewSha256 !== metadata.sha256) throw new Error('motion preview is stale for the current brief');
+    }
+    if (hashFile(briefPath, fileSystem) !== metadata.briefSha256) throw new Error('motion preview brief is stale');
+    if (hashFile(sourcePath, fileSystem) !== metadata.sourceSha256) throw new Error('motion preview narration source is stale');
+  }
+  let audio = motion && !brief.music ? { voiceDb: measureAudioImpl({ role: 'voice', sourcePath, brief, range: metadata }) } : null;
   if (brief.music) {
-    const musicPath = path.resolve(brief.music.file);
+    const musicPath = motion
+      ? resolveProjectPath(resolvedProjectDir, brief.music.file, { fileSystem, mustExist: true, type: 'file' })
+      : path.resolve(brief.music.file);
+    if (motion && hashFile(musicPath, fileSystem) !== brief.music.sha256) throw new Error('motion music is stale');
     audio = {
       voiceDb: measureAudioImpl({
         role: 'voice', sourcePath, musicPath, brief, range: metadata,
@@ -191,7 +208,7 @@ function main(argv = process.argv.slice(2)) {
     console.log(`✅ preview QA: ${label}`);
     console.log(`   ${result.video.width}x${result.video.height}, ${result.video.fps} FPS, ${result.video.duration.toFixed(2)} sec`);
     if (result.audio) {
-      console.log(`   voice ${result.audio.voiceDb.toFixed(1)} dB; ducked music ${result.audio.musicUnderSpeechDb.toFixed(1)} dB`);
+      console.log(`   voice ${result.audio.voiceDb.toFixed(1)} dB${result.audio.musicUnderSpeechDb === undefined ? '' : `; ducked music ${result.audio.musicUnderSpeechDb.toFixed(1)} dB`}`);
     }
   } catch (error) {
     console.error(`❌ preview QA: ${error.message}`);

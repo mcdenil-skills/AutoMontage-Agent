@@ -576,3 +576,13 @@ approval, final render или QA с готовым narration file.
 контракта. Отклонён separate repository: уже существующие workspace, draft/approved gate,
 immutable render versions и QA являются нужными гарантиями этого режима; второй репозиторий
 дублировал бы их и расходился бы с public workflow.
+
+
+### D-029: integration boundary
+
+Motion использует общий isolated render-media bundle с явной audio-ролью, а не отдельную
+упрощённую раздачу файлов. Поэтому narration, media и музыка проходят те же no-follow,
+content-hash и ownership проверки. Approved JSON получает отдельный digest в manifest:
+сравнение только полей сюжета не обнаруживало бы правку receipt или formatting bytes.
+Motion Review в первой версии read-only: существующий lesson command language не подходит
+другой библиотеке сцен; CLI preview и утверждение уже дают полный проверяемый workflow.

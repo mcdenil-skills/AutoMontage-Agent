@@ -181,7 +181,7 @@ test('motion media requires a content-bound canonical project reference', () => 
 
 test('draft and approved builders enforce status and expose camera-free props', () => {
   const draft = makeBrief();
-  const approved = { ...draft, status: 'approved' };
+  const approved = { ...draft, status: 'approved', approval: { draftSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64), previewSha256: 'c'.repeat(64), confirmedAt: '2026-09-08T10:00:00.000Z' } };
 
   assert.throws(() => buildMotionProps({ brief: draft }), /approved/i);
   assert.throws(() => buildDraftMotionProps({ brief: approved }), /draft/i);

@@ -21,14 +21,15 @@ const {
 const { makeReviewProject, registerHigherBrief } = require('./helpers/review-project');
 const { formatMotionBriefMarkdown } = require('../scripts/motion/brief');
 
-function makeProject(t, name) {
+function makeProject(t, name, motion = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-project-mutation-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const sourcePath = path.join(root, 'camera.mp4');
+  const sourcePath = path.join(root, motion ? 'narration.wav' : 'camera.mp4');
   fs.writeFileSync(sourcePath, 'source-video');
   return createOrOpenProject({
     projectDir: path.join(root, 'project'),
     name,
+    ...(motion ? { projectKind: 'motion-reel', mediaKind: 'audio' } : {}),
     sourcePath,
     now: new Date('2026-08-22T08:00:00.000Z'),
   });
@@ -287,7 +288,7 @@ test('approval always runs the complete lesson brief validator before publicatio
 });
 
 test('approval dispatches from the stored motion brief kind even with a lesson filename', (t) => {
-  const workspace = makeProject(t, 'Stored motion kind');
+  const workspace = makeProject(t, 'Stored motion kind', true);
   const draft = nextBriefPaths(workspace, 'lesson');
   const brief = {
     version: 1,
@@ -311,7 +312,14 @@ test('approval dispatches from the stored motion brief kind even with a lesson f
     aspect: brief.output.aspect,
   });
 
-  const approved = approveBrief(workspace, draft.jsonPath);
+  require('../scripts/preview').runPreview({ projectDir: workspace.dir,
+    briefPath: workspace.manifest.currentBrief, open: false }, {
+    ...require('./helpers/motion-workflow-fixture.cjs').fakeMedia(),
+    probeOpenedAudioImpl: () => ({ mediaKind: 'audio', durationSec: 3 }),
+    probeVideoImpl: () => ({ width: 540, height: 960, fps: 30, duration: 3 }),
+  });
+  workspace.manifest = readProjectManifest(workspace.dir);
+  const approved = approveBrief(workspace, draft.jsonPath, { confirmPreviewViewed: true });
   const persisted = JSON.parse(fs.readFileSync(approved.jsonPath, 'utf8'));
   const markdown = fs.readFileSync(approved.markdownPath, 'utf8');
 

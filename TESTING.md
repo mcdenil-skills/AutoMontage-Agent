@@ -569,3 +569,28 @@ node --test tests/motion-render.test.js
 и вход CTA. PNG и `layout-measurements.json` остаются в указанной игнорируемой папке;
 без неё артефакты временные. Проверка отключена в обычном Node suite, чтобы тот не требовал
 Chromium и полного FFmpeg; перед завершением renderer-задачи её запускают отдельно.
+
+
+## Motion workflow: audio → preview → approval → final
+
+```bash
+node --test tests/motion-workflow.test.js tests/review-compatibility.test.js tests/qa-preview.test.js tests/cli.test.js
+AUTOMONTAGE_TEST_MOTION_WORKFLOW=1 node --test tests/motion-workflow-media.test.js
+```
+
+На macOS media-проверки запускаются с FFmpeg, содержащим нужные codecs:
+`PATH=/opt/homebrew/opt/ffmpeg-full/bin:$PATH` и
+`AUTOMONTAGE_FFMPEG_DIR=/opt/homebrew/opt/ffmpeg-full/bin`.
+
+Быстрые проверки покрывают CLI, local transcription scaffold, draft watermark, stored-kind
+маршрутизацию, обязательный полный просмотр, hashes narration/draft/preview, byte-immutable
+approved JSON, labels/history, rollback, stale QA/Review, media symlink/hash и защищённую музыку.
+Motion Review дополнительно проверяется через настоящий HTTP server: audio MIME, безопасный
+state и отказ от неподдержанных edit-команд. Legacy lesson tests остаются обязательными.
+
+Opt-in media regression создаёт WAV и MP4 локально, вызывает настоящие CLI preview/approval/final
+и проверяет все семь типов сцен, 1080×1920/30 FPS/9 sec, полное декодирование и narration audio.
+Цвет пикселя доказывает `trimStartSec=1`; спектр 440/880 Hz проверяет mute/mix/replace и возврат
+озвучки после replace. Девять контрольных кадров и draft watermark сохраняются при заданном
+`AUTOMONTAGE_MOTION_E2E_DIR` (каталог должен существовать); без него временные файлы удаляются.
+Никаких provider calls, ключей или личных медиа этот тест не требует.

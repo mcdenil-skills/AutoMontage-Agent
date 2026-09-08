@@ -305,3 +305,19 @@ node scripts\build.js видео.mp4 --theme <theme-id>
 
 Точный адрес приватного репо и id дефолтного стиля пользователь хранит у себя (в памяти
 агента или в README своего бренд-пака) – в этот открытый репозиторий они не пишутся.
+
+
+## MotionReel: монтаж из narration
+
+`automontage motion narration.wav --project "Название"` создаёт audio workspace и локальный
+транскрипт со scaffold `brief/v01-draft.motion.json`. Агент заполняет его сценами `kinetic-title`,
+`card`, `steps`, `list`, `counter`, `media`, `cta`, затем проходит preview → явный полный просмотр
+→ `approve-brief.js --confirm-preview-viewed` → `automontage motion --project-dir … --brief …`.
+Полная последовательность команд — в README, раздел «Motion Reel из готовой озвучки».
+
+Схема `schema/motion-brief.schema.json` отдельна от lesson. `source`, `media.src` и `music.file`
+ссылаются только на относительные файлы внутри workspace. Для media и music обязателен `sha256`.
+Опциональная `music` принимает `gainDb`, fade/start/playbackRate/ducking как lesson и микшируется
+через тот же FFmpeg pipeline. Дизайн использует фиксированную `motion-neutral`, камера и `faceSrc`
+отсутствуют. Утверждённая копия и просмотр криптографически связаны с озвучкой; новая правка требует
+нового draft и полного preview. В motion Review пока доступны просмотр/таймлайн, правки — через агента.

@@ -124,6 +124,17 @@ function sceneTimes(scene, index, diff) {
   };
 }
 
+export function sceneDisplayText(scene) {
+  if (!['kinetic-title', 'card', 'steps', 'list', 'counter', 'media', 'cta'].includes(scene.scene)) {
+    return scene.caption || scene.headOrange || scene.headCream || scene.scene;
+  }
+  const fields = [scene.scene, scene.text, scene.title, scene.body, scene.label,
+    scene.steps?.join(' → '), scene.items?.join('; '),
+    scene.value === undefined ? null : `${scene.prefix || ''}${scene.value}${scene.suffix || ''}`,
+    scene.overlayText, scene.action, scene.handle, scene.caption];
+  return fields.filter(Boolean).join(' · ');
+}
+
 function renderScenes(track, video, scenes, duration, diff) {
   return scenes.map((scene, index) => {
     const times = sceneTimes(scene, index, diff);
@@ -138,7 +149,8 @@ function renderScenes(track, video, scenes, duration, diff) {
     number.textContent = String(index + 1).padStart(2, '0');
     const name = document.createElement('span');
     name.className = 'segment-name';
-    name.textContent = scene.caption || scene.headOrange || scene.headCream || scene.scene;
+    name.textContent = sceneDisplayText(scene);
+    target.title = name.textContent;
     target.append(number, name);
     target.addEventListener('click', () => seekPlayer(video, times.start));
     place(target, times.start, times.end, duration);

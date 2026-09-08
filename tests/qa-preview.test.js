@@ -130,3 +130,34 @@ test('preview QA requires one explicit current full or excerpt preview', (t) => 
 
   assert.throws(() => runPreviewQa({ projectDir: fixture.workspace.dir }), /current preview|предпросмотр/i);
 });
+
+test('motion QA measures narration without music and rejects stale narration/brief', (t) => {
+  const { fixture, fakeMedia } = require('./helpers/motion-workflow-fixture.cjs');
+  const { runPreview } = require('../scripts/preview');
+  const f = fixture(t);
+  runPreview({ projectDir: f.workspace.dir, briefPath: f.published.relativePath, open: false }, fakeMedia());
+  const result = runPreviewQa({ projectDir: f.workspace.dir }, {
+    runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }),
+    measureAudioImpl({ role, sourcePath }) { assert.equal(role, 'voice'); assert.equal(sourcePath, f.workspace.sourcePath); return -18; },
+  });
+  assert.equal(result.audio.voiceDb, -18);
+  fs.appendFileSync(f.workspace.sourcePath, 'changed');
+  assert.throws(() => runPreviewQa({ projectDir: f.workspace.dir }, { runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }) }), /source|narration|stale/i);
+});
+
+test('motion QA dispatches from stored kind and refuses a preview of an older draft', (t) => {
+  const { fixture, fakeMedia } = require('./helpers/motion-workflow-fixture.cjs');
+  const { runPreview } = require('../scripts/preview');
+  const { publishBriefRevision, readProjectManifest } = require('../scripts/project/workspace');
+  const f = fixture(t);
+  runPreview({ projectDir: f.workspace.dir, briefPath: f.published.relativePath, open: false }, fakeMedia());
+  const deps = { runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }), measureAudioImpl: () => -18 };
+  const original = fs.readFileSync(f.published.jsonPath);
+  const tampered = { ...f.brief }; delete tampered.kind;
+  fs.writeFileSync(f.published.jsonPath, JSON.stringify(tampered));
+  assert.throws(() => runPreviewQa({ projectDir: f.workspace.dir }, deps), /kind|invalid/i);
+  fs.writeFileSync(f.published.jsonPath, original);
+  f.workspace.manifest = readProjectManifest(f.workspace.dir);
+  publishBriefRevision(f.workspace, { kind: 'motion-reel', brief: { ...f.brief, title: 'Новая ревизия' } });
+  assert.throws(() => runPreviewQa({ projectDir: f.workspace.dir }, deps), /stale|current/i);
+});

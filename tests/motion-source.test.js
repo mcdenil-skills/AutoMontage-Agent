@@ -57,6 +57,7 @@ function approvedBrief(source = 'input/narration.mp3') {
     version: 1,
     kind: 'motion-reel',
     status: 'approved',
+    approval: { draftSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64), previewSha256: 'c'.repeat(64), confirmedAt: '2026-09-08T10:00:00.000Z' },
     source,
     theme: 'motion-neutral',
     title: 'Audio motion',
@@ -455,4 +456,12 @@ test('motion render rejects a brief that points outside the project or at anothe
     () => prepareMotionRender({ workspace, brief: approvedBrief('input/other.mp3') }),
     /another narration|другой/i,
   );
+});
+
+test('opened audio probe seeks beyond the cache default for normal-length narration', (t) => {
+  const root = makeFixture(t);
+  const source = path.join(root, 'nine-seconds.wav');
+  runFfmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=9:sample_rate=48000', source]);
+  assert.ok(fs.statSync(source).size > 65536);
+  assert.equal(probeFile(source).durationSec, 9);
 });

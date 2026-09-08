@@ -9,6 +9,104 @@
     "version": { "const": 1 },
     "kind": { "const": "motion-reel" },
     "status": { "enum": ["draft", "approved"] },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftSha256",
+        "previewSha256",
+        "confirmedAt",
+        "sourceSha256"
+      ],
+      "properties": {
+        "draftSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "previewSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "confirmedAt": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "music": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "gainDb",
+        "sha256"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gainDb": {
+          "type": "number",
+          "minimum": -60,
+          "maximum": 0
+        },
+        "fadeInSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "fadeOutSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "startSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "playbackRate": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2
+        },
+        "ducking": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "thresholdDb": {
+              "type": "number",
+              "minimum": -60,
+              "maximum": 0
+            },
+            "ratio": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "attackMs": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 2000
+            },
+            "releaseMs": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 9000
+            }
+          }
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
     "source": { "$ref": "#/definitions/projectPath" },
     "theme": { "type": "string", "minLength": 1, "maxLength": 80 },
     "title": { "$ref": "#/definitions/titleText" },
@@ -40,6 +138,7 @@
       }
     }
   },
+  "allOf": [{"if":{"properties":{"status":{"const":"approved"}}},"then":{"required":["approval"]}}],
   "definitions": {
     "projectPath": { "type": "string", "minLength": 1, "maxLength": 512 },
     "titleText": { "type": "string", "minLength": 1, "maxLength": 120 },

@@ -69,6 +69,8 @@ function probeOpenedAudio({
     '-v', 'error',
     '-show_entries', OPENED_MEDIA_PROBE_ENTRIES,
     '-of', 'json',
+    // WAV/MP3 may seek to EOF; the cache default stops after only 64 KiB.
+    '-read_ahead_limit', '-1',
     'cache:pipe:0',
   ];
   const result = runToolImpl(command, args, {

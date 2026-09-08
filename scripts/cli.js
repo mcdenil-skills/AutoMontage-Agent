@@ -3,6 +3,7 @@
 // Движок сам находит свой корень (__dirname), результат кладёт в папку пользователя.
 //
 //   automontage <видео> [опции build.js]   – смонтировать ролик
+//   automontage motion <audio> --project <name> – создать motion-черновик
 //   automontage demo                        – собрать демо из примера в репозитории
 //   automontage --help                      – помощь
 const path = require('path');
@@ -19,6 +20,9 @@ function help() {
 
 Использование:
   automontage <видео.mp4> [опции]     смонтировать (результат в текущей папке)
+  automontage motion <audio> --project <name>  создать motion-черновик
+  automontage motion --project-dir . --brief brief/v01-approved.motion.json
+                                      собрать утверждённый MotionReel
   automontage demo                    собрать демо-ролик из примера (без ключей и whisper)
   automontage doctor                  проверить окружение (что доустановить)
   automontage review --project-dir .  открыть локальную проверку монтажного листа
@@ -70,6 +74,15 @@ try {
 if (argv[0] === 'doctor') {
   try { execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'doctor.js')], { stdio: 'inherit', cwd: ROOT }); }
   catch (e) { process.exit(e.status || 1); }
+  process.exit(0);
+}
+
+if (argv[0] === 'motion') {
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'motion', 'build.js'), ...argv.slice(1)], {
+      stdio: 'inherit', cwd: process.cwd(), shell: false,
+    });
+  } catch (error) { process.exit(error.status || 1); }
   process.exit(0);
 }
 

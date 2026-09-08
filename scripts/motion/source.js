@@ -144,4 +144,5 @@ module.exports = {
   createMotionProject,
   probeAudioPath,
   transcribeMotionNarration,
+  validateCanonicalTranscript,
 };

@@ -160,7 +160,8 @@ Brief замораживает исходник, тему, аспект, раз�
 новую source revision.
 
 Draft имеет отдельную непередаваемую в final возможность: `scripts/preview.js` принимает только
-текущий зарегистрированный draft, готовит те же `ReelScenes` props через закрытую preview-boundary,
+текущий зарегистрированный draft, выбирает `ReelScenes` или `MotionReel` по `briefs[].kind`
+через `scripts/project/brief-contract.js` и готовит props через закрытую preview-boundary,
 материализует медиа в том же изолированном bundle и выполняет Remotion → `finish.js` →
 `mix-music.js`. Отличия только технические: `--scale=0.5`, CRF 28 и детерминированная отметка
 «ЧЕРНОВИК». После полного decode immutable revision и `previews/current-preview.mp4` публикуются
@@ -168,9 +169,34 @@ Draft имеет отдельную непередаваемую в final воз
 недоступны этой границе. Approved builder по-прежнему отклоняет draft.
 
 Preview не имеет отдельного HTML- или FFmpeg-дизайна: такие имитации могли бы показать не тот
-монтаж, который затем соберёт final. И preview, и final используют одну композицию `ReelScenes`,
+монтаж, который затем соберёт final. И preview, и final используют одну соответствующую kind композицию,
 одни scene props, тему, шрифты, media bundle и аудиопорядок; разрешённые различия preview
 ограничены scale, CRF и watermark.
+
+#### Motion workflow
+
+`scripts/motion/build.js` владеет отдельным CLI-маршрутом. Первый вызов `motion <audio> --project`
+использует `createMotionProject`, dedicated audio probe и локальную транскрипцию; scaffold
+публикуется через `publishBriefRevision`. Проба открытого аудио использует seekable
+`cache:pipe:0` с `read_ahead_limit=-1`, чтобы определять длительность обычных WAV/MP3 больше
+64 KiB; timeout ограничен 30 секундами.
+
+`prepareMotionPreview`/`prepareMotionRender` связывают brief с `manifest.source.localPath`,
+не создают `faceSrc`, проверяют тему `motion-neutral` и сохраняют глобальный таймкод озвучки.
+Общий `render-media-bundle` различает роли audio/image/video: narration, scene media и музыка
+копируются с no-follow в изолированный каталог. Motion media и music имеют обязательные hashes;
+все ссылки относительны workspace. Music использует существующий finish/ducking pipeline.
+
+Motion approval всегда требует просмотренного полного current preview. Поле `approval` содержит
+`draftSha256`, `previewSha256`, `sourceSha256`, `confirmedAt`; draft не может содержать receipt.
+Approved entry сохраняет SHA-256 точных JSON bytes. Final принимает только текущую зарегистрированную
+approved-копию, сверяет её с исходным draft и receipt, держит дескрипторы и повторяет проверки
+после рендера. Затем общий lifecycle публикует результат лишь после QA; failed-сборка сохраняет
+прежний final. Занятая папка версии не перезаписывается.
+
+Motion Review работает в режиме просмотра: browser state включает названия/текст сцен и тип
+источника `audio`, но не содержит source paths, media hashes, approval/provider data или
+lesson-edit capabilities. Изменившаяся озвучка помечает preview устаревшим.
 
 #### 3.2.1 Пакет Reels и hook-family
 

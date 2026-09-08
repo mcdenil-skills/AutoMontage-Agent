@@ -40,6 +40,7 @@ const scenes = [
 function brief(overrides = {}) {
   return {
     version: 1, kind: 'motion-reel', status: 'approved', source: 'input/narration.wav',
+    approval: { draftSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64), previewSha256: 'c'.repeat(64), confirmedAt: '2026-09-08T10:00:00.000Z' },
     theme: 'motion-neutral', title: 'Общедоступные сцены',
     output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 660 },
     scenes, ...overrides,

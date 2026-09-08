@@ -376,3 +376,15 @@ approval history; общего mutable manifest для всего пакета �
 общего тела hook-family: тогда повторное согласование и проверку идентичности проходят все её
 варианты. Полные рендеры в одном checkout выполняются последовательно. Подробный порядок – в
 [пакетном workflow](BATCH-REELS-WORKFLOW.md).
+
+
+## Audio-only MotionReel
+
+Review читает сохранённый `briefs[].kind`; расширение имени файла не переключает композицию.
+Для `motion-reel` он показывает озвучку, waveform/transcript, типы сцен и их текст, а также текущий
+MotionReel-preview. Камера не требуется. Media references, SHA-256 и approval/provider settings
+не передаются в browser state. Изменённая озвучка делает preview устаревшим.
+
+Motion открывается в режиме просмотра даже при `--edit`: lesson boundary/b-roll команды не
+применяются к другому формату brief. Агент правит motion JSON по схеме, запускает `automontage
+preview`, а после явного просмотра утверждает его через `approve-brief.js --confirm-preview-viewed`.
