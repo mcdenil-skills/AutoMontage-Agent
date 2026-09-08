@@ -49,7 +49,7 @@ function openBriefSnapshot(projectDir, relative) {
   const bytes = fs.readFileSync(fd);
   const digest = createHash('sha256').update(bytes).digest('hex');
   const close = () => fs.closeSync(fd);
-  const assertCurrent = () => {
+  const assertIdentity = () => {
     resolveProjectPath(projectDir, relative, { mustExist: true, type: 'file' });
     for (const current of [fs.lstatSync(filename, { bigint: true }), fs.fstatSync(fd, { bigint: true })]) {
       if (!current.isFile() || current.isSymbolicLink()
@@ -57,11 +57,15 @@ function openBriefSnapshot(projectDir, relative) {
         throw new Error('motion approval brief identity changed');
       }
     }
+  };
+  const assertCurrent = () => {
+    assertIdentity();
     const hash = createHash('sha256'); const buffer = Buffer.alloc(65536); let offset = 0; let size;
     while ((size = fs.readSync(fd, buffer, 0, buffer.length, offset)) > 0) { hash.update(buffer.subarray(0, size)); offset += size; }
     if (hash.digest('hex') !== digest) throw new Error('motion approval brief bytes changed');
+    assertIdentity();
   };
-  try { assertCurrent(); return { bytes, assertCurrent, close }; } catch (error) { close(); throw error; }
+  try { assertCurrent(); return { bytes, assertCurrent, assertIdentity, close }; } catch (error) { close(); throw error; }
 }
 
 function verifyMotionApproval(workspace, entry, approved) {
@@ -79,7 +83,11 @@ function verifyMotionApproval(workspace, entry, approved) {
     preview = verifyApprovalPreview({ ...workspace, manifest: { ...workspace.manifest, currentBrief: draftEntry.jsonPath } }, brief, draft.bytes, {
       confirmPreviewViewed: true, expectedPreviewSha256: approval.previewSha256,
     });
-    return { assertCurrent() { draft.assertCurrent(); preview.assertCurrent(); }, close() { draft.close(); preview.close(); } };
+    return {
+      assertCurrent() { draft.assertCurrent(); preview.assertCurrent(); },
+      assertIdentity() { draft.assertIdentity(); preview.assertIdentity(); },
+      close() { draft.close(); preview.close(); },
+    };
   } catch (error) { draft.close(); preview?.close(); throw error; }
 }
 
@@ -126,6 +134,15 @@ function runMotion(options, dependencies = {}) {
     const sourcePath = resolveProjectPath(projectDir, manifest.source.localPath, { mustExist: true, type: 'file' });
     const workspace = { dir: projectDir, manifest, sourcePath };
     approval = verifyMotionApproval(workspace, entry, brief);
+    const publicationGuard = {
+      assertIdentity() { snapshot.assertIdentity(); approval.assertIdentity(); },
+      assertCurrent() {
+        snapshot.assertCurrent();
+        approval.assertCurrent();
+        // Every potentially long digest finishes before this common fast barrier.
+        publicationGuard.assertIdentity();
+      },
+    };
     const audio = probeAudioPath(sourcePath, probeOptions);
     if (Math.abs(brief.output.durationInFrames / brief.output.fps - audio.durationSec) > 1 / brief.output.fps + 0.001) {
       throw new Error('motion narration duration does not match the approved brief');
@@ -138,7 +155,7 @@ function runMotion(options, dependencies = {}) {
       bundle({ root, workspace, props: prepared.props, approvedBrief: brief,
         sourcePath, sourceAlias: prepared.sourceAlias, namespace: `${manifest.slug}-motion`,
       }, lease => {
-        snapshot.assertCurrent(); approval.assertCurrent();
+        publicationGuard.assertCurrent();
         fs.writeFileSync(render.propsPath, `${JSON.stringify(lease.props, null, 2)}\n`, { flag: 'wx' });
         const command = remotionRenderCommand((dependencies.resolveRemotionCommandImpl || resolveRemotionCommand)(root), {
           entry: 'src/index.js', composition: prepared.composition, output: render.rawPath, props: render.propsPath,
@@ -155,9 +172,9 @@ function runMotion(options, dependencies = {}) {
         || Math.abs(probe.duration - brief.output.durationInFrames / brief.output.fps) > Math.max(0.08, 1 / brief.output.fps)) {
         throw new Error('motion QA metadata does not match the approved output');
       }
-      snapshot.assertCurrent(); approval.assertCurrent();
+      publicationGuard.assertCurrent();
       return render.finalPath;
-    });
+    }, { publicationGuard });
     return { action: 'render', projectDir, finalPath, renderDir: render.dir };
   } finally { snapshot.close(); approval?.close(); }
 }

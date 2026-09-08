@@ -585,6 +585,9 @@ AUTOMONTAGE_TEST_MOTION_WORKFLOW=1 node --test tests/motion-workflow-media.test.
 Быстрые проверки покрывают CLI, local transcription scaffold, draft watermark, stored-kind
 маршрутизацию, обязательный полный просмотр, hashes narration/draft/preview, byte-immutable
 approved JSON, labels/history, rollback, stale QA/Review, media symlink/hash и защищённую музыку.
+Регрессии гонок проверяют narration A→B→A при копировании preview и поздние правки approved/draft
+во время последнего narration hash, fsync MP4, rename MP4 и fsync manifest. При отказе сохраняются
+прежний final и `latestRender`, а созданные staging/backup-файлы удаляются.
 Motion Review дополнительно проверяется через настоящий HTTP server: audio MIME, безопасный
 state и отказ от неподдержанных edit-команд. Legacy lesson tests остаются обязательными.
 

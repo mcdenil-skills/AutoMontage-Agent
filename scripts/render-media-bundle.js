@@ -564,6 +564,7 @@ function prepareLessonMediaBundle(options = {}, policy) {
     props,
     sourcePath,
     sourceAlias,
+    expectedSourceSha256 = null,
     namespace,
     temporaryId = randomUUID(),
     fileSystem = fs,
@@ -1112,9 +1113,10 @@ function prepareLessonMediaBundle(options = {}, policy) {
     const sourcePublicPath = snapshotResolved(
       resolveSource(resolvedSourcePath, fileSystem),
       motion ? safeExtension(resolvedSourcePath, AUDIO_EXTENSIONS, 'narration') : extensionForSource(resolvedSourcePath),
-      motion ? authoritativeBrief.approval?.sourceSha256 || null : null,
+      motion ? authoritativeBrief.approval?.sourceSha256 || expectedSourceSha256 : expectedSourceSha256,
       motion ? 'audio' : 'video',
     );
+    const sourceSha256 = ownedFiles.get(path.posix.basename(sourcePublicPath)).sha256;
     if (!motion) clonedProps.faceSrc = sourcePublicPath;
     clonedProps.audioSrc = sourcePublicPath;
 
@@ -1219,6 +1221,7 @@ function prepareLessonMediaBundle(options = {}, policy) {
 
     return {
       props: clonedProps,
+      sourceSha256,
       musicPath,
       directory,
       publicDirectory: base.publicDirectory,

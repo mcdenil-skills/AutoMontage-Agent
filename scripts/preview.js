@@ -189,10 +189,16 @@ function runPreview(options, dependencies = {}) {
       previewBrief: prepared.previewMedia.brief,
       sourcePath: prepared.previewMedia.sourcePath,
       sourceAlias: prepared.previewMedia.sourceAlias,
+      ...(kind === 'motion-reel' ? { expectedSourceSha256: sourceSha256 } : {}),
       namespace: `${manifest.slug}-preview`,
       temporaryId: temporaryId(),
       fileSystem,
     }, (lease) => {
+      if (kind === 'motion-reel') {
+        if (lease.sourceSha256 !== sourceSha256) throw new Error('preview narration snapshot hash mismatch');
+        // Publication records the digest of the bytes actually copied for Remotion.
+        planned.sourceSha256 = lease.sourceSha256;
+      }
       fileSystem.writeFileSync(planned.propsPath, `${JSON.stringify(lease.props, null, 2)}\n`);
       const command = remotionRenderCommand(resolveRemotionCommandImpl(ROOT), {
         entry: 'src/index.js',

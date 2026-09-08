@@ -182,3 +182,98 @@ test('approved motion JSON is byte-immutable, including receipt and whitespace',
     assert.deepEqual(fs.readdirSync(path.join(f.workspace.dir, 'renders')), []);
   }
 });
+
+test('motion preview rejects narration A → B → A around the real bundle snapshot', (t) => {
+  const f = fixture(t); preview(f);
+  const previous = readProjectManifest(f.workspace.dir).currentPreview;
+  const previousBytes = fs.readFileSync(path.join(f.workspace.dir, 'previews/current-preview.mp4'));
+  const a = fs.readFileSync(f.workspace.sourcePath); const b = Buffer.from('evilvoice');
+  let callbackRan = false;
+  assert.throws(() => preview(f, {
+    withPreviewMediaBundleImpl(options, operation) {
+      // runPreview has already hashed A. The isolated render snapshot now sees B.
+      fs.writeFileSync(f.workspace.sourcePath, b);
+      try {
+        return require('../scripts/render-media-bundle').withPreviewMediaBundle(options, lease => {
+          callbackRan = true;
+          assert.deepEqual(fs.readFileSync(path.join(lease.publicDirectory, lease.props.audioSrc)), b);
+          fs.writeFileSync(f.workspace.sourcePath, a);
+          return operation(lease);
+        });
+      } finally { fs.writeFileSync(f.workspace.sourcePath, a); }
+    },
+  }), /hash|source|narration/i);
+  assert.equal(callbackRan, false, 'mismatched narration must fail before Remotion');
+  assert.deepEqual(fs.readFileSync(f.workspace.sourcePath), a);
+  assert.deepEqual(readProjectManifest(f.workspace.dir).currentPreview, previous);
+  assert.deepEqual(fs.readFileSync(path.join(f.workspace.dir, 'previews/current-preview.mp4')), previousBytes);
+});
+
+for (const changedRole of ['approved', 'draft']) {
+  test(`final rejects late ${changedRole} mutation during the last narration hash`, (t) => {
+    const f = fixture(t); preview(f); const approved = approve(f); const prior = final(f, approved);
+    const priorBytes = fs.readFileSync(prior.finalPath);
+    const before = readProjectManifest(f.workspace.dir);
+    const changedPath = changedRole === 'approved' ? approved.jsonPath : f.published.jsonPath;
+    const descriptors = new Map(); let armed = false; let injected = false;
+    const originalOpen = fs.openSync; const originalRead = fs.readSync;
+    t.mock.method(fs, 'openSync', (filename, ...args) => {
+      const fd = originalOpen(filename, ...args); descriptors.set(fd, String(filename)); return fd;
+    });
+    t.mock.method(fs, 'readSync', (fd, ...args) => {
+      const count = originalRead(fd, ...args);
+      if (armed && !injected && descriptors.get(fd) === f.workspace.sourcePath && count === 0) {
+        injected = true; fs.appendFileSync(changedPath, '\n');
+      }
+      return count;
+    });
+    try {
+      assert.throws(() => final(f, approved, { probeVideoImpl() {
+        armed = true; return { width: 320, height: 568, fps: 30, duration: 2 };
+      } }), /changed|identity|hash/i);
+      assert.equal(injected, true);
+    } finally { t.mock.restoreAll(); }
+    const after = readProjectManifest(f.workspace.dir);
+    assert.equal(after.renders.at(-1).status, 'failed');
+    assert.equal(after.latestRender, before.latestRender);
+    assert.deepEqual(fs.readFileSync(prior.finalPath), priorBytes);
+  });
+
+  for (const point of ['mp4-fsync', 'mp4-rename', 'manifest-fsync']) {
+    test(`guarded final rolls back ${changedRole} mutation at ${point}`, (t) => {
+      const f = fixture(t); preview(f); const approved = approve(f); const prior = final(f, approved);
+      const priorBytes = fs.readFileSync(prior.finalPath);
+      const before = readProjectManifest(f.workspace.dir);
+      const changedPath = changedRole === 'approved' ? approved.jsonPath : f.published.jsonPath;
+      const descriptors = new Map(); let renamed = false; let injected = false;
+      const originalOpen = fs.openSync; const originalFsync = fs.fsyncSync; const originalRename = fs.renameSync;
+      const mutate = () => { injected = true; fs.appendFileSync(changedPath, '\n'); };
+      t.mock.method(fs, 'openSync', (filename, ...args) => {
+        const fd = originalOpen(filename, ...args); descriptors.set(fd, String(filename)); return fd;
+      });
+      t.mock.method(fs, 'fsyncSync', fd => {
+        const result = originalFsync(fd); const filename = descriptors.get(fd) || '';
+        if (!injected && ((point === 'mp4-fsync' && filename.startsWith(`${prior.finalPath}.tmp-`))
+          || (point === 'manifest-fsync' && renamed && filename.includes('project.json.tmp-render-manifest-')))) mutate();
+        return result;
+      });
+      t.mock.method(fs, 'renameSync', (from, to) => {
+        const result = originalRename(from, to);
+        if (String(to) === prior.finalPath && String(from).startsWith(`${prior.finalPath}.tmp-`)) {
+          renamed = true;
+          if (!injected && point === 'mp4-rename') mutate();
+        }
+        return result;
+      });
+      try {
+        assert.throws(() => final(f, approved), /changed|identity|hash/i);
+        assert.equal(injected, true, 'the intended publication point was exercised');
+      } finally { t.mock.restoreAll(); }
+      const after = readProjectManifest(f.workspace.dir);
+      assert.equal(after.renders.at(-1).status, 'failed');
+      assert.equal(after.latestRender, before.latestRender);
+      assert.deepEqual(fs.readFileSync(prior.finalPath), priorBytes);
+      assert.deepEqual(fs.readdirSync(path.dirname(prior.finalPath)), [path.basename(prior.finalPath)]);
+    });
+  }
+}

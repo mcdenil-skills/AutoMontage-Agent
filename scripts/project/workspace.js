@@ -1692,14 +1692,108 @@ function recordRender(workspace, {
     }
     if (status === 'complete') nextManifest.latestRender = entry.dir;
     nextManifest.updatedAt = new Date().toISOString();
-    workspace.manifest = transaction.commitManifest(nextManifest, { purpose: 'render-manifest' });
+    workspace.manifest = transaction.commitManifest(nextManifest, {
+      purpose: 'render-manifest', assertCurrent: options.assertCurrent,
+    });
     return workspace;
   }, options);
+}
+
+// Guarded publication keeps the previous final until both MP4 and manifest commit.
+// Reuse owned staging and the project lease; a failed input guard rolls the MP4 back.
+function publishGuardedFinal(workspace, sourcePath, destination, {
+  fileSystem, temporaryId, publicationGuard,
+}) {
+  const directory = captureProjectDirectoryGuard(workspace.dir, destination, fileSystem, 'final publication');
+  const backupPath = `${destination}.previous-final-${safeTemporaryId(temporaryId)}`;
+  let backupIdentity = null;
+  let stage = null;
+  let stageIdentity = null;
+  let committed = false;
+  let retainBackup = false;
+  try {
+    const sourceHandle = fileSystem.openSync(sourcePath, openReadOnlyFlags(fileSystem));
+    try {
+      const sourceIdentity = fileSystem.fstatSync(sourceHandle, { bigint: true });
+      const assertSource = () => {
+        resolveProjectPath(workspace.dir, relativeProjectPath(workspace, sourcePath), {
+          fileSystem, mustExist: true, type: 'file',
+        });
+        for (const stat of [fileSystem.fstatSync(sourceHandle, { bigint: true }), fileSystem.lstatSync(sourcePath, { bigint: true })]) {
+          if (!stat.isFile() || stat.isSymbolicLink()
+            || ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].some(key => stat[key] !== sourceIdentity[key])) {
+            throw new Error('render final source identity changed');
+          }
+        }
+      };
+      stage = stageOwnedSiblingFile(destination, null, {
+        fileSystem, temporaryId, purpose: 'final', assertParentCurrent: directory.assertCurrent,
+        verifyPublishedIdentity: true,
+        writeToHandle(handle) { assertSource(); copyOpenedFile(fileSystem, sourceHandle, handle); assertSource(); },
+      });
+      stageIdentity = fileSystem.lstatSync(stage.path);
+    } finally { fileSystem.closeSync(sourceHandle); }
+
+    directory.assertCurrent();
+    const previous = lstatIfPresent(fileSystem, destination);
+    if (previous) {
+      if (!previous.isFile() || previous.isSymbolicLink()) throw new Error('previous final must be regular');
+      fileSystem.linkSync(destination, backupPath);
+      backupIdentity = fileSystem.lstatSync(backupPath);
+      if (!sameFileIdentity(previous, backupIdentity)
+        || !sameFileIdentity(backupIdentity, fileSystem.lstatSync(destination))) {
+        throw new Error('previous final identity changed');
+      }
+    }
+    // MP4 staging/fsync and all digest reads precede the final shared identity barrier.
+    publicationGuard.assertCurrent();
+    publicationGuard.assertIdentity();
+    stage.commitReplace();
+    publicationGuard.assertIdentity();
+    // The callback commits the manifest with the same guard after its own staging/fsync.
+    publicationGuard.onCommit();
+    committed = true;
+    return destination;
+  } catch (error) {
+    try {
+      directory.assertCurrent();
+      const current = lstatIfPresent(fileSystem, destination);
+      const ownsCurrent = current && stageIdentity && !current.isSymbolicLink()
+        && sameFileIdentity(stageIdentity, current);
+      if (ownsCurrent || (!current && backupIdentity)) {
+        if (backupIdentity) {
+          const backup = lstatIfPresent(fileSystem, backupPath);
+          if (!backup || backup.isSymbolicLink() || !sameFileIdentity(backupIdentity, backup)) {
+            throw new Error('previous final backup identity changed; rollback refused');
+          }
+          fileSystem.renameSync(backupPath, destination);
+          backupIdentity = null;
+        } else stage.removeCommitted();
+      } else if (backupIdentity && (!current || !sameFileIdentity(backupIdentity, current))) {
+        throw new Error('foreign final identity; rollback refused');
+      }
+    } catch (rollbackError) {
+      retainBackup = true;
+      error.rollbackError = rollbackError;
+    }
+    throw error;
+  } finally {
+    const cleanup = () => {
+      stage?.cleanupTemp();
+      if (backupIdentity && !retainBackup) {
+        const backup = lstatIfPresent(fileSystem, backupPath);
+        if (backup && !backup.isSymbolicLink() && sameFileIdentity(backupIdentity, backup)) fileSystem.unlinkSync(backupPath);
+      }
+    };
+    if (committed) { try { cleanup(); } catch (_) { /* committed final/manifest; retain owned cleanup evidence */ } }
+    else cleanup();
+  }
 }
 
 function publishFinal(workspace, renderFinalPath, {
   fileSystem = fs,
   temporaryId = randomUUID,
+  publicationGuard = null,
 } = {}) {
   const sourceRelativePath = relativeProjectPath(workspace, path.resolve(renderFinalPath));
   const sourcePath = resolveProjectPath(workspace.dir, sourceRelativePath, {
@@ -1713,6 +1807,9 @@ function publishFinal(workspace, renderFinalPath, {
     fileSystem,
     mustExist: false,
   });
+  if (publicationGuard) {
+    return publishGuardedFinal(workspace, sourcePath, destination, { fileSystem, temporaryId, publicationGuard });
+  }
   const temporaryPath = `${destination}.tmp-${temporaryId()}`;
   let temporaryHandle = null;
   fileSystem.mkdirSync(path.dirname(destination), { recursive: true });
@@ -1732,6 +1829,7 @@ function publishFinal(workspace, renderFinalPath, {
 
 function runRenderLifecycle(workspace, render, operation, {
   publish = publishFinal,
+  publicationGuard = null,
 } = {}) {
   if (!workspace) return operation();
   const metadata = {
@@ -1745,6 +1843,18 @@ function runRenderLifecycle(workspace, render, operation, {
     recordRender(workspace, { ...metadata, status: 'started' }, options);
     try {
       const renderFinalPath = operation();
+      if (publicationGuard) {
+        return publish(workspace, renderFinalPath, {
+          publicationGuard: {
+            ...publicationGuard,
+            onCommit() {
+              recordRender(workspace, { ...metadata, status: 'complete' }, {
+                ...options, assertCurrent: publicationGuard.assertCurrent,
+              });
+            },
+          },
+        });
+      }
       const destination = publish(workspace, renderFinalPath);
       recordRender(workspace, { ...metadata, status: 'complete' }, options);
       return destination;

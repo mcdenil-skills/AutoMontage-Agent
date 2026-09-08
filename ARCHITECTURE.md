@@ -186,13 +186,19 @@ Preview не имеет отдельного HTML- или FFmpeg-дизайна:
 Общий `render-media-bundle` различает роли audio/image/video: narration, scene media и музыка
 копируются с no-follow в изолированный каталог. Motion media и music имеют обязательные hashes;
 все ссылки относительны workspace. Music использует существующий finish/ducking pipeline.
+Для motion preview digest фактически скопированной narration должен совпасть с digest исходника,
+полученным до snapshot; именно он записывается в `currentPreview.sourceSha256`. Подмена аудио
+на время копирования с последующим возвратом прежних bytes отклоняется до Remotion.
 
 Motion approval всегда требует просмотренного полного current preview. Поле `approval` содержит
 `draftSha256`, `previewSha256`, `sourceSha256`, `confirmedAt`; draft не может содержать receipt.
 Approved entry сохраняет SHA-256 точных JSON bytes. Final принимает только текущую зарегистрированную
 approved-копию, сверяет её с исходным draft и receipt, держит дескрипторы и повторяет проверки
-после рендера. Затем общий lifecycle публикует результат лишь после QA; failed-сборка сохраняет
-прежний final. Занятая папка версии не перезаписывается.
+после рендера. Все долгие digest-проверки завершаются общим быстрым контролем identities
+approved/draft/preview/narration. Motion включает этот guard после staging/fsync MP4,
+до и после его атомарной замены, а также после staging/fsync manifest перед его commit.
+Прежний final сохраняется до успешного commit manifest и восстанавливается при поздней правке
+входных файлов; failed-сборка не меняет `latestRender`. Занятая папка версии не перезаписывается.
 
 Motion Review работает в режиме просмотра: browser state включает названия/текст сцен и тип
 источника `audio`, но не содержит source paths, media hashes, approval/provider data или
