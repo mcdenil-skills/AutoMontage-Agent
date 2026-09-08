@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@material/material-color-utilities": "^0.4.0",
-    "@remotion/cli": "^4.0.504",
+    "@remotion/cli": "^4.0.520",
     "@remotion/fonts": "^4.0.504",
     "@remotion/layout-utils": "^4.0.504",
     "@remotion/transitions": "^4.0.504",
