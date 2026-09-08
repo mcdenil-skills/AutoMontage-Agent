@@ -9,7 +9,7 @@
 const path = require('path');
 const fs = require('fs');
 const { execFileSync, spawn } = require('child_process');
-const { buildDemoArgs, ensureOutputDestination } = require('./project/cli-options');
+const { buildDemoArgs, buildMotionDemoArgs, ensureOutputDestination } = require('./project/cli-options');
 const { configureMediaToolPath } = require('./env');
 
 const ROOT = path.join(__dirname, '..');
@@ -25,6 +25,8 @@ function help() {
   automontage motion --project-dir . --brief brief/v01-approved.motion.json
                                       собрать утверждённый MotionReel
   automontage demo                    собрать демо-ролик из примера (без ключей и whisper)
+  automontage demo --motion           создать motion-reel draft с тестовыми тонами (без речи/API)
+                                      [--project-dir <новая-папка>], затем preview и утверждение
   automontage doctor                  проверить окружение (что доустановить)
   automontage review --project-dir .  открыть локальную проверку монтажного листа
   automontage preview --project-dir . --brief brief/v01-draft.lesson.json
@@ -84,6 +86,15 @@ if (argv[0] === 'motion') {
       stdio: 'inherit', cwd: process.cwd(), shell: false,
     });
   } catch (error) { process.exit(error.status || 1); }
+  process.exit(0);
+}
+
+if (argv[0] === 'demo' && argv[1] === '--motion') {
+  try {
+    execFileSync(process.execPath, buildMotionDemoArgs(ROOT, process.cwd(), argv.slice(2)), {
+      stdio: 'inherit', cwd: process.cwd(), shell: false,
+    });
+  } catch (error) { if (!error.status) console.error(error.message); process.exit(error.status || 1); }
   process.exit(0);
 }
 

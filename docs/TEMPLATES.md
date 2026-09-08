@@ -1,14 +1,16 @@
 # Шаблоны монтажа (Templates)
 
 Движок собирает ролик по ВЫБРАННОМУ шаблону. Шаблон = композиция (layout) + тема (стиль).
-Формат наследуется от исходника, если не сказано иначе.
+Для lesson формат наследуется от видео, если не сказано иначе. У audio-only `motion-reel`
+свой стандарт: 1080×1920 и 30 FPS.
 
 Для первого монтажа без технических деталей начни с
 [«Монтаж от видео до готового MP4»](MONTAGE-GUIDE.md). Этот каталог нужен, когда уже требуется
 выбрать конкретный шаблон, сцену или тему.
 
 Как выбрать шаблон при монтаже: скажи агенту тип ролика и стиль, либо укажи флагом
-`--template <id>` (и `--theme <id>` для скина). Ниже каталог открытых шаблонов со скринами.
+`--template lesson` (и `--theme <id>` для скина). Motion запускается отдельной командой
+`automontage motion`, а не флагом `--template motion-reel`.
 
 Запускай только одну сборку на checkout. Каждый lesson render получает owner-only media root
 в `os.tmpdir()`, который Remotion получает отдельным абсолютным `--public-dir`; props сохраняют
@@ -23,6 +25,31 @@
 ---
 
 ## Открытые шаблоны (в этом репозитории)
+
+### Motion-reel :: Анимационный ролик без камеры
+
+Композиция `MotionReel`, тема `motion-neutral`, аудио вместо говорящей головы. Сцены:
+`kinetic-title`, `card`, `steps`, `list`, `counter`, `media`, `cta` — отдельный набор,
+не варианты lesson. Полоса субтитров по умолчанию выключена; optional `caption` задаётся в brief.
+Лимиты полей и media/audioMode описаны в [каталоге](SCENE-CATALOG.md#motionreel-семь-сцен-без-камеры).
+
+```bash
+automontage motion narration.mp3 --project "Анимационный ролик"
+automontage preview --project-dir projects/<id> --brief brief/vNN-draft.motion.json
+node scripts/project/approve-brief.js projects/<id> brief/vNN-draft.motion.json --confirm-preview-viewed
+automontage motion --project-dir projects/<id> --brief brief/vNN-approved.motion.json --version-label reviewed
+```
+
+Между инициализацией и preview агент по локальному transcript публикует полный timed brief;
+между preview и approval пользователь смотрит полный ролик и явно утверждает эту версию.
+`<id>`/`vNN` — пути фактической ревизии, `node scripts/...` выполняется из корня движка.
+Preview — настоящий Remotion с watermark; final принимает только текущий approved JSON и
+проверенные hashes. Motion Review пока read-only. Готовое аудио не требует provider-ключей,
+ElevenLabs — отдельная опция с согласованным текстом/голосом и `--accept-provider-cost`.
+Текст отправляется провайдеру; ключ/voice ID/кэш остаются приватными, неоднозначный сбой
+не повторяется автоматически. [Полный навык](../skills/motion-reel/SKILL.md) описывает consent,
+таймкоды, QA и повторные правки. Офлайн-тест: `automontage demo --motion` — только draft,
+с тестовыми тонами вместо речи. Расписание и автопубликация относятся к будущему отдельному слою.
 
 ### 1. lesson-presentation :: Урок / эфир (9:16 / 16:9)
 Режиссёр выбирает раскладку из 7 готовых сцен и заполняет её дословными фразами,

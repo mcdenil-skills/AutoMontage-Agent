@@ -108,7 +108,7 @@ function runMotion(options, dependencies = {}) {
   const runNodeToolImpl = dependencies.runNodeToolImpl || runNodeTool;
   const probeOptions = dependencies.probeOpenedAudioImpl ? { probeOpenedAudioImpl: dependencies.probeOpenedAudioImpl } : {};
   if (!options.briefPath) {
-    const { workspace, probe } = createMotionProject({ baseDir: process.cwd(), name: options.project,
+    const { workspace, probe } = createMotionProject({ baseDir: path.join(process.cwd(), 'projects'), name: options.project,
       projectDir: options.projectDir, narrationPath: options.narrationPath, ...probeOptions });
     dependencies.narrationGuard?.assertCurrent();
     if (workspace.manifest.currentBrief) throw new Error('project already has a brief; continue with preview or an approved --brief');

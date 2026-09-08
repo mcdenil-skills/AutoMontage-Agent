@@ -81,3 +81,22 @@ test('neutral fixture text contains no local path or client-specific legacy copy
   ].join('|'), 'u');
   assert.doesNotMatch(all, legacyCopy);
 });
+
+test('motion fixtures generate deterministic audio and a hashed image without provider calls', () => {
+  const { buildMotionDemoFixture } = require('../scripts/generate-neutral-fixtures');
+  const { createHash } = require('node:crypto');
+  const first = buildMotionDemoFixture();
+  const second = buildMotionDemoFixture();
+  assert.deepEqual(first, second);
+  assert.equal(first.audioBytes.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(first.audioBytes.readUInt32LE(24), 24000);
+  assert.equal(first.audioBytes.readUInt16LE(22), 1);
+  assert.equal(first.audioBytes.readUInt32LE(40), 21 * 24000 * 2);
+  assert.ok(first.audioBytes.subarray(44).some(value => value !== 0));
+  assert.equal(first.imageBytes.toString('hex', 0, 8), '89504e470d0a1a0a');
+  assert.equal(first.brief.scenes.find(scene => scene.scene === 'media').media.sha256,
+    createHash('sha256').update(first.imageBytes).digest('hex'));
+  assert.deepEqual(first.brief, JSON.parse(read(REPOSITORY_ROOT, 'examples/motion-brief-demo.json')));
+  assert.match(first.script, /тестов.*тон/iu);
+  require('../scripts/motion/source').validateCanonicalTranscript(first.transcript);
+});

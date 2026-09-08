@@ -7,6 +7,13 @@
 
 ### Добавлено
 
+- Публичный `motion-reel` workflow: канонический навык и одинаковые adapters для Claude/Codex,
+  маршрут без камеры из `reel-turnkey`, согласование script/озвучки, timed brief, preview,
+  явное approval, final и QA. README, архитектура, templates, каталог и простой guide синхронизированы.
+- `automontage demo --motion` создаёт credential-free audio-only draft со всеми семью motion-сценами,
+  локально сгенерированными тестовыми тонами и нейтральной PNG. Существующие папки сохраняются;
+  preview и approved-only final запускаются отдельно. Расписание и автопубликация остаются вне движка.
+
 - Необязательная ElevenLabs-озвучка motion по `--script --voice elevenlabs --accept-provider-cost`:
   приватный голос без repository default, проверенный локальный кэш и таймкоды слов без Whisper.
   Timeout/неоднозначный сбой не повторяет платный запрос; privacy gate блокирует provider secrets,
@@ -25,6 +32,9 @@
   покадровые анимации, opt-in captions и подгонка плотной кириллицы внутри сейф-зоны.
 
 ### Исправлено
+
+- Инициализация motion из локального аудио теперь создаёт проект внутри `projects/` текущей
+  папки, как ElevenLabs и demo; явный `--project-dir` сохраняет прежнее поведение.
 
 - Усилены границы ElevenLabs cache: guard до записи provider bytes, rollback до последней
   проверки, fsync новых папок/ignore/receipt и сверка фактически скопированного narration с

@@ -620,3 +620,51 @@ provider outputs снаружи или незавершённые опублик
 после final links (directory fsync применяется на POSIX). Отдельная подмена кэшированного аудио
 на первом probe не допускает words/draft с чужой записью. Staged privacy проверяет многострочные
 YAML values и TOML triple-quoted strings рядом с пустыми значениями и placeholders.
+
+## Офлайн motion-reel demo и публичный навык
+
+```bash
+node --test tests/motion-demo.test.js tests/neutral-fixtures.test.js tests/public-privacy.test.js
+automontage demo --motion
+automontage preview --project-dir projects/motion-demo --brief brief/v01-draft.motion.json
+node scripts/qa-preview.js --project-dir projects/motion-demo
+```
+
+Демо генерирует 21 секунду mono PCM WAV (тестовые тоны, не речь), нейтральную PNG и
+иллюстративные таймкоды. JSON проходит настоящую motion schema; порядок содержит ровно
+`kinetic-title`, `card`, `steps`, `list`, `counter`, `media`, `cta`. Команда создаёт только
+audio-only draft, без Whisper, API, approval и final. Существующий workspace не изменяется;
+для нового прогона передай `--project-dir projects/motion-demo-2`.
+
+Тесты также проверяют hash сгенерированного media, детерминизм текстовых/binary fixtures,
+одинаковые SKILL.md/reference в `skills/`, `.agents/skills/`, `.codex/skills/`, раннюю маршрутизацию
+из `reel-turnkey` и ссылки на команды/сцены в документации. Медиа не добавляются в Git.
+
+Проверка реального публичного CLI от demo до final (только нейтральные fixtures; тест сам
+выполняет отдельный approval как тестовый сценарий):
+
+```bash
+AUTOMONTAGE_TEST_MOTION_DEMO=1 node --test tests/motion-demo.test.js
+```
+
+В обычной работе после просмотра полного preview требуется явное утверждение пользователя:
+
+```bash
+node scripts/project/approve-brief.js projects/motion-demo brief/v01-draft.motion.json --confirm-preview-viewed
+automontage motion --project-dir projects/motion-demo --brief brief/v01-approved.motion.json --version-label reviewed
+ffprobe -v error -show_streams -show_format -of json projects/motion-demo/final/neutral-motion-demo.mp4
+ffmpeg -v error -i projects/motion-demo/final/neutral-motion-demo.mp4 -f null -
+```
+
+Ожидание: H.264/AAC, 1080×1920, 30 FPS, 21 секунда и ровно один аудиопоток; полный decode без
+ошибок. Проверь кадры каждой сцены, чтение кириллицы, постепенные steps, точный counter и CTA,
+watermark только в preview. Синтетические тоны проверяют целостность аудиопути; они не доказывают
+качество реальной речи. Клиентский final нужно дополнительно смотреть/слушать целиком.
+Для сохранения артефактов E2E установи `AUTOMONTAGE_MOTION_DEMO_DIR` в существующий локальный
+игнорируемый каталог; без переменной временные файлы очищаются.
+
+Node packages, FFmpeg и Remotion browser должны быть установлены заранее. Первая загрузка
+browser может требовать интернет; после подготовки тест/демо не обращаются к провайдерам,
+не используют `.env` и не скачивают Whisper. На Windows переменные opt-in задаются обычным
+синтаксисом PowerShell (`$env:AUTOMONTAGE_TEST_MOTION_DEMO = '1'`). Расписание и автопубликация
+не тестируются: это будущий отдельный слой за пределами движка.

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
+const { deflateSync } = require('node:zlib');
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_TEXT_FIXTURES = Object.freeze([
@@ -9,6 +11,7 @@ const PUBLIC_TEXT_FIXTURES = Object.freeze([
   'props/job1v.json',
   'props/preview.json',
   'props/preview_h.json',
+  'examples/motion-brief-demo.json',
 ]);
 const TEXT = 'Это нейтральное демо автомонтажа. Агент получает исходник, добавляет титры, '
   + 'выбирает визуальные сцены и собирает готовый ролик. Личные материалы остаются локально.';
@@ -116,6 +119,80 @@ function writeText(root, relativePath, source) {
   fs.writeFileSync(destination, source);
 }
 
+// Algorithmic fixtures only: these tones are not speech or a user's voice.
+function neutralToneWav(durationSec = 21, sampleRate = 24000) {
+  const samples = durationSec * sampleRate;
+  const bytes = Buffer.alloc(44 + samples * 2);
+  bytes.write('RIFF'); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write('WAVEfmt ', 8);
+  bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(sampleRate, 24); bytes.writeUInt32LE(sampleRate * 2, 28);
+  bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34); bytes.write('data', 36);
+  bytes.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i += 1) {
+    const time = i / sampleRate;
+    const phase = time % 0.75;
+    const envelope = Math.min(1, phase / 0.03) * Math.max(0, 1 - phase / 0.6);
+    const frequency = [220, 275, 330, 440, 330, 275, 220][Math.floor(time / 3)];
+    bytes.writeInt16LE(Math.round(2600 * envelope * Math.sin(2 * Math.PI * frequency * time)), 44 + i * 2);
+  }
+  return bytes;
+}
+
+function pngChunk(type, data) {
+  const content = Buffer.concat([Buffer.from(type), data]);
+  let crc = 0xffffffff;
+  for (const byte of content) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  const size = Buffer.alloc(4); size.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+  return Buffer.concat([size, content, checksum]);
+}
+
+function neutralMotionImage() {
+  const size = 320;
+  const header = Buffer.alloc(13); header.writeUInt32BE(size); header.writeUInt32BE(size, 4);
+  header[8] = 8; header[9] = 2;
+  const rows = Buffer.alloc(size * (1 + size * 3));
+  for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+    const circle = (x - 160) ** 2 + (y - 145) ** 2 < 90 ** 2;
+    const color = circle ? [130, 180, 210] : y > 245 ? [200, 210, 215] : [237, 242, 244];
+    rows.set(color, y * (size * 3 + 1) + 1 + x * 3);
+  }
+  return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
+function buildMotionDemoFixture() {
+  const imageBytes = neutralMotionImage();
+  const scenes = [
+    { scene: 'kinetic-title', text: 'Идея приходит в движение' },
+    { scene: 'card', title: 'Одна мысль', body: 'Каждая сцена объясняет один простой тезис.' },
+    { scene: 'steps', title: 'Порядок действий', steps: ['Придумать', 'Проверить', 'Собрать'] },
+    { scene: 'list', title: 'Что проверить', items: ['Понятный заголовок', 'Читаемый текст', 'Спокойный ритм', 'Ясный следующий шаг'] },
+    { scene: 'counter', label: 'Типов сцен в этом демо', value: 7 },
+    { scene: 'media', overlayText: 'Нейтральная геометрия', media: { kind: 'image', src: 'assets/neutral.png',
+      sha256: createHash('sha256').update(imageBytes).digest('hex'), fit: 'contain' } },
+    { scene: 'cta', title: 'Проверьте результат', action: 'Посмотрите полный черновик' },
+  ].map((scene, index) => ({ ...scene, start: index * 3, end: (index + 1) * 3 }));
+  const transcript = scenes.map(scene => {
+    const text = scene.text || scene.title || scene.label || scene.overlayText;
+    const tokens = text.split(' ');
+    const step = (scene.end - scene.start) / tokens.length;
+    return { start: scene.start, end: scene.end, text, words: tokens.map((w, index) => ({ w,
+      s: scene.start + index * step, e: scene.start + (index + 0.8) * step })) };
+  });
+  return {
+    brief: { version: 1, kind: 'motion-reel', status: 'draft', source: 'input/narration.wav',
+      theme: 'motion-neutral', title: 'Нейтральное motion-демо',
+      output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 630 }, scenes },
+    script: 'Синтетическое демо: тестовые тоны, не речь. Таймкоды иллюстративные, не результат распознавания.\n\n'
+      + transcript.map(segment => segment.text).join('\n') + '\n',
+    transcript, audioBytes: neutralToneWav(), imageBytes,
+  };
+}
+
 function generateNeutralFixtures({ root = REPOSITORY_ROOT } = {}) {
   const destinationRoot = path.resolve(root);
   const words = timedWords();
@@ -127,6 +204,7 @@ function generateNeutralFixtures({ root = REPOSITORY_ROOT } = {}) {
     words: words.map((word) => ({ ...word, w: ` ${word.w}` })),
   }];
   const fixtures = {
+    'examples/motion-brief-demo.json': `${JSON.stringify(buildMotionDemoFixture().brief, null, 2)}\n`,
     'src/data/transcript.json': `${JSON.stringify(transcript, null, 2)}\n`,
     'src/data/captions.js': [
       '// АВТОГЕНЕРАЦИЯ (scripts/generate-neutral-fixtures.js).',
@@ -159,4 +237,5 @@ module.exports = {
   PUBLIC_TEXT_FIXTURES,
   TEXT,
   generateNeutralFixtures,
+  buildMotionDemoFixture,
 };

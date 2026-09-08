@@ -1,10 +1,10 @@
 # Архитектура AutoMontage-Agent
 
-Актуально на 2026-08-24. Документ описывает существующий код, а не будущую дорожную карту.
+Актуально на 2026-09-08. Документ описывает существующий код, а не будущую дорожную карту.
 
 ## 1. Назначение и границы
 
-AutoMontage-Agent – локальный конвейер «видео + монтажное решение → MP4». Он объединяет:
+AutoMontage-Agent – локальный конвейер «видео или озвучка + монтажное решение → MP4». Он объединяет:
 
 - Node.js-оркестратор и CLI;
 - faster-whisper для локальной транскрибации;
@@ -175,9 +175,23 @@ Preview не имеет отдельного HTML- или FFmpeg-дизайна:
 
 #### Motion workflow
 
+Публичный путь: тема → script в текущей агентной сессии → выбор готового аудио или платного
+provider → canonical words → timed motion draft → полный preview → явное approval → final → QA.
+Канон инструкции — `skills/motion-reel/SKILL.md` с reference; `.agents` и `.codex` хранят
+byte-identical копии. `reel-turnkey` маршрутизирует запросы без камеры до применения lesson-правил.
+
+`automontage demo --motion` использует `scripts/project/cli-options.js` и отдельный
+`scripts/motion/demo.js`: из `generate-neutral-fixtures.js` получает детерминированные WAV-тоны,
+PNG-геометрию, иллюстративный transcript/script и все семь сцен. Публикуется только draft
+audio-only workspace, стандартно `projects/motion-demo/`, без Whisper, провайдера и скрытого
+approval/render. Любая существующая папка назначения отклоняется. Tracked
+`examples/motion-brief-demo.json` равен генератору; бинарные данные остаются локальными.
+Scheduling и автопубликация — будущая отдельная orchestration-система, не часть этого pipeline.
+
 `scripts/motion/build.js` владеет отдельным CLI-маршрутом. Первый вызов `motion <audio> --project`
 использует `createMotionProject`, dedicated audio probe и локальную транскрипцию; scaffold
-публикуется через `publishBriefRevision`. Проба открытого аудио использует seekable
+публикуется через `publishBriefRevision`. Новый проект по умолчанию живёт внутри `projects/`
+текущей папки; явный `--project-dir` выбирает другое место. Проба открытого аудио использует seekable
 `cache:pipe:0` с `read_ahead_limit=-1`, чтобы определять длительность обычных WAV/MP3 больше
 64 KiB; timeout ограничен 30 секундами.
 

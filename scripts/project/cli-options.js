@@ -18,7 +18,16 @@ function ensureOutputDestination(args, cwd) {
   return result;
 }
 
+function buildMotionDemoArgs(root, cwd, args = []) {
+  if (args.length && (args.length !== 2 || args[0] !== '--project-dir' || !args[1] || args[1].startsWith('--'))) {
+    throw new Error('unknown motion demo option; usage: automontage demo --motion [--project-dir <new-dir>]');
+  }
+  return [path.join(root, 'scripts', 'motion', 'demo.js'), '--project-dir',
+    path.resolve(cwd, args[1] || 'projects/motion-demo')];
+}
+
 module.exports = {
   buildDemoArgs,
+  buildMotionDemoArgs,
   ensureOutputDestination,
 };

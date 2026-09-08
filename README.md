@@ -1,6 +1,8 @@
 # AutoMontage-Agent 🎬
 
-Движок автомонтажа видео для ИИ-агента (Claude Code / Codex). Скидываешь сырое видео говорящей головы – получаешь готовый ролик: субтитры, анимированные плашки, счётчики, картинки под смысл, полноэкранные врезки, музыка, перекадрирование в вертикаль. Всё локально, стиль настраивается.
+Движок автомонтажа для ИИ-агента (Claude Code / Codex). Из видео со спикером собирает ролик с
+субтитрами, графикой, B-roll и музыкой. Режим `motion-reel` создаёт анимационный ролик без камеры
+из озвучки: текст, карточки, схемы, списки, счётчики и CTA. Монтаж и рендер работают локально.
 
 Не нужно уметь монтировать и не нужен терминал, всё делает агент по твоему запросу.
 
@@ -16,6 +18,8 @@
 
 ## Что умеет
 
+- **MotionReel без камеры** — готовая озвучка или отдельно согласованный ElevenLabs API,
+  семь анимационных сцен, полный preview, явное утверждение и final с QA.
 - **Субтитры-караоке** – распознаёт речь, ставит субтитры, подсвечивает текущее слово.
 - **Плашки и счётчики** – красивые карточки в твоём стиле: текст печатается, цифры бегут, прогресс-бары заполняются.
 - **Фото и видео по смыслу** – вставляет подготовленный b-roll на весь экран, при необходимости
@@ -127,7 +131,68 @@ legacy/developer opt-in и не входит в стандартный путь 
 
 ---
 
-## Формат ролика = формат исходника
+## Motion-reel: от темы до анимационного MP4
+
+Попроси агента: «Сделай анимационный рилс без камеры на тему `<тема>`. Подготовь сценарий,
+используй мою озвучку, покажи полный preview и дождись утверждения». Публичный
+[навык motion-reel](skills/motion-reel/SKILL.md) ведёт весь путь: тема → script → выбор аудио
+→ таймкоды → motion brief → preview → явное утверждение → final → QA. Он доступен также
+в `.agents/skills/motion-reel` и `.codex/skills/motion-reel`; файлы синхронизируются с каноном.
+
+Готовое аудио работает без provider-ключей:
+
+```bash
+automontage motion narration.wav --project "Мой motion ролик"
+```
+
+MP3/WAV/M4A копируется в `projects/<id>/input/narration.*`. Локальный Whisper создаёт
+`transcript/words.json`, CLI публикует односценовый draft scaffold. Агент по фактическим словам
+составляет полный план и регистрирует новую Markdown+JSON-ревизию. Подписка агента отвечает за
+смысл; команда сама не придумывает сценарий. `MotionReel` использует `motion-neutral`,
+1080×1920 и 30 FPS; камера, `faceSrc` и видео-заглушка не нужны.
+
+### Офлайн-демо без ключей и Whisper
+
+После установки Node-зависимостей, FFmpeg и Remotion browser:
+
+```bash
+automontage demo --motion
+automontage preview --project-dir projects/motion-demo --brief brief/v01-draft.motion.json
+node scripts/qa-preview.js --project-dir projects/motion-demo
+```
+
+Из checkout вместо `automontage` можно писать `node scripts/cli.js`. Демо создаёт 21 секунду
+тестовых тонов (не речь), нейтральную геометрическую PNG и иллюстративные таймкоды. Все семь
+сцен берутся из [публичного fixture](examples/motion-brief-demo.json); аудио и PNG генерируются
+локально, медиа не коммитятся. Интернет и `.env` для самого демо не нужны; первая установка
+Remotion browser может потребовать скачивание. Инициализация не создаёт preview/final и ничего
+не утверждает. Существующая папка не перезаписывается; новый прогон —
+`automontage demo --motion --project-dir projects/motion-demo-2`.
+
+После полного просмотра и явного утверждения пользователем:
+
+```bash
+node scripts/project/approve-brief.js projects/motion-demo brief/v01-draft.motion.json --confirm-preview-viewed
+automontage motion --project-dir projects/motion-demo --brief brief/v01-approved.motion.json --version-label reviewed
+```
+
+Итог — `projects/motion-demo/final/neutral-motion-demo.mp4`; версия остаётся в `renders/v01-reviewed/`.
+Для своих роликов используй фактические `<id>` и `vNN` из `project.json`. Draft рендерится
+только через `automontage preview` с watermark. Approval связывает hashes draft, preview и
+озвучки; любые изменения требуют нового draft, полного preview и утверждения. Final проходит
+decode/метаданные до публикации, затем агент проверяет весь ролик визуально и на слух.
+Команды `node scripts/...` здесь выполняются из корня движка.
+
+Motion Review (`automontage review --project-dir projects/<id>`) пока только для просмотра:
+правки сценария делает агент новой draft-ревизией. Lesson-редактор и поиск Pexels в этом режиме
+не включены. Сцены и лимиты — в [каталоге](docs/SCENE-CATALOG.md), пакет brief —
+в [reference](skills/motion-reel/references/brief-package.md), простой путь —
+в [инструкции монтажа](docs/MONTAGE-GUIDE.md#ролик-без-камеры-motion-reel).
+
+Расписание, очереди, автопубликация и аналитика остаются будущим отдельным слоем. Движок
+создаёт локальный MP4 и не управляет аккаунтами площадок.
+
+## Формат видео-ролика = формат исходника
 
 По умолчанию агент делает монтаж в том же формате, что и присланное видео:
 - прислал **горизонтальное** (16:9) → получишь **горизонтальное**;
@@ -199,26 +264,17 @@ node scripts/build.js projects/<id>/input/source.mp4 --template lesson \
 речи и точных границ; **«СМОНТИРОВАННЫЙ ПРЕДПРОСМОТР»** показывает графику, сцены, b-roll и
 музыку. Это разные файлы и разные задачи, поэтому один плеер не подменяет другой.
 
-### Motion Reel из готовой озвучки
+### Необязательный платный голос ElevenLabs
 
-```bash
-automontage motion narration.wav --project "Название ролика"
-# Команда сообщает папку проекта и путь draft. Агент читает transcript/words.json
-# и заменяет начальный scaffold осмысленным планом из семи motion-сцен.
-automontage preview --project-dir projects/<id> --brief brief/v01-draft.motion.json
-npm run qa:preview -- --project-dir projects/<id>
-node scripts/project/approve-brief.js projects/<id> brief/v01-draft.motion.json --confirm-preview-viewed
-automontage motion --project-dir projects/<id> --brief brief/v01-approved.motion.json --version-label first
-```
-
-Начальная команда копирует аудио в `input/narration.*`, запускает локальный Whisper и создаёт
-Markdown/JSON scaffold со статусом `draft`. Это заготовка для агентской режиссуры, а не готовый
-смысловой монтаж. Default — `motion-neutral`, 1080×1920, 30 FPS; камера не требуется.
-Повторный final берёт озвучку из manifest, поэтому передавать исходник второй раз не нужно.
+Маршрут с готовой записью и семью сценами описан в
+[Motion-reel](#motion-reel-от-темы-до-анимационного-mp4). Повторный final берёт озвучку из
+manifest, поэтому передавать исходник второй раз не нужно.
 
 Для новой озвучки из текста есть отдельный платный opt-in. Заполни локальный `.env` по
 `.env.example`: `ELEVENLABS_API_KEY` и `ELEVENLABS_VOICE_ID`. В репозитории нет голоса по
 умолчанию; вместо переменной ID можно явно передать `--voice-id <voice-id>`.
+Перед вызовом агент показывает точный script и выбранный голос, предупреждает о расходах и
+получает явное согласие на передачу текста ElevenLabs. Наличие ключа не заменяет согласия.
 Флаг ниже означает согласие на расход в ElevenLabs и передачу текста этому провайдеру:
 
 ```bash
