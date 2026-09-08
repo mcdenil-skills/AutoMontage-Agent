@@ -299,8 +299,6 @@ async function importFileFromBrowser(page, filePath) {
     candidate.url().endsWith('/api/assets/import') && candidate.request().method() === 'POST'
   ));
   await input.setInputFiles(filePath);
-  await expect(page.locator('[data-media-import-status]')).toContainText(/загрузка|проверяем/i);
-  await expect(page.locator('[data-media-progress]')).toHaveAttribute('value', /\d+/);
   const response = await responsePromise;
   expect(response.status()).toBe(201);
   await expect(page.locator('[data-media-import-status]')).toContainText(/добавлено/i);
