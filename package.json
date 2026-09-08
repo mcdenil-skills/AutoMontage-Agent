@@ -40,7 +40,7 @@
     "@remotion/transitions": "^4.0.504",
     "ajv": "^8.20.0",
     "node-vibrant": "^4.0.4",
-    "react": "19.0.0",
+    "react": "19.2.8",
     "react-dom": "19.0.0",
     "remotion": "^4.0.504"
   },
