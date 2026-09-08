@@ -7,6 +7,11 @@
 
 ### Добавлено
 
+- Необязательная ElevenLabs-озвучка motion по `--script --voice elevenlabs --accept-provider-cost`:
+  приватный голос без repository default, проверенный локальный кэш и таймкоды слов без Whisper.
+  Timeout/неоднозначный сбой не повторяет платный запрос; privacy gate блокирует provider secrets,
+  voice ID в конфигурации и опубликованные narration caches. Путь с готовым аудио остаётся без ключей.
+
 - `automontage motion <audio> --project` создаёт локальный transcript/scaffold; continuation
   по approved brief рендерит отдельные версии MotionReel через общий finish/ducking и QA.
   Preview/Review выбирают композицию по stored kind. Motion approval обязателен после полного

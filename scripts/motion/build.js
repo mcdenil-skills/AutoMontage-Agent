@@ -12,17 +12,21 @@ const { withRenderMediaBundle } = require('../render-media-bundle');
 const { createMotionProject, transcribeMotionNarration, validateCanonicalTranscript, probeAudioPath } = require('./source');
 const { prepareMotionRender } = require('./workflow');
 const { validateStoredBrief } = require('../project/brief-contract');
-const { readProjectManifest, resolveProjectPath, publishBriefRevision, nextRenderPaths, runRenderLifecycle } = require('../project/workspace');
+const { readProjectManifest, resolveProjectPath, publishBriefRevision, nextRenderPaths, runRenderLifecycle, formatProjectId, writeFilesNoReplace } = require('../project/workspace');
 const { verifyApprovalPreview } = require('../project/preview-workspace');
 
 function parseMotionOptions(argv) {
   const options = {};
   const flags = new Map([['--project', 'project'], ['--project-dir', 'projectDir'], ['--brief', 'briefPath'],
-    ['--version-label', 'versionLabel'], ['--model', 'model']]);
+    ['--version-label', 'versionLabel'], ['--model', 'model'], ['--script', 'scriptPath'],
+    ['--voice', 'voice'], ['--voice-id', 'voiceId']]);
   const seen = new Set();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (!arg.startsWith('-') && index === 0) { options.narrationPath = arg; continue; }
+    if (arg === '--accept-provider-cost' && !seen.has(arg)) {
+      seen.add(arg); options.acceptProviderCost = true; continue;
+    }
     const key = flags.get(arg);
     if (!key || seen.has(arg)) throw new Error(`unknown or duplicate motion option: ${arg}`);
     seen.add(arg);
@@ -30,7 +34,13 @@ function parseMotionOptions(argv) {
     if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
     options[key] = value;
   }
-  if (options.briefPath) {
+  if (options.scriptPath) {
+    if (options.voice !== 'elevenlabs' || options.narrationPath || options.briefPath || !options.project || options.model) {
+      throw new Error('motion TTS requires --script, --voice elevenlabs and --project; audio/final/Whisper options cannot be mixed');
+    }
+  } else if (options.voice || options.voiceId || options.acceptProviderCost) {
+    throw new Error('voice options require --script and --voice elevenlabs');
+  } else if (options.briefPath) {
     if (!options.projectDir || options.narrationPath || options.project || options.model) {
       throw new Error('motion final requires --project-dir and --brief, using the manifest narration');
     }
@@ -92,6 +102,7 @@ function verifyMotionApproval(workspace, entry, approved) {
 }
 
 function runMotion(options, dependencies = {}) {
+  if (options.scriptPath) return runScriptMotion(options, dependencies);
   const root = dependencies.root || ROOT;
   const runToolImpl = dependencies.runToolImpl || runTool;
   const runNodeToolImpl = dependencies.runNodeToolImpl || runNodeTool;
@@ -179,14 +190,45 @@ function runMotion(options, dependencies = {}) {
   } finally { snapshot.close(); approval?.close(); }
 }
 
-function main(argv = process.argv.slice(2)) {
+async function runScriptMotion(options, dependencies) {
+  if (options.voice !== 'elevenlabs' || !options.project || options.briefPath || options.narrationPath || options.model || options.versionLabel) {
+    throw new Error('motion TTS requires --script, --voice elevenlabs and --project');
+  }
+  const { prepareNarrationWorkspace, loadVoiceConfig, synthesizeWithTimestamps } = require('../voice/elevenlabs');
+  const projectId = formatProjectId({ date: new Date(), name: options.project });
+  const projectDir = path.resolve(options.projectDir || path.join(process.cwd(), 'projects', projectId));
+  if (fs.existsSync(path.join(projectDir, 'project.json'))) {
+    throw new Error('motion TTS requires a new project; continue the existing project with its saved audio/brief');
+  }
+  let script;
+  try {
+    const fd = fs.openSync(path.resolve(options.scriptPath), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > 65536) throw new Error('invalid script');
+      script = fs.readFileSync(fd, 'utf8');
+    } finally { fs.closeSync(fd); }
+  } catch (_) { throw new Error('motion script must be a readable regular UTF-8 file, at most 64 KiB'); }
+  const config = loadVoiceConfig({ root: dependencies.root || ROOT, env: dependencies.voiceEnv || process.env });
+  prepareNarrationWorkspace(projectDir);
+  const narration = await synthesizeWithTimestamps({ projectDir, script, apiKey: config.apiKey,
+    voiceId: options.voiceId || config.voiceId, acceptProviderCost: options.acceptProviderCost }, dependencies.voiceDependencies);
+  const { workspace } = createMotionProject({ projectDir, name: options.project, narrationPath: narration.audioPath,
+    ...(dependencies.probeOpenedAudioImpl ? { probeOpenedAudioImpl: dependencies.probeOpenedAudioImpl } : {}),
+  });
+  writeFilesNoReplace([{ destination: resolveProjectPath(projectDir, workspace.manifest.transcript.words, { type: 'file' }),
+    data: `${JSON.stringify(validateCanonicalTranscript(narration.transcript), null, 2)}\n`, purpose: 'motion-tts-words' }]);
+  return runMotion({ projectDir }, dependencies);
+}
+
+async function main(argv = process.argv.slice(2)) {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0])) {
-    console.log('automontage motion <audio> --project <name> [--model <Whisper model>]\nautomontage motion --project-dir <dir> --brief <approved.json> [--version-label <label>]\nLocal narration → transcript/scaffold → preview → explicit approval → final.');
+    console.log('automontage motion <audio> --project <name> [--model <Whisper model>]\nautomontage motion --script <file.txt> --voice elevenlabs --project <name> [--voice-id <voice-id>] --accept-provider-cost\n  ElevenLabs is a separate paid API; private ELEVENLABS_API_KEY and voice ID required.\nautomontage motion --project-dir <dir> --brief <approved.json> [--version-label <label>]\nLocal narration → transcript/scaffold → preview → explicit approval → final.');
     return;
   }
   try {
     configureMediaToolPath();
-    const result = runMotion(parseMotionOptions(argv));
+    const result = await runMotion(parseMotionOptions(argv));
     console.log(result.action === 'draft' ? `Motion draft scaffold: ${result.jsonPath}\nReview the transcript and author the scene plan before preview.` : `Motion final: ${result.finalPath}`);
   } catch (error) { console.error(`Motion cancelled: ${error.message}`); process.exitCode = 1; }
 }

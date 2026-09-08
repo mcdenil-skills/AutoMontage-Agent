@@ -597,3 +597,18 @@ Opt-in media regression создаёт WAV и MP4 локально, вызыва
 озвучки после replace. Девять контрольных кадров и draft watermark сохраняются при заданном
 `AUTOMONTAGE_MOTION_E2E_DIR` (каталог должен существовать); без него временные файлы удаляются.
 Никаких provider calls, ключей или личных медиа этот тест не требует.
+
+## Необязательная ElevenLabs-озвучка
+
+```bash
+node --test tests/elevenlabs-voice.test.js tests/public-privacy.test.js tests/broll-render-env-security.test.js tests/cli.test.js
+```
+
+Тесты ElevenLabs обращаются только к локальному mock HTTP server: проверяются официальный путь
+и request shape, base64, кириллица/Unicode, canonical word timing, ключ кэша, отсутствие повторного
+запроса при cache hit, явное согласие на расходы, timeout до headers/во время body, HTTP/network
+ошибки без секретов, redirects и конкурирующие запросы. Готовый кэш проверяет hashes аудио/слов;
+испорченный или незавершённый кэш останавливает работу. Подмена workspace и удаление `.gitignore`
+во время ответа не позволяют опубликовать provider output. Privacy tests читают staged bytes,
+ловят непустые настройки в env/JSON и оставляют пустые примеры рабочими. Реальный Remotion env
+loader проверяет отсутствие ElevenLabs key/voice ID в браузере. Live API и оплаченных тестов нет.

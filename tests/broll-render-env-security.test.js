@@ -20,6 +20,8 @@ function browserEnvironment(t, argv, filename = '.env') {
   fs.writeFileSync(path.join(directory, 'package.json'), '{"name":"synthetic-env-fixture"}');
   fs.writeFileSync(path.join(directory, filename), [
     'PEXELS_API_KEY=synthetic-provider-secret-do-not-publish',
+    'ELEVENLABS_API_KEY=synthetic-narration-secret',
+    'ELEVENLABS_VOICE_ID=synthetic-narration-voice',
     'UNRELATED_PRIVATE_VALUE=synthetic-private-value',
     'REMOTION_PUBLIC_FIXTURE=public-dotenv-value',
   ].join('\n'));
@@ -32,6 +34,7 @@ function browserEnvironment(t, argv, filename = '.env') {
     console.log(JSON.stringify({
       keys: Object.keys(env),
       leakedProvider: env.PEXELS_API_KEY !== undefined,
+      leakedNarration: env.ELEVENLABS_API_KEY !== undefined || env.ELEVENLABS_VOICE_ID !== undefined,
       leakedPrivate: env.UNRELATED_PRIVATE_VALUE !== undefined,
       publicProcess: env.REMOTION_PUBLIC_PROCESS,
       publicDotenv: env.REMOTION_PUBLIC_FIXTURE,
@@ -66,6 +69,7 @@ const builders = {
 test('installed Remotion loader reproduces root dotenv browser exposure without protection', (t) => {
   const result = browserEnvironment(t, [path.join(cliDirectory, 'remotion-cli.js'), 'render']);
   assert.equal(result.leakedProvider, true);
+  assert.equal(result.leakedNarration, true);
   assert.equal(result.leakedPrivate, true);
   assert.equal(result.publicProcess, 'public-process-value');
 });
@@ -76,6 +80,7 @@ for (const [name, build] of Object.entries(builders)) {
       const command = build(resolveRemotionCommand(ROOT));
       const result = browserEnvironment(t, command.args, filename);
       assert.equal(result.leakedProvider, false);
+      assert.equal(result.leakedNarration, false);
       assert.equal(result.leakedPrivate, false);
       assert.equal(result.publicProcess, 'public-process-value');
       if (filename === '.env') assert.equal(result.publicDotenv, 'public-dotenv-value');

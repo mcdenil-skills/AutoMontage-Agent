@@ -21,6 +21,7 @@ function help() {
 Использование:
   automontage <видео.mp4> [опции]     смонтировать (результат в текущей папке)
   automontage motion <audio> --project <name>  создать motion-черновик
+  automontage motion --help          motion из аудио или явная платная ElevenLabs-озвучка
   automontage motion --project-dir . --brief brief/v01-approved.motion.json
                                       собрать утверждённый MotionReel
   automontage demo                    собрать демо-ролик из примера (без ключей и whisper)

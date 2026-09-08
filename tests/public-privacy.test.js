@@ -153,3 +153,39 @@ test('unknown scope fails closed', (t) => {
     /scope must be tracked or staged/,
   );
 });
+
+test('provider configuration secrets and voice identities are rejected without echoing their values', t => {
+  const root = fixtureRepo(t);
+  const keyName = ['ELEVENLABS', 'API_KEY'].join('_');
+  const voiceName = ['ELEVENLABS', 'VOICE_ID'].join('_');
+  const secret = ['sk', 'synthetic-private-value'].join('_');
+  stageBytes(root, '.env.example', `${keyName}=${secret}\n${voiceName}=synthetic-private-voice\n`);
+  write(root, '.env.example', `${keyName}=\n${voiceName}=\n`);
+  const result = checkPublicPrivacy({ root, scope: 'staged' });
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some(issue => issue.rule === 'provider-secret'));
+  assert.ok(result.issues.some(issue => issue.rule === 'private-voice-id'));
+  assert.doesNotMatch(JSON.stringify(result.issues), /synthetic-private/);
+});
+test('empty provider settings and documentation placeholders remain publishable', t => {
+  const root = fixtureRepo(t);
+  stageBytes(root, '.env.example', ['ELEVENLABS_API_KEY=', 'ELEVENLABS_VOICE_ID=', ''].join('\n'));
+  stageBytes(root, 'docs/provider.md', 'Use --voice-id <voice-id>. ELEVENLABS_VOICE_ID=<voice-id>\n');
+  assert.deepEqual(checkPublicPrivacy({ root, scope: 'staged' }), { ok: true, issues: [] });
+});
+test('JSON provider configuration and leaked timestamp outputs outside projects are private', t => {
+  const root = fixtureRepo(t);
+  stageBytes(root, 'config/voice.json', JSON.stringify({ ['ELEVENLABS_' + 'VOICE_ID']: 'synthetic-private-voice' }));
+  stageBytes(root, 'public/narration.json', JSON.stringify({ audio_base64: 'synthetic', alignment: { characters: ['A'] } }));
+  stageBytes(root, 'examples/voice-cache/receipt.json', '{}');
+  const result = checkPublicPrivacy({ root, scope: 'staged' });
+  assert.ok(result.issues.some(issue => issue.rule === 'private-voice-id'));
+  assert.ok(result.issues.some(issue => issue.path === 'public/narration.json' && issue.rule === 'provider-output'));
+  assert.ok(result.issues.some(issue => issue.path === 'examples/voice-cache/receipt.json' && issue.rule === 'provider-output'));
+});
+test('multiline JSON provider assignments cannot bypass the privacy gate', t => {
+  const root = fixtureRepo(t);
+  stageBytes(root, 'config/voice.json', '{"ELEVENLABS_VOICE_ID":\n"synthetic-private-voice"}');
+  const result = checkPublicPrivacy({ root, scope: 'staged' });
+  assert.ok(result.issues.some(issue => issue.rule === 'private-voice-id'));
+});

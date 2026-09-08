@@ -93,6 +93,35 @@ function forbiddenRoot(relativePath) {
   return FORBIDDEN_ROOTS.find((root) => relativePath.startsWith(root));
 }
 
+function providerPrivacyIssues(relativePath, content) {
+  const issues = [];
+  const basename = path.posix.basename(relativePath);
+  const isConfig = basename.startsWith('.env') || /\.(?:json|ya?ml|toml|ini|conf)$/iu.test(basename)
+    || /(?:^|\/)config(?:\/|\.)/u.test(relativePath);
+  const placeholder = value => !value || /^<[A-Za-z0-9_-]+>$/u.test(value);
+  if (isConfig) {
+    let assignments = content;
+    if (/\.json$/iu.test(relativePath)) {
+      try { assignments = JSON.stringify(JSON.parse(content)); } catch (_) { /* scan malformed config as text */ }
+    }
+    // Match assignments, not arbitrary prose or programmatic environment reads.
+    const assignment = /(?:^|[\s{,])(?:export[ \t]+)?["']?(ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|elevenlabs_api_key|elevenlabs_voice_id|elevenlabsApiKey|elevenlabsVoiceId|xi-api-key)["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s#,}\r\n]*))/gmu;
+    for (const match of assignments.matchAll(assignment)) {
+      const value = (match[2] ?? match[3] ?? match[4]).trim();
+      if (placeholder(value)) continue;
+      const voice = /voice/i.test(match[1]);
+      issues.push({ path: relativePath, rule: voice ? 'private-voice-id' : 'provider-secret',
+        message: voice ? 'provider voice identity must remain private; use an empty placeholder'
+          : 'provider credentials must remain private; use an empty placeholder' });
+    }
+  }
+  if (/(?:^|\/)(?:voice-cache|narration-cache)(?:\/|$)/u.test(relativePath)
+    || (/\.json$/iu.test(relativePath) && /"audio_base64"\s*:/u.test(content))) {
+    issues.push({ path: relativePath, rule: 'provider-output', message: 'narration provider output belongs only in ignored project workspaces' });
+  }
+  return issues;
+}
+
 function inspectPathsAndContents({ root, scope, paths, assets }) {
   const issues = [];
   for (const relativePath of paths) {
@@ -139,6 +168,7 @@ function inspectPathsAndContents({ root, scope, paths, assets }) {
       continue;
     }
     const content = bytes.toString('utf8');
+    issues.push(...providerPrivacyIssues(normalized, content));
     if (LOCAL_PATH_PATTERNS.some((pattern) => pattern.test(content))) {
       issues.push({
         path: relativePath,

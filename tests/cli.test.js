@@ -9,5 +9,7 @@ test('public CLI advertises motion and routes it ahead of legacy build', () => {
   const motion = spawnSync(process.execPath, [cli, 'motion', '--help'], { encoding: 'utf8' });
   assert.equal(motion.status, 0, motion.stderr);
   assert.match(motion.stdout, /motion.*audio|motion.*narration/s);
+  assert.match(motion.stdout, /--script.*--voice elevenlabs.*--accept-provider-cost/);
+  assert.match(motion.stdout, /separate paid API/);
   assert.doesNotMatch(motion.stderr, /ENOENT|build\.js/);
 });

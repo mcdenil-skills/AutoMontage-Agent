@@ -181,6 +181,18 @@ Preview не имеет отдельного HTML- или FFmpeg-дизайна:
 `cache:pipe:0` с `read_ahead_limit=-1`, чтобы определять длительность обычных WAV/MP3 больше
 64 KiB; timeout ограничен 30 секундами.
 
+Опциональная async-ветка `motion --script --voice elevenlabs --accept-provider-cost` использует
+`scripts/voice/elevenlabs.js`: официальный POST `/v1/text-to-speech/:voice_id/with-timestamps`,
+ограничение ответа 32 MiB и общий deadline 60 секунд включая тело. Fetch и filesystem заменяемы
+в тестах; redirects и автоматические retries запрещены. `alignment.js` собирает слова из
+character entries с кириллицей/Unicode в канонический transcript, поэтому Whisper не вызывается.
+SHA-256 кэш включает текст, ID голоса, модель, voice settings и output format. Workspace имеет
+локальный `.gitignore` с `*`; tracked-папки и symlinks отклоняются. Exclusive `attempt.json`
+резервирует запрос до отправки, сохраняется при неоднозначном отказе и предотвращает дубликаты.
+Готовый receipt связывает hashes MP3/words; повреждение кэша не вызывает новый платный запрос.
+Конфигурация читается в локальный объект из `.env`/environment без записи в `process.env`, manifest
+или props. Кэш и canonical transcript переходят в прежний motion draft/approval pipeline.
+
 `prepareMotionPreview`/`prepareMotionRender` связывают brief с `manifest.source.localPath`,
 не создают `faceSrc`, проверяют тему `motion-neutral` и сохраняют глобальный таймкод озвучки.
 Общий `render-media-bundle` различает роли audio/image/video: narration, scene media и музыка
