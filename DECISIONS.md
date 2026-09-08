@@ -554,3 +554,25 @@ Tesseract.js рассматривался, но дополнительный run
 латентности. Код OpenCLIP имеет MIT, выбранные pinned SigLIP2 weights - Apache-2.0; лицензии
 проверены отдельно. Метод, версии и измерения описаны в
 [отчёте benchmark](docs/research/2026-09-08-broll-reranking-benchmark.md).
+
+## D-029 – MotionReel — отдельная camera-free композиция с аудио как источником
+
+**Дата:** 2026-09-08
+**Статус:** принято
+
+`MotionReel` является sibling-композицией для `ReelScenes`: у неё отдельный versioned
+`motion-reel` brief, набор из семи public motion-сцен и один narration audio source. Аудио
+является first-class source проекта, а не звуковой дорожкой синтетического видео. Это сохраняет
+честную модель данных и не позволяет camera-free brief случайно попасть в существующий
+video/lesson renderer.
+
+Основной путь принимает локальный MP3/WAV/M4A и получает word timing через local Whisper.
+Платная narration, включая ElevenLabs, остаётся optional local adapter: она требует явного
+`--accept-provider-cost`, не имеет публичного voice ID по умолчанию и не нужна для preview,
+approval, final render или QA с готовым narration file.
+
+Отклонён synthetic blank video: он маскирует audio-only источник под video, добавляет
+несуществующую speaker/face семантику и расширяет legacy video-путь вместо проверки отдельного
+контракта. Отклонён separate repository: уже существующие workspace, draft/approved gate,
+immutable render versions и QA являются нужными гарантиями этого режима; второй репозиторий
+дублировал бы их и расходился бы с public workflow.
