@@ -7,6 +7,7 @@ const { URL } = require('node:url');
 const Ajv = require('ajv');
 
 const {
+  openReadOnlyFlags,
   setPrivateDescriptorMode,
   withNoFollow,
 } = require('../filesystem-capabilities');
@@ -295,6 +296,96 @@ function writeFilesNoReplace(files, options = {}) {
   }
 }
 
+function copyOpenedFile(fileSystem, sourceHandle, destinationHandle) {
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  for (;;) {
+    const bytesRead = fileSystem.readSync(sourceHandle, buffer, 0, buffer.length, null);
+    if (bytesRead === 0) return;
+    let written = 0;
+    while (written < bytesRead) {
+      written += fileSystem.writeSync(
+        destinationHandle,
+        buffer,
+        written,
+        bytesRead - written,
+        null,
+      );
+    }
+  }
+}
+
+function copyProjectFileNoReplace({
+  projectDir,
+  sourcePath,
+  storedPath,
+  fileSystem = fs,
+  temporaryId = randomUUID,
+  platform = process.platform,
+}) {
+  const resolvedProjectDir = path.resolve(projectDir);
+  const destination = resolveProjectPath(resolvedProjectDir, storedPath, {
+    label: 'project source destination',
+    fileSystem,
+    mustExist: false,
+    type: 'file',
+  });
+  const source = path.resolve(sourcePath);
+  const sourcePathStat = fileSystem.lstatSync(source);
+  if (!sourcePathStat.isFile() || sourcePathStat.isSymbolicLink()) {
+    throw new Error('project source must be a regular file, not a symbolic link');
+  }
+
+  const sourceHandle = fileSystem.openSync(source, openReadOnlyFlags(fileSystem, platform));
+  const temporaryPath = `${destination}.tmp-source-${safeTemporaryId(temporaryId)}`;
+  const constants = fileSystem.constants || fs.constants;
+  const flags = withNoFollow(
+    fileSystem,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    platform,
+  );
+  let destinationHandle = null;
+  let destinationIdentity = null;
+  let committed = false;
+  try {
+    const openedSource = fileSystem.fstatSync(sourceHandle);
+    const currentSource = fileSystem.lstatSync(source);
+    if (!openedSource.isFile() || currentSource.isSymbolicLink()
+      || !sameFileIdentity(openedSource, currentSource)) {
+      throw new Error('project source changed or escapes through a symbolic link');
+    }
+
+    destinationHandle = fileSystem.openSync(temporaryPath, flags, 0o600);
+    destinationIdentity = fileSystem.fstatSync(destinationHandle);
+    if (!destinationIdentity.isFile()) throw new Error('temporary project source must be regular');
+    setPrivateDescriptorMode(fileSystem, destinationHandle, 0o600, platform);
+    copyOpenedFile(fileSystem, sourceHandle, destinationHandle);
+    fileSystem.fsyncSync(destinationHandle);
+
+    const copiedSource = fileSystem.fstatSync(sourceHandle);
+    if (!sameFileIdentity(openedSource, copiedSource)
+      || openedSource.size !== copiedSource.size
+      || openedSource.mtimeMs !== copiedSource.mtimeMs
+      || openedSource.ctimeMs !== copiedSource.ctimeMs) {
+      throw new Error('project source changed while it was copied');
+    }
+    fileSystem.closeSync(destinationHandle);
+    destinationHandle = null;
+    fileSystem.linkSync(temporaryPath, destination);
+    committed = true;
+    fileSystem.unlinkSync(temporaryPath);
+    return destination;
+  } finally {
+    if (destinationHandle !== null) fileSystem.closeSync(destinationHandle);
+    fileSystem.closeSync(sourceHandle);
+    if (!committed) {
+      const current = lstatIfPresent(fileSystem, temporaryPath);
+      if (current && destinationIdentity && sameFileIdentity(current, destinationIdentity)) {
+        fileSystem.unlinkSync(temporaryPath);
+      }
+    }
+  }
+}
+
 function validateProjectManifest(manifest, { projectDir, fileSystem = fs } = {}) {
   const migratedManifest = migrateProjectManifest(manifest);
   if (!projectManifestValidator(migratedManifest)) {
@@ -511,7 +602,10 @@ function createOrOpenProject({
   const slug = slugifyProjectName(name);
   const id = projectDir ? path.basename(resolvedProjectDir) : formatProjectId({ date: now, name });
   const extension = path.extname(originalPath).toLowerCase() || '.mp4';
-  const localPath = path.posix.join('input', `source${extension}`);
+  const sourceName = projectKind === 'motion-reel' && mediaKind === 'audio'
+    ? 'narration'
+    : 'source';
+  const localPath = path.posix.join('input', `${sourceName}${extension}`);
   const timestamp = now.toISOString();
   const manifest = {
     version: 1,
@@ -545,7 +639,11 @@ function createOrOpenProject({
     label: 'manifest.source.localPath',
     mustExist: false,
   });
-  fs.copyFileSync(originalPath, localSourcePath, fs.constants.COPYFILE_EXCL);
+  copyProjectFileNoReplace({
+    projectDir: resolvedProjectDir,
+    sourcePath: originalPath,
+    storedPath: localPath,
+  });
   writeProjectManifest(resolvedProjectDir, manifest);
   return asWorkspace(resolvedProjectDir, manifest);
 }
@@ -1598,6 +1696,7 @@ function runRenderLifecycle(workspace, render, operation, {
 module.exports = {
   acquireProjectMutationLease,
   approveBrief,
+  copyProjectFileNoReplace,
   createOrOpenProject,
   formatProjectId,
   nextBriefPaths,

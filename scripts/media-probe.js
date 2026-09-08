@@ -56,6 +56,39 @@ function probeOpenedMedia({
   return parseMediaProbeJson(stdout);
 }
 
+function probeOpenedAudio({
+  fileDescriptor,
+  runToolImpl = spawnSync,
+  stage = 'audio probe',
+} = {}) {
+  if (!Number.isInteger(fileDescriptor) || fileDescriptor < 0) {
+    throw new Error(`${stage}: opened audio descriptor is invalid`);
+  }
+  const command = 'ffprobe';
+  const args = [
+    '-v', 'error',
+    '-show_entries', OPENED_MEDIA_PROBE_ENTRIES,
+    '-of', 'json',
+    'cache:pipe:0',
+  ];
+  const result = runToolImpl(command, args, {
+    encoding: 'utf8',
+    killSignal: 'SIGTERM',
+    maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES,
+    shell: false,
+    stdio: [fileDescriptor, 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  const stdout = typeof result === 'string'
+    ? result
+    : assertProcessResult(result || {}, { command, stage }).stdout;
+  if (typeof stdout !== 'string'
+    || Buffer.byteLength(stdout, 'utf8') > OPENED_MEDIA_PROBE_MAX_BYTES) {
+    throw new Error(`${stage}: ffprobe вернул недопустимое JSON`);
+  }
+  return parseAudioProbeJson(stdout, stage);
+}
+
 function fail(stage, field) {
   throw new Error(`${stage}: ffprobe вернул недопустимое ${field}`);
 }
@@ -114,6 +147,38 @@ function parseStreamDuration(stream) {
 function parseContainerDuration(format) {
   const duration = Number(format?.duration);
   return Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
+function parseAudioProbeJson(raw, stage = 'audio probe') {
+  let data;
+  try {
+    if (typeof raw !== 'string' || raw.trim() === '') fail(stage, 'JSON');
+    data = JSON.parse(raw);
+  } catch (error) {
+    if (error.message.startsWith(`${stage}:`)) throw error;
+    throw new Error(`${stage}: ffprobe вернул недопустимое JSON`);
+  }
+
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  const audio = streams.find((stream) => stream && stream.codec_type === 'audio');
+  if (!audio) fail(stage, 'audio stream');
+
+  const durationSec = parseStreamDuration(audio) ?? parseContainerDuration(data.format);
+  if (durationSec === null) fail(stage, 'duration');
+  const sampleRate = Number(audio.sample_rate);
+  if (!Number.isSafeInteger(sampleRate) || sampleRate <= 0) fail(stage, 'sample rate');
+  const channels = Number(audio.channels);
+  if (!Number.isSafeInteger(channels) || channels <= 0) fail(stage, 'channels');
+  const codec = typeof audio.codec_name === 'string' ? audio.codec_name.trim() : '';
+  if (!codec) fail(stage, 'codec');
+
+  return {
+    mediaKind: 'audio',
+    durationSec,
+    sampleRate,
+    channels,
+    codec,
+  };
 }
 
 function parseVideoProbe(raw, stage = 'video probe') {
@@ -265,9 +330,11 @@ function probeVideo(file, options = {}) {
 module.exports = {
   fileSystemCapabilities,
   openReadOnlyFlags,
+  parseAudioProbeJson,
   parseMediaProbeJson,
   parseRate,
   parseVideoProbe,
+  probeOpenedAudio,
   probeOpenedMedia,
   probeVideo,
   sameOpenedFileSnapshot,

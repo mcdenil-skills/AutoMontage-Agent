@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseMediaProbeJson, parseVideoProbe } = require('../scripts/media-probe');
+const {
+  parseAudioProbeJson,
+  parseMediaProbeJson,
+  parseVideoProbe,
+  probeOpenedAudio,
+} = require('../scripts/media-probe');
 
 function validProbe(overrides = {}) {
   return JSON.stringify({
@@ -237,4 +242,68 @@ test('media probe rejects malformed JSON, attached-picture-only media, and inval
   ]) {
     assert.throws(() => parseMediaProbeJson(input), /media probe/i);
   }
+});
+
+test('audio probe returns the dedicated narration metadata shape', () => {
+  assert.deepEqual(parseAudioProbeJson(JSON.stringify({
+    streams: [{
+      codec_type: 'audio',
+      codec_name: 'mp3',
+      sample_rate: '44100',
+      channels: 1,
+      duration: '50.633000',
+    }],
+    format: { duration: '50.700000' },
+  })), {
+    mediaKind: 'audio',
+    durationSec: 50.633,
+    sampleRate: 44100,
+    channels: 1,
+    codec: 'mp3',
+  });
+});
+
+test('audio probe rejects malformed JSON, missing audio and invalid stream fields', () => {
+  const validAudio = {
+    codec_type: 'audio', codec_name: 'aac', sample_rate: '48000', channels: 2, duration: '1.25',
+  };
+  const cases = [
+    ['', /audio probe.*JSON/i],
+    ['{broken', /audio probe.*JSON/i],
+    [JSON.stringify({ streams: [], format: { duration: '1' } }), /audio probe.*audio stream/i],
+    [JSON.stringify({ streams: [{ codec_type: 'video' }], format: { duration: '1' } }), /audio probe.*audio stream/i],
+    [JSON.stringify({ streams: [{ ...validAudio, duration: '0' }] }), /audio probe.*duration/i],
+    [JSON.stringify({ streams: [{ ...validAudio, sample_rate: 'NaN' }] }), /audio probe.*sample rate/i],
+    [JSON.stringify({ streams: [{ ...validAudio, channels: 0 }] }), /audio probe.*channels/i],
+    [JSON.stringify({ streams: [{ ...validAudio, codec_name: '' }] }), /audio probe.*codec/i],
+  ];
+
+  for (const [raw, expected] of cases) {
+    assert.throws(() => parseAudioProbeJson(raw), expected);
+  }
+});
+
+test('audio probe reads an already-opened descriptor without enabling audio in media probe', () => {
+  const raw = JSON.stringify({
+    streams: [{
+      codec_type: 'audio', codec_name: 'pcm_s16le', sample_rate: '16000', channels: 1,
+      duration_ts: '4000', time_base: '1/16000',
+    }],
+    format: { duration: '0.250000' },
+  });
+  let invocation;
+  const parsed = probeOpenedAudio({
+    fileDescriptor: 17,
+    runToolImpl(command, args, options) {
+      invocation = { command, args, options };
+      return { status: 0, signal: null, stdout: raw, stderr: '' };
+    },
+  });
+
+  assert.deepEqual(parsed, {
+    mediaKind: 'audio', durationSec: 0.25, sampleRate: 16000, channels: 1, codec: 'pcm_s16le',
+  });
+  assert.equal(invocation.command, 'ffprobe');
+  assert.deepEqual(invocation.options.stdio, [17, 'pipe', 'pipe']);
+  assert.throws(() => parseMediaProbeJson(raw), /primary video stream/i);
 });
