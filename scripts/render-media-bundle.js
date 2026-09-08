@@ -6,6 +6,8 @@ const path = require('node:path');
 const { isCanonicalBrollReference } = require('./lesson/broll-media');
 const { sanitizeNamespace } = require('./public-media');
 const { fsyncDirectoryIfSupported } = require('./filesystem-capabilities');
+const { probeOpenedMedia } = require('./media-probe');
+const { verifySceneBrollMedia } = require('./lesson/broll-media-files');
 
 const COPY_BUFFER_BYTES = 64 * 1024;
 const MAX_CTIME_REPIN_ROUNDS = 3;
@@ -591,6 +593,8 @@ function prepareLessonMediaBundle(options = {}, policy) {
   const motion = authoritativeBrief.kind === 'motion-reel';
   if (motion && (workspace?.manifest?.projectKind !== 'motion-reel'
     || workspace?.manifest?.source?.mediaKind !== 'audio')) fail('motion media requires an audio workspace');
+  const privacyGuard = motion
+    ? require('./project/private-workspace').preparePrivateWorkspace(workspace.dir, { fileSystem }) : null;
   if (motion) safeExtension(sourceAlias, AUDIO_EXTENSIONS, 'narration');
   else extensionForSource(sourceAlias);
   if ((motion ? Object.hasOwn(props, 'faceSrc') : props.faceSrc !== sourceAlias)
@@ -1038,12 +1042,26 @@ function prepareLessonMediaBundle(options = {}, policy) {
     const copiedByIdentity = new Map();
     let sequence = 0;
 
-    function snapshotResolved(resolved, extension, expectedSha = null, mediaRole = null) {
+    function snapshotResolved(resolved, extension, expectedSha = null, mediaRole = null, motionScene = null) {
+      privacyGuard?.assertCurrent();
       if (expectedSha !== null && !SHA256.test(expectedSha)) fail('approved SHA-256 is invalid');
       if (!['image', 'video', 'audio'].includes(mediaRole)) fail('bundle media role is invalid');
       assertOwnedDirectoryCurrent();
       const tracked = openTracked(resolved, fileSystem);
       try {
+        if (motionScene && mediaRole === 'video') {
+          // Probe the same pinned file that is hashed/copied. Validate every scene,
+          // including repeated uses of one inode with different trim/audio settings.
+          const probe = probeOpenedMedia({ fileDescriptor: tracked.descriptor, stage: 'motion media probe' });
+          assertTrackedCurrent(tracked, fileSystem);
+          if (probe.mediaKind !== 'video') fail('motion media kind does not match the brief');
+          if (motionScene.media.audioMode !== 'mute' && (!probe.hasAudio
+            || !probe.audioCodec || !probe.audioSampleRate || !probe.audioChannels)) {
+            fail('motion media audio mode requires a usable audio stream');
+          }
+          verifySceneBrollMedia({ scene: { ...motionScene, brollMedia: motionScene.media },
+            fps: authoritativeBrief.output.fps, probe });
+        }
         const key = `${tracked.identity.dev}:${tracked.identity.ino}`;
         const existing = copiedByIdentity.get(key);
         if (existing) {
@@ -1131,7 +1149,7 @@ function prepareLessonMediaBundle(options = {}, policy) {
           const media = approvedScene.media;
           clonedScene.media.src = snapshotResolved(
             resolveContainedReference({ storageRoot: workspace.dir, reference: media.src, fileSystem }),
-            extensionForStructured(media), media.sha256, media.kind,
+            extensionForStructured(media), media.sha256, media.kind, approvedScene,
           );
         }
         continue;
@@ -1308,6 +1326,7 @@ function verifyMotionBriefMedia({ root, workspace, brief, fileSystem = fs }) {
 }
 
 module.exports = {
+  assertTrustedDirectoryChain,
   verifyMotionBriefMedia,
   prepareRenderMediaBundle,
   withPreviewMediaBundle,

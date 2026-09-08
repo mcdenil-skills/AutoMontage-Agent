@@ -558,6 +558,7 @@ function verifyBriefBrollMedia({
 }
 
 module.exports = {
+  verifySceneBrollMedia,
   preflightBriefBrollMedia,
   resolvePersistedBrollMedia,
   verifyBriefBrollMedia,

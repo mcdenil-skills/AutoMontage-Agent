@@ -398,6 +398,7 @@ function copyProjectFileNoReplace({
   fileSystem = fs,
   temporaryId = randomUUID,
   platform = process.platform,
+  privacyGuard = null,
 }) {
   const resolvedProjectDir = path.resolve(projectDir);
   const destination = resolveProjectPath(resolvedProjectDir, storedPath, {
@@ -433,7 +434,7 @@ function copyProjectFileNoReplace({
       temporaryId,
       purpose: 'source',
       platform,
-      assertParentCurrent: directoryGuard.assertCurrent,
+      assertParentCurrent() { directoryGuard.assertCurrent(); privacyGuard?.assertCurrent(); },
       verifyPublishedIdentity: true,
       writeToHandle(destinationHandle) {
         copyOpenedFile(fileSystem, sourceHandle, destinationHandle);
@@ -537,6 +538,7 @@ function readProjectManifest(projectDir) {
 function writeProjectManifestAtomic(projectDir, manifest, {
   fileSystem = fs,
   temporaryId = randomUUID,
+  privacyGuard = null,
 } = {}) {
   const resolvedProjectDir = path.resolve(projectDir);
   const manifestPath = resolveProjectPath(resolvedProjectDir, 'project.json', {
@@ -552,10 +554,13 @@ function writeProjectManifestAtomic(projectDir, manifest, {
   const staged = stageOwnedSiblingFile(
     manifestPath,
     `${JSON.stringify(validatedManifest, null, 2)}\n`,
-    { fileSystem, temporaryId, purpose: 'manifest' },
+    { fileSystem, temporaryId, purpose: 'manifest', assertParentCurrent: privacyGuard?.assertCurrent },
   );
   try {
     staged.commitReplace();
+  } catch (error) {
+    staged.removeCommitted();
+    throw error;
   } finally {
     staged.cleanupTemp();
   }
@@ -652,6 +657,8 @@ function createOrOpenProject({
 
   if (fs.existsSync(manifestPath)) {
     const manifest = readProjectManifest(resolvedProjectDir);
+    const privacyGuard = manifest.projectKind === 'motion-reel'
+      ? require('./private-workspace').preparePrivateWorkspace(resolvedProjectDir) : null;
     if (!manifest.transcript) {
       const expectedManifest = JSON.parse(JSON.stringify(manifest));
       manifest.transcript = {
@@ -662,7 +669,8 @@ function createOrOpenProject({
     }
     assertMatchingSource(resolvedProjectDir, manifest, sourcePath);
     ensureProjectDirectories(resolvedProjectDir);
-    return asWorkspace(resolvedProjectDir, manifest);
+    privacyGuard?.assertCurrent();
+    return { ...asWorkspace(resolvedProjectDir, manifest), privacyGuard };
   }
 
   if (!name) throw new Error('для нового проекта нужно название');
@@ -707,7 +715,10 @@ function createOrOpenProject({
     final: path.posix.join('final', `${slug}.mp4`),
   };
 
+  const privacyGuard = projectKind === 'motion-reel'
+    ? require('./private-workspace').preparePrivateWorkspace(resolvedProjectDir) : null;
   ensureProjectDirectories(resolvedProjectDir);
+  privacyGuard?.assertCurrent();
   const localSourcePath = resolveProjectPath(resolvedProjectDir, localPath, {
     label: 'manifest.source.localPath',
     mustExist: false,
@@ -716,9 +727,18 @@ function createOrOpenProject({
     projectDir: resolvedProjectDir,
     sourcePath: originalPath,
     storedPath: localPath,
+    privacyGuard,
   });
-  writeProjectManifest(resolvedProjectDir, manifest);
-  return asWorkspace(resolvedProjectDir, manifest);
+  const copiedIdentity = fs.lstatSync(localSourcePath);
+  try {
+    privacyGuard?.assertCurrent();
+    writeProjectManifest(resolvedProjectDir, manifest, { privacyGuard });
+    return { ...asWorkspace(resolvedProjectDir, manifest), privacyGuard };
+  } catch (error) {
+    const current = lstatIfPresent(fs, localSourcePath);
+    if (current && sameFileIdentity(copiedIdentity, current)) fs.unlinkSync(localSourcePath);
+    throw error;
+  }
 }
 
 function formatVersion(number) {
@@ -818,6 +838,9 @@ function publishBriefRevision(workspace, {
   const publishedMarkdown = briefKind === 'motion-reel'
     ? formatMotionBriefMarkdown(brief)
     : markdown;
+  const privacyGuard = briefKind === 'motion-reel'
+    ? workspace.privacyGuard || require('./private-workspace').preparePrivateWorkspace(workspace.dir, { fileSystem }) : null;
+  privacyGuard?.assertCurrent();
   return withProjectMutation(workspace, (transaction) => {
     const persistedWorkspace = { ...workspace, manifest: transaction.manifest };
     const allocated = nextBriefPaths(persistedWorkspace, pathKind, { fileSystem });
@@ -846,12 +869,13 @@ function publishBriefRevision(workspace, {
         data: `${JSON.stringify(brief, null, 2)}\n`,
         purpose: 'initial-brief-json',
       },
-    ], { fileSystem, temporaryId });
+    ], { fileSystem, temporaryId, assertParentCurrent: privacyGuard?.assertCurrent });
     let manifestCommitted = false;
     try {
       history.commit();
       workspace.manifest = transaction.commitManifest(nextManifest, {
         purpose: 'initial-brief-manifest',
+        assertCurrent: privacyGuard?.assertCurrent,
       });
       manifestCommitted = true;
       return {

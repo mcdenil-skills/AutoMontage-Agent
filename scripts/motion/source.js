@@ -92,6 +92,8 @@ function transcribeMotionNarration({
   temporaryId = randomUUID,
 }) {
   assertMotionWorkspace(workspace);
+  const privacyGuard = workspace.privacyGuard || require('../project/private-workspace').preparePrivateWorkspace(workspace.dir);
+  privacyGuard.assertCurrent();
   const wordsPath = resolveProjectPath(workspace.dir, workspace.manifest.transcript.words, {
     label: 'manifest.transcript.words',
     mustExist: false,
@@ -132,7 +134,7 @@ function transcribeMotionNarration({
       destination: wordsPath,
       data: `${JSON.stringify(generated, null, 2)}\n`,
       purpose: 'motion-words',
-    }], { temporaryId });
+    }], { temporaryId, assertParentCurrent: privacyGuard.assertCurrent });
     return { wordsPath, transcript: generated };
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });

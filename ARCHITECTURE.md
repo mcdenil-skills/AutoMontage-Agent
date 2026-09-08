@@ -198,6 +198,13 @@ Scheduling и автопубликация – будущая отдельная
 `cache:pipe:0` с `read_ahead_limit=-1`, чтобы определять длительность обычных WAV/MP3 больше
 64 KiB; timeout ограничен 30 секундами.
 
+Общий `scripts/project/private-workspace.js` защищает все motion workspaces: локальный звук,
+демо, TTS и возобновляемый preview/final. До первой записи source/manifest сохраняются новая
+цепочка каталогов и локальный `.gitignore` с последним правилом `*`; существующие bytes правил
+сохраняются. Проверка Git отклоняет корень репозитория и tracked-содержимое; no-follow/identity
+guards отклоняют symlinks и подмену каталогов/ignore. Source staging, canonical words и draft
+повторяют guard; неудачная начальная запись удаляет принадлежащие ей частичные файлы.
+
 Опциональная async-ветка `motion --script --voice elevenlabs --accept-provider-cost` использует
 `scripts/voice/elevenlabs.js`: официальный POST `/v1/text-to-speech/:voice_id/with-timestamps`,
 ограничение ответа 32 MiB и общий deadline 60 секунд включая тело. Fetch и filesystem заменяемы
@@ -222,6 +229,13 @@ directory fsync следует общей платформенной полит�
 Общий `render-media-bundle` различает роли audio/image/video: narration, scene media и музыка
 копируются с no-follow в изолированный каталог. Motion media и music имеют обязательные hashes;
 все ссылки относительны workspace. Music использует существующий finish/ducking pipeline.
+Перед копированием motion video ffprobe читает тот же закреплённый дескриптор, который затем
+хешируется. Каждый scene, включая повторное использование файла, проверяет наличие пригодного
+аудиопотока для `mix`/`replace` и конец обрезки по FPS проекта. Порог совпадает с lesson:
+округлённый trim + длительность сцены не превышают округлённое число кадров видео, а для
+`replace` – также аудио. Silent video разрешён в `mute`; image media сохраняет прежний путь.
+Ошибка preflight не вызывает Remotion и не публикует preview, поэтому preview QA не получает
+нового непригодного пакета. Тот же media gate действует при approval и final bundle.
 Для motion preview digest фактически скопированной narration должен совпасть с digest исходника,
 полученным до snapshot; именно он записывается в `currentPreview.sourceSha256`. Подмена аудио
 на время копирования с последующим возвратом прежних bytes отклоняется до Remotion.

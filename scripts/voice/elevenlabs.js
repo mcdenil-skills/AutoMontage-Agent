@@ -31,54 +31,10 @@ function narrationInput({ script, voiceId, modelId = DEFAULT_MODEL, voiceSetting
 }
 function buildNarrationCacheKey(options) { return sha(JSON.stringify(narrationInput(options))); }
 
-// Persist each new directory and its entry in the parent before advancing to the
-// next level. Recursive mkdir plus syncing only the leaf can lose the whole cache.
-function ensureDurableDirectoryChain(target, fileSystem) {
-  const missing = []; let existing = target;
-  while (!fileSystem.existsSync(existing)) {
-    missing.push(existing); existing = path.dirname(existing);
-  }
-  const parentIdentity = fileSystem.lstatSync(existing);
-  if (!parentIdentity.isDirectory() || parentIdentity.isSymbolicLink()) throw configError();
-  for (const directory of missing.reverse()) {
-    const parent = path.dirname(directory);
-    const before = fileSystem.lstatSync(parent);
-    if (!before.isDirectory() || before.isSymbolicLink()) throw configError();
-    fileSystem.mkdirSync(directory, { mode: 0o700 });
-    const created = fileSystem.lstatSync(directory); const after = fileSystem.lstatSync(parent);
-    if (!created.isDirectory() || created.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino) throw configError();
-    fsyncDirectoryIfSupported(fileSystem, directory);
-    fsyncDirectoryIfSupported(fileSystem, parent);
-  }
-  fsyncDirectoryIfSupported(fileSystem, target);
-}
-
-// A local ignore rule protects workspaces even when the CLI is installed globally.
-// Never turn an existing tracked repository into a private workspace.
-function prepareNarrationWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl = spawnSync } = {}) {
-  try {
-    if (typeof projectDir !== 'string' || !projectDir) throw configError();
-    const dir = path.resolve(projectDir);
-    let existing = dir;
-    while (!fileSystem.existsSync(existing)) existing = path.dirname(existing);
-    if (fileSystem.lstatSync(existing).isSymbolicLink()) throw configError();
-    const repo = spawnSyncImpl('git', ['rev-parse', '--show-toplevel'], { cwd: existing, encoding: 'utf8' });
-    if (repo.status === 0) {
-      const root = repo.stdout.trim();
-      if (path.resolve(root) === dir) throw configError();
-      const tracked = spawnSyncImpl('git', ['ls-files', '-z', '--', dir], { cwd: root, encoding: 'utf8' });
-      if (tracked.status !== 0 || tracked.stdout.length) throw configError();
-    } else if (repo.error && repo.error.code !== 'ENOENT') throw configError();
-    ensureDurableDirectoryChain(dir, fileSystem);
-    const ignore = resolveProjectPath(dir, '.gitignore', { fileSystem, type: 'file' });
-    if (!fileSystem.existsSync(ignore)) fileSystem.writeFileSync(ignore, '*\n', { flag: 'wx', mode: 0o600 });
-    if (fileSystem.readFileSync(ignore, 'utf8').trim() !== '*') throw configError();
-    const ignoreHandle = fileSystem.openSync(ignore, fileSystem.constants.O_RDWR | (fileSystem.constants.O_NOFOLLOW || 0));
-    try { fileSystem.fsyncSync(ignoreHandle); } finally { fileSystem.closeSync(ignoreHandle); }
-    fsyncDirectoryIfSupported(fileSystem, dir);
-    resolveProjectPath(dir, 'voice-cache', { fileSystem, type: 'directory' });
-    return dir;
-  } catch (_) { throw new Error('ElevenLabs requires a private, untracked project workspace without symbolic links'); }
+// The same durable privacy boundary protects local narration, demos and provider caches.
+const { ensureDurableDirectoryChain, preparePrivateWorkspace } = require('../project/private-workspace');
+function prepareNarrationWorkspace(projectDir, options) {
+  return preparePrivateWorkspace(projectDir, options).dir;
 }
 
 function loadVoiceConfig({ env = process.env, root, fileSystem = fs } = {}) {
@@ -128,7 +84,8 @@ async function synthesizeWithTimestamps(options, { fetchImpl = fetch, fileSystem
   if (!options.voiceId) throw new Error('ElevenLabs requires --voice-id or private ELEVENLABS_VOICE_ID');
   const input = narrationInput(options);
   const cacheKey = buildNarrationCacheKey(input);
-  const dir = prepareNarrationWorkspace(options.projectDir, { fileSystem, spawnSyncImpl });
+  const privacy = preparePrivateWorkspace(options.projectDir, { fileSystem, spawnSyncImpl });
+  const dir = privacy.dir;
   const relative = `voice-cache/${cacheKey}`;
   const resolve = (name, mustExist = false) => resolveProjectPath(dir, `${relative}/${name}`, { fileSystem, type: 'file', mustExist });
   let cachePath; let audioPath; let assertWorkspaceCurrent;
@@ -142,7 +99,7 @@ async function synthesizeWithTimestamps(options, { fetchImpl = fetch, fileSystem
         const current = fileSystem.lstatSync(filename);
         if (current.isSymbolicLink() || current.dev !== stat.dev || current.ino !== stat.ino) throw configError();
       }
-      if (fileSystem.readFileSync(ignorePath, 'utf8').trim() !== '*') throw configError();
+      privacy.assertCurrent();
     };
     assertWorkspaceCurrent();
     cachePath = resolve('receipt.json'); audioPath = resolve('narration.mp3');

@@ -39,6 +39,12 @@
 
 ### Исправлено
 
+- Все motion workspaces устанавливают durable локальный ignore до записи narration и документов,
+  включая npm consumer и явный путь. Существующие ignore-правила сохраняются, небезопасные Git/
+  symlink границы и подмена защиты блокируются до публикации частичных файлов.
+- Motion video проходит ffprobe до preview/approval/final: `mix`/`replace` требуют пригодный
+  аудиопоток; trim и длительность сцены должны помещаться в видео, а `replace` – также в аудио.
+  Беззвучный `mute` с narration и image media остаются допустимыми.
 - Windows CI выполняет каждый native Node suite отдельным шагом, чтобы поздний успех не
   скрывал раннюю ошибку. Probe/decode в release smoke теперь получают очищенное окружение,
   как preview/final, с сохранением выбранного FFmpeg PATH.

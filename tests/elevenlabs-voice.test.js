@@ -169,9 +169,13 @@ test('TTS build saves canonical timing directly and enters the same draft workfl
 
 test('parallel identical requests submit once and timeout before headers is bounded', async t => {
   const { projectDir } = workspace(t);
-  const mock = await mockServer(t, () => {});
-  const one = synthesizeWithTimestamps(options(projectDir, { timeoutMs: 100 }), mock);
-  const two = synthesizeWithTimestamps(options(projectDir, { timeoutMs: 100 }), mock);
+  let requestReceived;
+  const received = new Promise(resolve => { requestReceived = resolve; });
+  const mock = await mockServer(t, () => requestReceived());
+  const one = synthesizeWithTimestamps(options(projectDir, { timeoutMs: 1000 }), mock);
+  // Wait for actual socket receipt, not a scheduler race against a 100 ms deadline.
+  await Promise.race([received, one]);
+  const two = synthesizeWithTimestamps(options(projectDir, { timeoutMs: 1000 }), mock);
   const settled = await Promise.allSettled([one, two]);
   assert.deepEqual(settled.map(r => r.status), ['rejected', 'rejected']);
   assert.match(settled[0].reason.message, /timeout/i);

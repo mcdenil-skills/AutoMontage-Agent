@@ -27,13 +27,18 @@ test('real motion MP4 keeps clip trim, narration mix/replace, watermark, approva
   const clip = path.join(workspace.dir, 'assets/broll/colors.mp4');
   ffmpeg(['-f', 'lavfi', '-i', 'color=c=red:s=640x480:r=30:d=1', '-f', 'lavfi', '-i', 'color=c=green:s=640x480:r=30:d=2', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=3:sample_rate=48000', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[v]', '-map', '[v]', '-map', '2:a', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', clip]);
   const sha256 = createHash('sha256').update(fs.readFileSync(clip)).digest('hex');
+  const silent = path.join(workspace.dir, 'assets/broll/silent.mp4');
+  ffmpeg(['-i', clip, '-an', '-c:v', 'copy', silent]);
+  const silentSha256 = createHash('sha256').update(fs.readFileSync(silent)).digest('hex');
   const scenes = [
     { scene: 'kinetic-title', text: 'Точное движение' },
     { scene: 'card', title: 'Один тезис', body: 'Только проверенный текст' },
     { scene: 'steps', title: 'Три шага', steps: ['Прочитать', 'Проверить', 'Собрать'] },
     { scene: 'list', title: 'Два пункта', items: ['Звук', 'Изображение'] },
     { scene: 'counter', label: 'Проверено', value: 7 },
-    ...['mute', 'mix', 'replace'].map(audioMode => ({ scene: 'media', media: { kind: 'video', src: 'assets/broll/colors.mp4', sha256, fit: 'contain', trimStartSec: 1, audioMode } })),
+    ...['mute', 'mix', 'replace'].map(audioMode => ({ scene: 'media', media: { kind: 'video',
+      src: audioMode === 'mute' ? 'assets/broll/silent.mp4' : 'assets/broll/colors.mp4',
+      sha256: audioMode === 'mute' ? silentSha256 : sha256, fit: 'contain', trimStartSec: 1, audioMode } })),
     { scene: 'cta', title: 'Готово', action: 'Сохраните результат' },
   ].map((scene, index) => ({ ...scene, start: index, end: index + 1 }));
   const brief = { version: 1, kind: 'motion-reel', status: 'draft', source: workspace.manifest.source.localPath, theme: 'motion-neutral', title: 'Публичная проверка', output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 270 }, scenes };

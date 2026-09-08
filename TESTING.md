@@ -601,6 +601,7 @@ Chromium и полного FFmpeg; перед завершением renderer-з
 
 ```bash
 node --test tests/motion-workflow.test.js tests/review-compatibility.test.js tests/qa-preview.test.js tests/cli.test.js
+node --test tests/motion-workspace-privacy.test.js tests/motion-media-preflight.test.js
 AUTOMONTAGE_TEST_MOTION_WORKFLOW=1 node --test tests/motion-workflow-media.test.js
 ```
 
@@ -611,6 +612,11 @@ AUTOMONTAGE_TEST_MOTION_WORKFLOW=1 node --test tests/motion-workflow-media.test.
 Быстрые проверки покрывают CLI, local transcription scaffold, draft watermark, stored-kind
 маршрутизацию, обязательный полный просмотр, hashes narration/draft/preview, byte-immutable
 approved JSON, labels/history, rollback, stale QA/Review, media symlink/hash и защищённую музыку.
+Изолированный Git consumer проверяет игнорирование narration/transcript/draft/manifest при
+default/explicit пути, сохранение прежних ignore-правил, отказ root/tracked/symlink путей и
+отсутствие частичных файлов при сбое fsync/подмене ignore. Реальные короткие MP4 проверяют
+отказ silent `mix`/`replace`, выход trim за конец видео/replace audio, повторный scene с другим
+trim и допустимые video modes до renderer, публикации preview и QA.
 Регрессии гонок проверяют narration A→B→A при копировании preview и поздние правки approved/draft
 во время последнего narration hash, fsync MP4, rename MP4 и fsync manifest. При отказе сохраняются
 прежний final и `latestRender`, а созданные staging/backup-файлы удаляются.
@@ -620,7 +626,8 @@ state и отказ от неподдержанных edit-команд. Legacy 
 Opt-in media regression создаёт WAV и MP4 локально, вызывает настоящие CLI preview/approval/final
 и проверяет все семь типов сцен, 1080×1920/30 FPS/9 sec, полное декодирование и narration audio.
 Цвет пикселя доказывает `trimStartSec=1`; спектр 440/880 Hz проверяет mute/mix/replace и возврат
-озвучки после replace. Девять контрольных кадров и draft watermark сохраняются при заданном
+озвучки после replace. Mute использует настоящий silent MP4 и сохраняет narration.
+Девять контрольных кадров и draft watermark сохраняются при заданном
 `AUTOMONTAGE_MOTION_E2E_DIR` (каталог должен существовать); без него временные файлы удаляются.
 Никаких provider calls, ключей или личных медиа этот тест не требует.
 
