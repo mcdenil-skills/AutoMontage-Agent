@@ -630,11 +630,17 @@ automontage preview --project-dir projects/motion-demo --brief brief/v01-draft.m
 node scripts/qa-preview.js --project-dir projects/motion-demo
 ```
 
-Демо генерирует 21 секунду mono PCM WAV (тестовые тоны, не речь), нейтральную PNG и
+Демо генерирует 27 секунд mono PCM WAV (тестовые тоны, не речь), нейтральную PNG и
 иллюстративные таймкоды. JSON проходит настоящую motion schema; порядок содержит ровно
 `kinetic-title`, `card`, `steps`, `list`, `counter`, `media`, `cta`. Команда создаёт только
 audio-only draft, без Whisper, API, approval и final. Существующий workspace не изменяется;
 для нового прогона передай `--project-dir projects/motion-demo-2`.
+
+Регрессии проверяют, что копируемая подсказка для POSIX shell сохраняет обычные имена, пробелы,
+апострофы, буквальные `$()`, backticks и `$VARIABLE` как один аргумент. Строка не исполняется
+внутри движка или тестов: реальная CLI получает argv. Отдельный тест использует настоящие
+renderer-функции и требует минимум 0,75 секунды полной видимости всех nodes/connectors/items
+перед концом демо-сцен `steps` (5 секунд) и `list` (7 секунд).
 
 Тесты также проверяют hash сгенерированного media, детерминизм текстовых/binary fixtures,
 одинаковые SKILL.md/reference в `skills/`, `.agents/skills/`, `.codex/skills/`, раннюю маршрутизацию
@@ -656,7 +662,7 @@ ffprobe -v error -show_streams -show_format -of json projects/motion-demo/final/
 ffmpeg -v error -i projects/motion-demo/final/neutral-motion-demo.mp4 -f null -
 ```
 
-Ожидание: H.264/AAC, 1080×1920, 30 FPS, 21 секунда и ровно один аудиопоток; полный decode без
+Ожидание: H.264/AAC, 1080×1920, 30 FPS, 27 секунд и ровно один аудиопоток; полный decode без
 ошибок. Проверь кадры каждой сцены, чтение кириллицы, постепенные steps, точный counter и CTA,
 watermark только в preview. Синтетические тоны проверяют целостность аудиопути; они не доказывают
 качество реальной речи. Клиентский final нужно дополнительно смотреть/слушать целиком.

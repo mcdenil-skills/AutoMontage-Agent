@@ -10,7 +10,7 @@
     "width": 1080,
     "height": 1920,
     "fps": 30,
-    "durationInFrames": 630
+    "durationInFrames": 810
   },
   "scenes": [
     {
@@ -35,7 +35,7 @@
         "Собрать"
       ],
       "start": 6,
-      "end": 9
+      "end": 11
     },
     {
       "scene": "list",
@@ -46,15 +46,15 @@
         "Спокойный ритм",
         "Ясный следующий шаг"
       ],
-      "start": 9,
-      "end": 12
+      "start": 11,
+      "end": 18
     },
     {
       "scene": "counter",
       "label": "Типов сцен в этом демо",
       "value": 7,
-      "start": 12,
-      "end": 15
+      "start": 18,
+      "end": 21
     },
     {
       "scene": "media",
@@ -65,15 +65,15 @@
         "sha256": "31c8298a0e61559cd193ff2e68973b9c6b2904f110cdc5adc538ae932590be6d",
         "fit": "contain"
       },
-      "start": 15,
-      "end": 18
+      "start": 21,
+      "end": 24
     },
     {
       "scene": "cta",
       "title": "Проверьте результат",
       "action": "Посмотрите полный черновик",
-      "start": 18,
-      "end": 21
+      "start": 24,
+      "end": 27
     }
   ]
 }

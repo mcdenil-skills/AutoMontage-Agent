@@ -22,8 +22,56 @@ test('public motion demo brief covers exactly seven frame-aligned scenes with ne
   assert.deepEqual(brief.scenes.map(scene => scene.scene), MOTION_SCENES);
   assert.equal(brief.status, 'draft');
   assert.equal(brief.source, 'input/narration.wav');
-  assert.deepEqual(brief.output, { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 630 });
-  assert.equal(brief.scenes.at(-1).end, 21);
+  assert.deepEqual(brief.output, { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 810 });
+  assert.equal(brief.scenes.at(-1).end, 27);
+});
+
+test('copyable POSIX preview command quotes literal shell syntax as data', () => {
+  const { formatMotionPreviewCommand } = require('../scripts/motion/demo');
+  const cases = [
+    ['projects/ordinary', "'projects/ordinary'"],
+    ['projects/with spaces', "'projects/with spaces'"],
+    ["projects/single'quote", "'projects/single'\\''quote'"],
+    ['projects/$(printf marker)', "'projects/$(printf marker)'"],
+    ['projects/`printf marker`', "'projects/`printf marker`'"],
+    ['projects/$VARIABLE', "'projects/$VARIABLE'"],
+  ];
+  for (const [projectDir, quoted] of cases) {
+    assert.equal(formatMotionPreviewCommand({ projectDir, relativePath: 'brief/v01-draft.motion.json' }),
+      `automontage preview --project-dir ${quoted} --brief 'brief/v01-draft.motion.json'`);
+  }
+});
+
+test('demo CLI prints shell-safe next instruction for an actual unusual project name', t => {
+  const root = temporary(t);
+  const projectDir = path.join(root, "with spaces'$(printf marker)`printf marker`$VARIABLE");
+  const output = execFileSync(process.execPath, [path.join(ROOT, 'scripts/cli.js'), 'demo', '--motion', '--project-dir', projectDir],
+    { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+  const quoted = `'${path.join(root, 'with spaces')}'\\''$(printf marker)\`printf marker\`$VARIABLE'`;
+  assert.equal(output.split('\n').find(line => line.startsWith('Next (POSIX shell):')),
+    `Next (POSIX shell): automontage preview --project-dir ${quoted} --brief 'brief/v01-draft.motion.json'`);
+  assert.equal(readProjectManifest(projectDir).projectKind, 'motion-reel');
+  assert.deepEqual(fs.readdirSync(root), [path.basename(projectDir)]);
+});
+
+test('demo steps and list hold every fully revealed item for at least 0.75 seconds', () => {
+  const brief = JSON.parse(read('examples/motion-brief-demo.json'));
+  const { loadMotion } = require('./helpers/motion-render');
+  const { stepState } = loadMotion('src/motion/StepsScene.jsx');
+  const { revealProgress } = loadMotion('src/motion/motion-theme.js');
+  for (const scene of brief.scenes.filter(scene => ['steps', 'list'].includes(scene.scene))) {
+    const fps = brief.output.fps;
+    const frames = Math.round((scene.end - scene.start) * fps);
+    let completeAt;
+    for (let frame = 0; frame < frames; frame += 1) {
+      const states = scene.scene === 'steps'
+        ? Object.values(stepState(frame, fps, frames, scene.steps.length)).flat()
+        : scene.items.map((_, index) => revealProgress(frame, fps, frames, index, scene.items.length));
+      if (states.every(value => value === 1)) { completeAt = frame; break; }
+    }
+    assert.ok(Number.isInteger(completeAt), `${scene.scene} never completes`);
+    assert.ok((frames - completeAt) / fps >= 0.75, `${scene.scene} holds for ${(frames - completeAt) / fps} seconds`);
+  }
 });
 
 test('motion demo CLI creates only an audio draft offline and refuses to overwrite a project', t => {
@@ -90,9 +138,9 @@ for (const explicit of [false, true]) {
       result = require('../scripts/motion/build').runMotion({ narrationPath: source, project: 'Neutral local audio',
         ...(explicit ? { projectDir: path.join(cwd, 'chosen') } : {}),
       }, {
-        probeOpenedAudioImpl: () => ({ mediaKind: 'audio', durationSec: 21 }),
+        probeOpenedAudioImpl: () => ({ mediaKind: 'audio', durationSec: 27 }),
         transcribeMotionNarrationImpl({ workspace }) {
-          const transcript = [{ start: 0, end: 21, text: 'Нейтральный тест', words: [] }];
+          const transcript = [{ start: 0, end: 27, text: 'Нейтральный тест', words: [] }];
           fs.writeFileSync(path.join(workspace.dir, 'transcript/words.json'), JSON.stringify(transcript));
           return { transcript };
         },
@@ -148,11 +196,12 @@ test('real offline demo CLI renders seven scenes to a checked H.264/AAC final', 
   assert.deepEqual([video[0].codec_name, video[0].width, video[0].height, video[0].r_frame_rate], ['h264', 1080, 1920, '30/1']);
   assert.equal(audio.length, 1);
   assert.equal(audio[0].codec_name, 'aac');
-  assert.ok(Math.abs(Number(metadata.format.duration) - 21) < 0.08);
+  assert.ok(Math.abs(Number(metadata.format.duration) - 27) < 0.08);
   assert.equal(manifest.renders.at(-1).status, 'complete');
   ffmpeg(['-i', final, '-f', 'null', '-']);
-  for (let index = 0; index < MOTION_SCENES.length; index += 1) {
-    ffmpeg(['-ss', String(index * 3 + 1.8), '-i', final, '-frames:v', '1', path.join(work, `${MOTION_SCENES[index]}.png`)]);
+  const approved = JSON.parse(fs.readFileSync(path.join(projectDir, manifest.currentBrief)));
+  for (const scene of approved.scenes) {
+    ffmpeg(['-ss', String(scene.end - 0.75), '-i', final, '-frames:v', '1', path.join(work, `${scene.scene}.png`)]);
   }
   fs.writeFileSync(path.join(work, 'metadata.json'), JSON.stringify(metadata, null, 2));
   console.log(`Motion demo evidence: ${work}`);

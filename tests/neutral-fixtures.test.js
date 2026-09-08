@@ -91,7 +91,8 @@ test('motion fixtures generate deterministic audio and a hashed image without pr
   assert.equal(first.audioBytes.toString('ascii', 0, 4), 'RIFF');
   assert.equal(first.audioBytes.readUInt32LE(24), 24000);
   assert.equal(first.audioBytes.readUInt16LE(22), 1);
-  assert.equal(first.audioBytes.readUInt32LE(40), 21 * 24000 * 2);
+  assert.equal(first.audioBytes.readUInt32LE(40), 27 * 24000 * 2);
+  assert.ok(first.audioBytes.subarray(44 + 26 * 24000 * 2).some(value => value !== 0), 'tone audio covers the last scene');
   assert.ok(first.audioBytes.subarray(44).some(value => value !== 0));
   assert.equal(first.imageBytes.toString('hex', 0, 8), '89504e470d0a1a0a');
   assert.equal(first.brief.scenes.find(scene => scene.scene === 'media').media.sha256,

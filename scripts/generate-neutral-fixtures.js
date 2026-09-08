@@ -120,7 +120,8 @@ function writeText(root, relativePath, source) {
 }
 
 // Algorithmic fixtures only: these tones are not speech or a user's voice.
-function neutralToneWav(durationSec = 21, sampleRate = 24000) {
+function neutralToneWav(scenes, sampleRate = 24000) {
+  const durationSec = scenes.at(-1).end;
   const samples = durationSec * sampleRate;
   const bytes = Buffer.alloc(44 + samples * 2);
   bytes.write('RIFF'); bytes.writeUInt32LE(bytes.length - 8, 4); bytes.write('WAVEfmt ', 8);
@@ -128,11 +129,14 @@ function neutralToneWav(durationSec = 21, sampleRate = 24000) {
   bytes.writeUInt32LE(sampleRate, 24); bytes.writeUInt32LE(sampleRate * 2, 28);
   bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34); bytes.write('data', 36);
   bytes.writeUInt32LE(samples * 2, 40);
+  const frequencies = [220, 275, 330, 440, 330, 275, 220];
+  let sceneIndex = 0;
   for (let i = 0; i < samples; i += 1) {
     const time = i / sampleRate;
+    while (sceneIndex < scenes.length - 1 && time >= scenes[sceneIndex].end) sceneIndex += 1;
     const phase = time % 0.75;
     const envelope = Math.min(1, phase / 0.03) * Math.max(0, 1 - phase / 0.6);
-    const frequency = [220, 275, 330, 440, 330, 275, 220][Math.floor(time / 3)];
+    const frequency = frequencies[sceneIndex];
     bytes.writeInt16LE(Math.round(2600 * envelope * Math.sin(2 * Math.PI * frequency * time)), 44 + i * 2);
   }
   return bytes;
@@ -166,6 +170,9 @@ function neutralMotionImage() {
 
 function buildMotionDemoFixture() {
   const imageBytes = neutralMotionImage();
+  // Native reveal timing leaves a deliberate reading hold in the two dense scenes.
+  const durations = [3, 3, 5, 7, 3, 3, 3];
+  let cursor = 0;
   const scenes = [
     { scene: 'kinetic-title', text: 'Идея приходит в движение' },
     { scene: 'card', title: 'Одна мысль', body: 'Каждая сцена объясняет один простой тезис.' },
@@ -175,7 +182,11 @@ function buildMotionDemoFixture() {
     { scene: 'media', overlayText: 'Нейтральная геометрия', media: { kind: 'image', src: 'assets/neutral.png',
       sha256: createHash('sha256').update(imageBytes).digest('hex'), fit: 'contain' } },
     { scene: 'cta', title: 'Проверьте результат', action: 'Посмотрите полный черновик' },
-  ].map((scene, index) => ({ ...scene, start: index * 3, end: (index + 1) * 3 }));
+  ].map((scene, index) => {
+    const start = cursor;
+    cursor += durations[index];
+    return { ...scene, start, end: cursor };
+  });
   const transcript = scenes.map(scene => {
     const text = scene.text || scene.title || scene.label || scene.overlayText;
     const tokens = text.split(' ');
@@ -186,10 +197,10 @@ function buildMotionDemoFixture() {
   return {
     brief: { version: 1, kind: 'motion-reel', status: 'draft', source: 'input/narration.wav',
       theme: 'motion-neutral', title: 'Нейтральное motion-демо',
-      output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 630 }, scenes },
+      output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: cursor * 30 }, scenes },
     script: 'Синтетическое демо: тестовые тоны, не речь. Таймкоды иллюстративные, не результат распознавания.\n\n'
       + transcript.map(segment => segment.text).join('\n') + '\n',
-    transcript, audioBytes: neutralToneWav(), imageBytes,
+    transcript, audioBytes: neutralToneWav(scenes), imageBytes,
   };
 }
 

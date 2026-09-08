@@ -8,6 +8,15 @@ const { createMotionProject } = require('./source');
 const { publishBriefRevision, resolveProjectPath, writeFilesNoReplace } = require('../project/workspace');
 const { ROOT, configureMediaToolPath } = require('../env');
 
+function quotePosixArgument(value) {
+  return "'" + String(value).replaceAll("'", "'\\''") + "'";
+}
+
+// Display only. Rendering always uses the existing argv-based CLI, never this string.
+function formatMotionPreviewCommand({ projectDir, relativePath }) {
+  return `automontage preview --project-dir ${quotePosixArgument(projectDir)} --brief ${quotePosixArgument(relativePath)}`;
+}
+
 function initializeMotionDemo({ projectDir }) {
   const dir = path.resolve(projectDir);
   // Refuse every pre-existing entry, including empty directories and dangling links.
@@ -34,9 +43,9 @@ if (require.main === module) {
     const args = buildMotionDemoArgs(ROOT, process.cwd(), process.argv.slice(2));
     const result = initializeMotionDemo({ projectDir: args[2] });
     console.log(`Motion demo draft: ${result.jsonPath}\nTest tones, not speech; illustrative timing; no provider calls.\n`
-      + `Next: automontage preview --project-dir ${JSON.stringify(result.projectDir)} --brief ${result.relativePath}\n`
+      + `Next (POSIX shell): ${formatMotionPreviewCommand(result)}\n`
       + 'Watch the full preview, then explicitly approve before rendering a final.');
   } catch (error) { console.error(`Motion demo cancelled: ${error.message}`); process.exitCode = 1; }
 }
 
-module.exports = { initializeMotionDemo };
+module.exports = { initializeMotionDemo, formatMotionPreviewCommand };

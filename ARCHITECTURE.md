@@ -186,6 +186,9 @@ PNG-геометрию, иллюстративный transcript/script и все
 audio-only workspace, стандартно `projects/motion-demo/`, без Whisper, провайдера и скрытого
 approval/render. Любая существующая папка назначения отклоняется. Tracked
 `examples/motion-brief-demo.json` равен генератору; бинарные данные остаются локальными.
+Демо длится 27 секунд: steps/list получают 5/7 секунд и минимум 0,75 секунды полной видимости
+последнего элемента. WAV и иллюстративные таймкоды выводятся из тех же границ сцен. Следующая
+preview-команда печатается с POSIX single-quote escaping как подсказка; исполнение остаётся argv-only.
 Scheduling и автопубликация — будущая отдельная orchestration-система, не часть этого pipeline.
 
 `scripts/motion/build.js` владеет отдельным CLI-маршрутом. Первый вызов `motion <audio> --project`

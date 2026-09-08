@@ -161,13 +161,18 @@ automontage preview --project-dir projects/motion-demo --brief brief/v01-draft.m
 node scripts/qa-preview.js --project-dir projects/motion-demo
 ```
 
-Из checkout вместо `automontage` можно писать `node scripts/cli.js`. Демо создаёт 21 секунду
+Из checkout вместо `automontage` можно писать `node scripts/cli.js`. Демо создаёт 27 секунд
 тестовых тонов (не речь), нейтральную геометрическую PNG и иллюстративные таймкоды. Все семь
 сцен берутся из [публичного fixture](examples/motion-brief-demo.json); аудио и PNG генерируются
 локально, медиа не коммитятся. Интернет и `.env` для самого демо не нужны; первая установка
 Remotion browser может потребовать скачивание. Инициализация не создаёт preview/final и ничего
 не утверждает. Существующая папка не перезаписывается; новый прогон —
 `automontage demo --motion --project-dir projects/motion-demo-2`.
+
+Схема длится 5 секунд, список — 7: последние элементы полностью видны минимум 0,75 секунды.
+Печатаемая подсказка `Next (POSIX shell)` безопасно заключает пути в кавычки для bash/zsh/sh,
+включая пробелы, апострофы и буквальные `$()`/backticks. Она не выполняется движком. В PowerShell
+используй команды выше с фактическими путями и синтаксисом кавычек PowerShell.
 
 После полного просмотра и явного утверждения пользователем:
 
