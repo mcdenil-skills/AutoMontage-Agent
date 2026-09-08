@@ -13,10 +13,26 @@ import { LessonSequence } from './LessonSequence';
 import { lessonSeqDemo } from './data/lesson-seq-demo';
 import { LessonVertical } from './LessonVertical';
 import { SceneDirector } from './SceneDirector';
+import { MotionDirector } from './MotionDirector';
 
 export const RemotionRoot = () => {
   return (
     <>
+      <Composition
+        id="MotionReel"
+        component={MotionDirector}
+        durationInFrames={300}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ theme: 'motion-neutral', scenes: [], durationInFrames: 300, fps: 30, width: 1080, height: 1920 }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: props.durationInFrames,
+          fps: props.fps,
+          width: props.width,
+          height: props.height,
+        })}
+      />
       <Composition
         id="Reel"
         component={Timeline}

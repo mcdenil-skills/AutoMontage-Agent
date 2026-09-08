@@ -537,3 +537,35 @@ Live-команда без ключа печатает ровно `SKIPPED: PEXE
 Для необязательного semantic reranker есть отдельный [воспроизводимый эксперимент](docs/research/2026-09-08-broll-reranking-benchmark.md).
 Его Python/model dependencies не входят в основной монтаж или CI; текущий default - релевантность
 провайдера. Openverse-эксперимент не заменяет live acceptance Pexels.
+
+## MotionReel: сцены, тайминг и кириллица
+
+Быстрые проверки без браузера:
+
+```bash
+node --test tests/motion-brief.test.js tests/motion-timing.test.js tests/motion-render.test.js
+```
+
+Проверяются metadata из narration props, единственный root Audio, глобальные Sequence,
+локальная последовательность node → connector → node, точное завершение счётчика,
+однокадровые сцены, семь контрактов на максимальной длине кириллицы, caption opt-in,
+watermark и media trim/mute/replace.
+
+Обязательная при изменении motion-layout проверка настоящим Remotion/Chromium:
+
+```bash
+AUTOMONTAGE_TEST_MOTION_RENDER=1 \
+AUTOMONTAGE_MOTION_FRAMES_DIR="$PWD/out/motion-frames" \
+node --test tests/motion-render.test.js
+```
+
+На macOS перед запуском использовать полный FFmpeg:
+`PATH=/opt/homebrew/opt/ffmpeg-full/bin:$PATH` и
+`AUTOMONTAGE_FFMPEG_DIR=/opt/homebrew/opt/ffmpeg-full/bin`.
+Тест генерирует локальные PNG/WAV fixtures без ключей, получает реальную metadata MotionReel,
+рендерит все семь сцен с максимальным текстом и ещё раз с длинными непрерывными `Щ` и
+явной подписью. Проверяет DOM-границы текста, caption и safe-zone, а также одну строку
+для числа. Дополнительные кадры показывают ранний hook, шаги/connector, середину счётчика
+и вход CTA. PNG и `layout-measurements.json` остаются в указанной игнорируемой папке;
+без неё артефакты временные. Проверка отключена в обычном Node suite, чтобы тот не требовал
+Chromium и полного FFmpeg; перед завершением renderer-задачи её запускают отдельно.
