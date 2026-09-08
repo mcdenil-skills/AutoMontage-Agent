@@ -19,6 +19,7 @@ const {
   writeProjectManifest,
 } = require('../scripts/project/workspace');
 const { makeReviewProject, registerHigherBrief } = require('./helpers/review-project');
+const { formatMotionBriefMarkdown } = require('../scripts/motion/brief');
 
 function makeProject(t, name) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-project-mutation-'));
@@ -283,6 +284,40 @@ test('approval always runs the complete lesson brief validator before publicatio
   assert.throws(() => approveBrief(state.workspace, state.briefPath), /draft brief is invalid.*title/is);
   assert.deepEqual(fs.readFileSync(path.join(state.workspace.dir, 'project.json')), manifestBefore);
   assert.equal(fs.existsSync(state.briefPath.replace('-draft.', '-approved.')), false);
+});
+
+test('approval dispatches from the stored motion brief kind even with a lesson filename', (t) => {
+  const workspace = makeProject(t, 'Stored motion kind');
+  const draft = nextBriefPaths(workspace, 'lesson');
+  const brief = {
+    version: 1,
+    kind: 'motion-reel',
+    status: 'draft',
+    source: workspace.manifest.source.localPath,
+    theme: 'motion-neutral',
+    title: 'Stored kind wins',
+    output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 90 },
+    scenes: [{ scene: 'kinetic-title', start: 0, end: 3, text: 'Не имя файла' }],
+  };
+  fs.writeFileSync(draft.jsonPath, `${JSON.stringify(brief, null, 2)}\n`);
+  fs.writeFileSync(draft.markdownPath, formatMotionBriefMarkdown(brief));
+  recordBrief(workspace, {
+    revision: draft.revision,
+    jsonPath: draft.jsonPath,
+    markdownPath: draft.markdownPath,
+    status: 'draft',
+    kind: 'motion-reel',
+    theme: brief.theme,
+    aspect: brief.output.aspect,
+  });
+
+  const approved = approveBrief(workspace, draft.jsonPath);
+  const persisted = JSON.parse(fs.readFileSync(approved.jsonPath, 'utf8'));
+  const markdown = fs.readFileSync(approved.markdownPath, 'utf8');
+
+  assert.equal(persisted.status, 'approved');
+  assert.match(markdown, /^# Motion Reel: Stored kind wins$/m);
+  assert.equal(readProjectManifest(workspace.dir).briefs.at(-1).kind, 'motion-reel');
 });
 
 test('approval no-replace publication preserves a foreign destination created at commit', (t) => {

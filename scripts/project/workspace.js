@@ -14,6 +14,10 @@ const {
 const projectSchema = require('../../schema/project.schema.json');
 const { formatBriefMarkdown, isRenderableBrollSource, validateLessonBrief } = require('../lesson/brief');
 const {
+  formatMotionBriefMarkdown,
+  validateMotionBrief,
+} = require('../motion/brief');
+const {
   preflightBriefBrollMedia,
   verifyBriefBrollMedia,
 } = require('../lesson/broll-media-files');
@@ -50,8 +54,19 @@ function formatProjectId({ date, name }) {
 }
 
 function migrateProjectManifest(manifest) {
+  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+    if (!Object.hasOwn(manifest, 'projectKind')) manifest.projectKind = 'video';
+    if (Array.isArray(manifest.briefs)) {
+      for (const brief of manifest.briefs) {
+        if (brief && typeof brief === 'object' && !Object.hasOwn(brief, 'kind')) {
+          brief.kind = 'lesson';
+        }
+      }
+    }
+  }
   if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)
     && manifest.source && typeof manifest.source === 'object') {
+    if (!Object.hasOwn(manifest.source, 'mediaKind')) manifest.source.mediaKind = 'video';
     if (!Object.hasOwn(manifest.source, 'originalLocalPath')) {
       manifest.source.originalLocalPath = manifest.source.localPath;
     }
@@ -462,6 +477,8 @@ function createOrOpenProject({
   name,
   projectDir,
   sourcePath,
+  projectKind = 'video',
+  mediaKind = projectKind === 'motion-reel' ? 'audio' : 'video',
   now = new Date(),
 }) {
   const resolvedProjectDir = projectDir
@@ -498,12 +515,14 @@ function createOrOpenProject({
   const timestamp = now.toISOString();
   const manifest = {
     version: 1,
+    projectKind,
     id,
     name,
     slug,
     createdAt: timestamp,
     updatedAt: timestamp,
     source: {
+      mediaKind,
       originalPath,
       originalLocalPath: localPath,
       localPath,
@@ -581,11 +600,13 @@ function recordBrief(workspace, {
   jsonPath,
   markdownPath,
   status,
+  kind = 'lesson',
   theme = null,
   aspect = null,
 }, options = {}) {
   return withProjectMutation(workspace, (transaction) => {
     const entry = {
+      kind,
       revision,
       jsonPath: relativeProjectPath(workspace, jsonPath),
       markdownPath: markdownPath ? relativeProjectPath(workspace, markdownPath) : null,
@@ -612,11 +633,26 @@ function publishBriefRevision(workspace, {
 }, options = {}) {
   const fileSystem = options.fileSystem || fs;
   const temporaryId = options.temporaryId || randomUUID;
+  const briefKind = brief?.kind === 'motion-reel' || kind === 'motion-reel'
+    ? 'motion-reel'
+    : 'lesson';
+  const pathKind = kind === 'motion-reel' ? 'motion' : kind;
+  if (briefKind === 'motion-reel') {
+    const validation = validateMotionBrief(brief);
+    if (!validation.ok) throw new Error(`motion brief is invalid: ${validation.errors.join('\n')}`);
+    if (brief.status !== 'draft' || status !== 'draft') {
+      throw new Error('initial motion brief publication requires status draft');
+    }
+  }
+  const publishedMarkdown = briefKind === 'motion-reel'
+    ? formatMotionBriefMarkdown(brief)
+    : markdown;
   return withProjectMutation(workspace, (transaction) => {
     const persistedWorkspace = { ...workspace, manifest: transaction.manifest };
-    const allocated = nextBriefPaths(persistedWorkspace, kind, { fileSystem });
-    const markdownPath = markdown === null ? null : allocated.markdownPath;
+    const allocated = nextBriefPaths(persistedWorkspace, pathKind, { fileSystem });
+    const markdownPath = publishedMarkdown === null ? null : allocated.markdownPath;
     const entry = {
+      kind: briefKind,
       revision: allocated.revision,
       jsonPath: relativeProjectPath(workspace, allocated.jsonPath),
       markdownPath: markdownPath ? relativeProjectPath(workspace, markdownPath) : null,
@@ -631,7 +667,7 @@ function publishBriefRevision(workspace, {
     const history = stageNoReplaceFileSet([
       ...(markdownPath ? [{
         destination: markdownPath,
-        data: markdown,
+        data: publishedMarkdown,
         purpose: 'initial-brief-markdown',
       }] : []),
       {
@@ -993,7 +1029,10 @@ function saveDraftRevisionReserved(workspace, {
   });
   const baseBriefSnapshot = readFileSnapshot(fileSystem, resolvedBasePath);
   const baseBrief = JSON.parse(baseBriefSnapshot.bytes.toString('utf8'));
-  const baseValidation = validateLessonBrief(baseBrief);
+  const baseContract = baseEntry.kind === 'motion-reel'
+    ? { validate: validateMotionBrief, format: formatMotionBriefMarkdown, pathKind: 'motion' }
+    : { validate: validateLessonBrief, format: formatBriefMarkdown, pathKind: 'lesson' };
+  const baseValidation = baseContract.validate(baseBrief);
   if (!baseValidation.ok) throw new Error(`base brief is invalid: ${baseValidation.errors.join('\n')}`);
   if (!matchesExpectedHash(baseBrief, expectedBaseHash)) throw manifestConflict();
 
@@ -1005,7 +1044,7 @@ function saveDraftRevisionReserved(workspace, {
   }
   if (draftJson === undefined) throw new Error('candidate brief is not canonical JSON');
   const draftBrief = JSON.parse(draftJson);
-  const validation = validateLessonBrief(draftBrief);
+  const validation = baseContract.validate(draftBrief);
   if (!validation.ok) throw new Error(`candidate brief is invalid: ${validation.errors.join('\n')}`);
 
   const pathValues = [
@@ -1031,7 +1070,7 @@ function saveDraftRevisionReserved(workspace, {
   }
 
   const allocationWorkspace = { ...workspace, manifest: persistedManifest };
-  const allocated = nextBriefPaths(allocationWorkspace, 'lesson', { fileSystem });
+  const allocated = nextBriefPaths(allocationWorkspace, baseContract.pathKind, { fileSystem });
   const jsonPath = resolveProjectPath(
     workspace.dir,
     relativeProjectPath(workspace, allocated.jsonPath),
@@ -1050,6 +1089,7 @@ function saveDraftRevisionReserved(workspace, {
   }
 
   const entry = {
+    kind: baseEntry.kind,
     revision: allocated.revision,
     jsonPath: relativeProjectPath(workspace, jsonPath),
     markdownPath: relativeProjectPath(workspace, markdownPath),
@@ -1070,7 +1110,7 @@ function saveDraftRevisionReserved(workspace, {
   const nextManifestBytes = Buffer.from(`${JSON.stringify(validatedManifest, null, 2)}\n`);
   const committedBaseHash = canonicalJsonHash(draftBrief);
   const committedManifestHash = canonicalJsonHash(validatedManifest);
-  const markdown = formatBriefMarkdown(draftBrief);
+  const markdown = baseContract.format(draftBrief);
   const stages = [];
   let manifestStage;
   let markdownStage;
@@ -1226,17 +1266,21 @@ function approveBrief(workspace, draftJsonPath, {
     const draftSnapshot = readFileSnapshot(fileSystem, draftPath);
     const draft = JSON.parse(draftSnapshot.bytes.toString('utf8'));
     if (draft.status !== 'draft') throw new Error('утвердить можно только brief со статусом draft');
-    preflightBriefBrollMedia(draft);
-    const draftValidation = validateLessonBrief(draft);
+    const briefKind = draftEntry.kind;
+    const briefContract = briefKind === 'motion-reel'
+      ? { validate: validateMotionBrief, format: formatMotionBriefMarkdown }
+      : { validate: validateLessonBrief, format: formatBriefMarkdown };
+    if (briefKind === 'lesson') preflightBriefBrollMedia(draft);
+    const draftValidation = briefContract.validate(draft);
     if (!draftValidation.ok) {
       throw new Error(`draft brief is invalid: ${draftValidation.errors.join('\n')}`);
     }
-    for (const [index, scene] of draft.scenes.entries()) {
+    for (const [index, scene] of briefKind === 'lesson' ? draft.scenes.entries() : []) {
       if (scene?.scene === 'broll' && scene.brollIntent && !scene.brollMedia && !scene.brollSrc) {
         throw new Error(`scenes[${index}].brollIntent: unresolved b-roll intent cannot be approved`);
       }
     }
-    for (const [index, scene] of draft.scenes.entries()) {
+    for (const [index, scene] of briefKind === 'lesson' ? draft.scenes.entries() : []) {
       if (scene?.scene === 'broll' && !scene.brollMedia && !isRenderableBrollSource(scene.brollSrc)) {
         throw new Error(`scenes[${index}].brollSrc: b-roll поддерживает только изображения`);
       }
@@ -1280,9 +1324,16 @@ function approveBrief(workspace, draftJsonPath, {
       status: 'approved',
       scenes: draft.scenes.map(({ brollIntent, ...scene }) => scene),
     };
-    const mediaVerification = verifyBriefBrollMedia({
-      root, workspace: persistedWorkspace, brief: draft, runToolImpl, fileSystem, platform,
-    });
+    const mediaVerification = briefKind === 'lesson'
+      ? verifyBriefBrollMedia({
+        root, workspace: persistedWorkspace, brief: draft, runToolImpl, fileSystem, platform,
+      })
+      : {
+        hasDiscovery: false,
+        assertCurrent() {},
+        assertIdentity() {},
+        close() {},
+      };
     let previewVerification = null;
     try {
       const needsPreview = mediaVerification.hasDiscovery || draft.brollReviewPolicy === 'preview-required'
@@ -1291,14 +1342,15 @@ function approveBrief(workspace, draftJsonPath, {
       previewVerification = needsPreview
         ? require('./preview-workspace').verifyApprovalPreview(persistedWorkspace, draft, draftSnapshot.bytes, { fileSystem, confirmPreviewViewed, expectedPreviewSha256 }) : null;
       if (previewVerification) approvedBrief.brollApproval = previewVerification.receipt;
-      const approvedValidation = validateLessonBrief(approvedBrief, { requireApproved: true });
+      const approvedValidation = briefContract.validate(approvedBrief, { requireApproved: true });
       if (!approvedValidation.ok) throw new Error(`approved brief is invalid: ${approvedValidation.errors.join('\n')}`);
     } catch (error) {
       try { mediaVerification.close(); } finally { previewVerification?.close(); }
       throw error;
     }
-    const approvedMarkdown = approvedMarkdownPath ? formatBriefMarkdown(approvedBrief) : null;
+    const approvedMarkdown = approvedMarkdownPath ? briefContract.format(approvedBrief) : null;
     const entry = {
+      kind: briefKind,
       revision: draftEntry.revision,
       jsonPath: approvedJsonRelativePath,
       markdownPath: approvedMarkdownPath

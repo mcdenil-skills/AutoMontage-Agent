@@ -1,0 +1,183 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://automontage.local/schema/motion-brief.schema.json",
+  "title": "AutoMontage motion-reel brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "kind", "status", "source", "theme", "title", "output", "scenes"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "motion-reel" },
+    "status": { "enum": ["draft", "approved"] },
+    "source": { "$ref": "#/definitions/projectPath" },
+    "theme": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "title": { "$ref": "#/definitions/titleText" },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aspect", "width", "height", "fps", "durationInFrames"],
+      "properties": {
+        "aspect": { "const": "vertical" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "fps": { "type": "number", "exclusiveMinimum": 0, "maximum": 120 },
+        "durationInFrames": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/kineticTitleScene" },
+          { "$ref": "#/definitions/cardScene" },
+          { "$ref": "#/definitions/stepsScene" },
+          { "$ref": "#/definitions/listScene" },
+          { "$ref": "#/definitions/counterScene" },
+          { "$ref": "#/definitions/mediaScene" },
+          { "$ref": "#/definitions/ctaScene" }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "projectPath": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "titleText": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "captionText": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "bodyText": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "startTime": { "type": "number", "minimum": 0 },
+    "endTime": { "type": "number", "exclusiveMinimum": 0 },
+    "kineticTitleScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "text"],
+      "properties": {
+        "scene": { "const": "kinetic-title" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "text": { "$ref": "#/definitions/titleText" },
+        "emphasis": { "type": "string", "minLength": 1, "maxLength": 40 }
+      }
+    },
+    "cardScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "title"],
+      "properties": {
+        "scene": { "const": "card" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "title": { "$ref": "#/definitions/shortText" },
+        "body": { "$ref": "#/definitions/bodyText" }
+      }
+    },
+    "stepsScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "steps"],
+      "properties": {
+        "scene": { "const": "steps" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "title": { "$ref": "#/definitions/shortText" },
+        "steps": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": { "type": "string", "minLength": 1, "maxLength": 60 }
+        }
+      }
+    },
+    "listScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "items"],
+      "properties": {
+        "scene": { "const": "list" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "title": { "$ref": "#/definitions/shortText" },
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      }
+    },
+    "counterScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "label", "value"],
+      "properties": {
+        "scene": { "const": "counter" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "label": { "$ref": "#/definitions/shortText" },
+        "value": { "type": "number" },
+        "prefix": { "type": "string", "maxLength": 16 },
+        "suffix": { "type": "string", "maxLength": 16 }
+      }
+    },
+    "mediaScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "media"],
+      "properties": {
+        "scene": { "const": "media" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "overlayText": { "$ref": "#/definitions/titleText" },
+        "media": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "src", "sha256", "fit"],
+              "properties": {
+                "kind": { "const": "image" },
+                "src": { "$ref": "#/definitions/projectPath" },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "fit": { "enum": ["contain", "cover"] }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "src", "sha256", "fit"],
+              "properties": {
+                "kind": { "const": "video" },
+                "src": { "$ref": "#/definitions/projectPath" },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "fit": { "enum": ["contain", "cover"] },
+                "trimStartSec": { "type": "number", "minimum": 0 },
+                "audioMode": { "enum": ["mute", "mix", "replace"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ctaScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene", "start", "end", "title", "action"],
+      "properties": {
+        "scene": { "const": "cta" },
+        "start": { "$ref": "#/definitions/startTime" },
+        "end": { "$ref": "#/definitions/endTime" },
+        "caption": { "$ref": "#/definitions/captionText" },
+        "title": { "$ref": "#/definitions/shortText" },
+        "action": { "$ref": "#/definitions/shortText" },
+        "handle": { "$ref": "#/definitions/shortText" }
+      }
+    }
+  }
+}

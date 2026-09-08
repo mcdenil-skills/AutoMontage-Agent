@@ -15,6 +15,7 @@ const {
   nextBriefPaths,
   nextRenderPaths,
   publishFinal,
+  publishBriefRevision,
   readProjectManifest,
   recordBrief,
   recordRender,
@@ -202,6 +203,81 @@ test('manifest migration adds the canonical transcript paths before validation',
     words: 'transcript/words.json',
     captions: 'transcript/captions.js',
   });
+});
+
+test('new motion projects persist project, source and brief discriminators', (t) => {
+  const fixture = makeFixture(t);
+  const narrationPath = path.join(fixture.dir, 'narration.mp3');
+  fs.writeFileSync(narrationPath, 'audio');
+  const project = createOrOpenProject({
+    projectDir: path.join(fixture.dir, 'motion-project'),
+    name: 'Motion project',
+    sourcePath: narrationPath,
+    projectKind: 'motion-reel',
+    mediaKind: 'audio',
+    now: new Date('2026-09-08T10:00:00Z'),
+  });
+  const brief = {
+    version: 1,
+    kind: 'motion-reel',
+    status: 'draft',
+    source: 'input/source.mp3',
+    theme: 'motion-neutral',
+    title: 'Motion contract',
+    output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 90 },
+    scenes: [{ scene: 'kinetic-title', start: 0, end: 3, text: 'Движение' }],
+  };
+
+  assert.throws(() => publishBriefRevision(project, {
+    kind: 'motion-reel',
+    brief: { ...brief, status: 'approved' },
+  }), /draft/i);
+  assert.equal(project.manifest.briefs.length, 0);
+
+  const published = publishBriefRevision(project, {
+    kind: 'motion-reel',
+    brief,
+    markdown: '# Wrong lesson formatter\n',
+  });
+
+  assert.equal(project.manifest.projectKind, 'motion-reel');
+  assert.equal(project.manifest.source.mediaKind, 'audio');
+  assert.equal(project.manifest.briefs[0].kind, 'motion-reel');
+  assert.equal(path.basename(project.manifest.currentBrief), 'v01-draft.motion.json');
+  assert.match(fs.readFileSync(published.markdownPath, 'utf8'), /^# Motion Reel: Motion contract$/m);
+});
+
+test('old manifests infer video, video and lesson without rewriting project.json', (t) => {
+  const fixture = makeFixture(t);
+  const workspace = createOrOpenProject({
+    projectDir: path.join(fixture.dir, 'legacy-project'),
+    name: 'Legacy project',
+    sourcePath: fixture.sourcePath,
+    now: new Date('2026-09-08T10:00:00Z'),
+  });
+  const draft = nextBriefPaths(workspace);
+  fs.writeFileSync(draft.jsonPath, '{}');
+  fs.writeFileSync(draft.markdownPath, '# Legacy\n');
+  recordBrief(workspace, {
+    revision: draft.revision,
+    jsonPath: draft.jsonPath,
+    markdownPath: draft.markdownPath,
+    status: 'draft',
+  });
+  const manifestPath = path.join(workspace.dir, 'project.json');
+  const legacy = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  delete legacy.projectKind;
+  delete legacy.source.mediaKind;
+  for (const entry of legacy.briefs) delete entry.kind;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(legacy, null, 2)}\n`);
+  const bytesBefore = fs.readFileSync(manifestPath);
+
+  const reopened = createOrOpenProject({ projectDir: workspace.dir });
+
+  assert.equal(reopened.manifest.projectKind, 'video');
+  assert.equal(reopened.manifest.source.mediaKind, 'video');
+  assert.equal(reopened.manifest.briefs[0].kind, 'lesson');
+  assert.deepEqual(fs.readFileSync(manifestPath), bytesBefore);
 });
 
 test('manifest rejects traversal in every workspace-owned path field', (t) => {

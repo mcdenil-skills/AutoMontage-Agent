@@ -11,7 +11,7 @@ const confirmPreviewViewed = args.includes('--confirm-preview-viewed');
 const [projectDirInput, draftInput] = args.filter(value => value !== '--confirm-preview-viewed');
 const repositoryRoot = path.resolve(__dirname, '../..');
 if (!projectDirInput || !draftInput) {
-  console.error('Использование: node scripts/project/approve-brief.js <project-dir> <draft-json> [--confirm-preview-viewed]');
+  console.error('Использование: node scripts/project/approve-brief.js <project-dir> <draft-json> [--confirm-preview-viewed] (kind читается из project.json)');
   process.exit(1);
 }
 

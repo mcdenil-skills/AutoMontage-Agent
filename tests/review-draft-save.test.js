@@ -574,6 +574,7 @@ test('review save publishes Markdown and JSON before the manifest exposes them',
   assert.equal(manifest.currentBrief, 'brief/v02-draft.lesson.json');
   assert.equal(manifest.briefs.length, beforeBriefCount + 1);
   assert.deepEqual(manifest.briefs.at(-1), {
+    kind: 'lesson',
     revision: 2,
     jsonPath: 'brief/v02-draft.lesson.json',
     markdownPath: 'brief/v02-draft.lesson.md',
