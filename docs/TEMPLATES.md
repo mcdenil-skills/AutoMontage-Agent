@@ -29,7 +29,7 @@
 ### Motion-reel :: Анимационный ролик без камеры
 
 Композиция `MotionReel`, тема `motion-neutral`, аудио вместо говорящей головы. Сцены:
-`kinetic-title`, `card`, `steps`, `list`, `counter`, `media`, `cta` — отдельный набор,
+`kinetic-title`, `card`, `steps`, `list`, `counter`, `media`, `cta` – отдельный набор,
 не варианты lesson. Полоса субтитров по умолчанию выключена; optional `caption` задаётся в brief.
 Лимиты полей и media/audioMode описаны в [каталоге](SCENE-CATALOG.md#motionreel-семь-сцен-без-камеры).
 
@@ -42,13 +42,13 @@ automontage motion --project-dir projects/<id> --brief brief/vNN-approved.motion
 
 Между инициализацией и preview агент по локальному transcript публикует полный timed brief;
 между preview и approval пользователь смотрит полный ролик и явно утверждает эту версию.
-`<id>`/`vNN` — пути фактической ревизии, `node scripts/...` выполняется из корня движка.
-Preview — настоящий Remotion с watermark; final принимает только текущий approved JSON и
+`<id>`/`vNN` – пути фактической ревизии, `node scripts/...` выполняется из корня движка.
+Preview – настоящий Remotion с watermark; final принимает только текущий approved JSON и
 проверенные hashes. Motion Review пока read-only. Готовое аудио не требует provider-ключей,
-ElevenLabs — отдельная опция с согласованным текстом/голосом и `--accept-provider-cost`.
+ElevenLabs – отдельная опция с согласованным текстом/голосом и `--accept-provider-cost`.
 Текст отправляется провайдеру; ключ/voice ID/кэш остаются приватными, неоднозначный сбой
 не повторяется автоматически. [Полный навык](../skills/motion-reel/SKILL.md) описывает consent,
-таймкоды, QA и повторные правки. Офлайн-тест: `automontage demo --motion` — только draft,
+таймкоды, QA и повторные правки. Офлайн-тест: `automontage demo --motion` – только draft,
 с тестовыми тонами вместо речи. Расписание и автопубликация относятся к будущему отдельному слою.
 
 ### 1. lesson-presentation :: Урок / эфир (9:16 / 16:9)
@@ -340,11 +340,11 @@ node scripts\build.js видео.mp4 --theme <theme-id>
 транскрипт со scaffold `brief/v01-draft.motion.json`. Агент заполняет его сценами `kinetic-title`,
 `card`, `steps`, `list`, `counter`, `media`, `cta`, затем проходит preview → явный полный просмотр
 → `approve-brief.js --confirm-preview-viewed` → `automontage motion --project-dir … --brief …`.
-Полная последовательность команд — в README, раздел «Motion Reel из готовой озвучки».
+Полная последовательность команд – в README, раздел «Motion Reel из готовой озвучки».
 
 Схема `schema/motion-brief.schema.json` отдельна от lesson. `source`, `media.src` и `music.file`
 ссылаются только на относительные файлы внутри workspace. Для media и music обязателен `sha256`.
 Опциональная `music` принимает `gainDb`, fade/start/playbackRate/ducking как lesson и микшируется
 через тот же FFmpeg pipeline. Дизайн использует фиксированную `motion-neutral`, камера и `faceSrc`
 отсутствуют. Утверждённая копия и просмотр криптографически связаны с озвучкой; новая правка требует
-нового draft и полного preview. В motion Review пока доступны просмотр/таймлайн, правки — через агента.
+нового draft и полного preview. В motion Review пока доступны просмотр/таймлайн, правки – через агента.

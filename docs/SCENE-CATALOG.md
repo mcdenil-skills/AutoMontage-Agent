@@ -49,7 +49,7 @@ preview показывает `[ B-ROLL ]`, пока человек не выбе
 
 ## MotionReel: семь сцен без камеры
 
-Композиция `MotionReel` получает один аудиоисходник и `motion-neutral`; стандартный результат —
+Композиция `MotionReel` получает один аудиоисходник и `motion-neutral`; стандартный результат –
 1080×1920/30. Это самостоятельный `motion-reel` brief, который не подходит для `ReelScenes`.
 Хук может быть кинетическим текстом: камера и лицо в первые секунды не требуются.
 
@@ -68,7 +68,7 @@ preview показывает `[ B-ROLL ]`, пока человек не выбе
 Optional `caption` ≤160 разрешён, но обычной полосы субтитров по умолчанию нет.
 Готовые reveal-анимации дают движение без пользовательского React/CSS/JS в brief.
 
-`media.kind` равен `image` или `video`, `fit` — `contain` или `cover`. Путь `src` относителен
+`media.kind` равен `image` или `video`, `fit` – `contain` или `cover`. Путь `src` относителен
 workspace; SHA-256 обязателен. Video поддерживает `trimStartSec` и `audioMode`:
 `mute` сохраняет только озвучку, `mix` добавляет тихий звук клипа, `replace` заменяет её
 звуком клипа на время сцены. Все источники должны покрывать выбранный отрезок; remote URL
@@ -76,4 +76,4 @@ workspace; SHA-256 обязателен. Video поддерживает `trimSta
 
 Публичный [пример](../examples/motion-brief-demo.json) покрывает все семь ID. Его тестовые тоны
 и PNG создаёт `automontage demo --motion` локально; это не человеческая речь. Детали пакета,
-согласования и QA — в [motion-reel skill](../skills/motion-reel/SKILL.md).
+согласования и QA – в [motion-reel skill](../skills/motion-reel/SKILL.md).

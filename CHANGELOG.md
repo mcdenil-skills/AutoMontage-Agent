@@ -5,8 +5,14 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-08
+
 ### Добавлено
 
+- Релизные проверки требуют motion schema, композицию, CLI, навык и нейтральное демо.
+  Smoke проходит demo → полный preview → тестовое approval → final и проверяет 810 кадров,
+  1080×1920/30 FPS, H.264/AAC, одну аудиодорожку, полный decode и кадры всех сцен.
+  Linux CI запускает этот путь без provider secrets; Windows CI проверяет audio probe/workspace.
 - Публичный `motion-reel` workflow: канонический навык и одинаковые adapters для Claude/Codex,
   маршрут без камеры из `reel-turnkey`, согласование script/озвучки, timed brief, preview,
   явное approval, final и QA. README, архитектура, templates, каталог и простой guide синхронизированы.
@@ -33,6 +39,10 @@
 
 ### Исправлено
 
+- Установка npm tarball поддерживает hoisted Remotion-зависимость: resolver использует
+  Node package lookup, проверяет имя пакета и containment CLI entrypoint, сохраняя запрет
+  произвольного PATH binary и загрузки через npx. Узкий Webpack override разрешает JSX только
+  собственного `src` внутри npm package. Motion preview/final работают из чистого пакета.
 - Подсказка motion demo безопасно экранирует пути для POSIX shell: пробелы, апострофы,
   `$()`, backticks и переменные остаются данными. Steps/list в демо получили время на чтение
   после полного появления; длительность примера и синтетического аудио синхронно увеличена до 27 секунд.

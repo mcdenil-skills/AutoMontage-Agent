@@ -545,6 +545,50 @@ function checkChangedPunctuation(additions, issues) {
   }
 }
 
+// Inspect candidate bytes without executing code from a Git ref. Real CLI and rendering
+// behavior is exercised separately by smoke-release against the installed package.
+function checkMotionRelease(files, read, issues) {
+  const pkg = jsonValue(read('package.json'), 'package.json', issues, 'package.json');
+  const version = /^(\d+)\.(\d+)\.(\d+)$/.exec(pkg?.version || '');
+  if (!version || (Number(version[1]) < 1 || (Number(version[1]) === 1 && Number(version[2]) < 7))) return;
+  const required = [
+    'schema/motion-brief.schema.json', 'src/Root.jsx', 'src/MotionDirector.jsx',
+    'src/motion/motion-theme.js', 'scripts/motion/brief.js', 'scripts/motion/build.js',
+    'scripts/motion/demo.js', 'scripts/cli.js', 'scripts/generate-neutral-fixtures.js',
+    'skills/motion-reel/SKILL.md', 'skills/motion-reel/references/brief-package.md',
+    'examples/motion-brief-demo.json', 'remotion.config.js', 'scripts/remotion-webpack.js',
+  ];
+  const problem = (file, message) => issues.push(issue('motion-release', file, 1,
+    message, 'restore the public motion contract and run the credential-free release smoke.'));
+  for (const file of required) if (!files.includes(file) || !read(file).trim()) problem(file, 'required motion release file is missing or empty');
+  if (files.includes('src/Root.jsx') && !/<Composition\s[^>]*id=["']MotionReel["'][^>]*component=\{MotionDirector\}/s.test(read('src/Root.jsx'))) {
+    problem('src/Root.jsx', 'MotionReel composition is not registered with MotionDirector');
+  }
+  const demoFile = 'examples/motion-brief-demo.json';
+  if (files.includes(demoFile) && files.includes('schema/motion-brief.schema.json')) {
+    try {
+      const Ajv = require('ajv');
+      const schema = JSON.parse(read('schema/motion-brief.schema.json'));
+      const demo = JSON.parse(read(demoFile));
+      const valid = new Ajv({ allErrors: true, strict: false }).compile(schema)(demo);
+      if (!valid || demo.kind !== 'motion-reel' || demo.status !== 'draft'
+        || demo.theme !== 'motion-neutral'
+        || ['kinetic-title', 'card', 'steps', 'list', 'counter', 'media', 'cta'].some(
+          scene => !demo.scenes?.some(entry => entry.scene === scene))) {
+        problem(demoFile, 'public motion demo must be a valid neutral draft covering all seven scenes');
+      }
+    } catch (_) { problem(demoFile, 'motion demo or candidate schema is invalid'); }
+  }
+  const ciFile = '.github/workflows/ci.yml';
+  const jobs = read(ciFile).split(/^  [a-zA-Z0-9_-]+:\s*$/m);
+  const windows = jobs.some(job => /runs-on:\s*windows-latest/.test(job)
+    && ['tests/media-probe.test.js', 'tests/motion-source.test.js', 'tests/project-workspace.test.js'].every(file => job.includes(file)));
+  const linux = jobs.some(job => /runs-on:\s*ubuntu-latest/.test(job)
+    && /npm run smoke:release -- --motion-only/.test(job) && !/\$\{\{\s*secrets\./i.test(job));
+  if (!windows) issues.push(issue('motion-ci', ciFile, 1, 'Windows audio probe/workspace coverage is missing', 'run the portable audio and workspace suite on windows-latest.'));
+  if (!linux) issues.push(issue('motion-ci', ciFile, 1, 'Linux credential-free motion smoke is missing', 'run npm run smoke:release -- --motion-only on ubuntu-latest without secrets.'));
+}
+
 function checkRelease({
   cwd = ROOT,
   tree = 'HEAD',
@@ -565,6 +609,7 @@ function checkRelease({
   };
   const issues = [];
   checkPackageMetadata(read, issues);
+  checkMotionRelease(files, read, issues);
   checkSecurityException(files, read, issues, now);
   checkReleaseNotes(files, read, issues, { releaseCandidate: release });
   checkEnvironment(files, read, issues);

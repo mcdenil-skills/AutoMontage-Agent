@@ -383,8 +383,8 @@ approval/final-publication tests; полный POSIX-контракт остаё
 Release-checker проверяет committed current tree без base и работает с shallow checkout.
 Отдельный job устанавливает закреплённый Gitleaks CLI и сканирует полную Git-историю на секреты
 без отдельной лицензии GitHub App для организации.
-Полные рендеры в CI не запускаются: им нужны тяжёлые медиа, ffmpeg/Whisper-модели и
-иногда приватные темы. Их проверяют локально по разделам выше.
+CI запускает синтетические Review acceptance и полный 27-секундный motion-demo без API-ключей.
+Клиентские рендеры с исходниками и приватными темами проверяются локально.
 
 ## 8. Release candidate
 
@@ -408,6 +408,10 @@ node scripts/check-release.js --tree "$CANDIDATE_TREE" --base <release-base>
 `check:release` читает файлы через `git ls-tree`/`git show`, поэтому проверяет точный
 Git-объект и игнорирует незакоммиченные пользовательские файлы. Обычный development-check
 разрешает pending notes в `[Unreleased]`; флаг `--release` включает строгую проверку кандидата.
+С версии 1.7.0 gate также требует motion schema, зарегистрированную MotionReel-композицию,
+CLI, публичный навык, валидный neutral draft demo со всеми семью сценами и CI-покрытие:
+Windows audio probe/workspace плюс Linux motion smoke без secrets. Эти проверки читают
+кандидат как данные; реальные CLI help и renderer проверяет отдельный smoke.
 Current-tree правила
 сверяют версию, Node engines, env-декларации, локальные Markdown-ссылки, приватные id,
 версионные release notes, security exception и полный бинарный инвентарь `ASSETS.md`. Для release candidate
@@ -423,13 +427,26 @@ Current-tree правила
 При наличии `--base` добавляется diff-проверка
 публичной пунктуации; если history/ref недоступен, ошибка содержит команду fetch.
 
-`smoke:release` с удалённым из дочернего окружения `THEMES_EXT` рендерит 75 кадров
+`smoke:release` передаёт дочерним процессам только системное окружение и optional FFmpeg path;
+provider keys, voice ID, `THEMES_EXT` и `NODE_OPTIONS` не наследуются. Он рендерит 75 кадров
 `examples/lesson-neutral-approved.json`, затем через project API создаёт отдельный Dynamic
 workspace и рендерит его через `--project-dir`. Для обоих финалов обязательны video/audio,
 A/V drift меньше 80 мс, ровно 75 кадров и полный decode. У project-финала SHA-256 должен
 совпасть с `renders[]`-версией, выбранной `latestRender`. Скрипт оставляет артефакты для
-осмотра, печатает два абсолютных final path и подтверждает неизменность защищённых
+осмотра, печатает пути финалов и подтверждает неизменность защищённых
 `src/data/captions.js` и `src/data/transcript.json`.
+
+Третий путь вызывает реальный `automontage demo --motion`, полный preview, preview QA,
+отдельное approval синтетического fixture и approved-only final. Финальный MP4 обязан содержать
+ровно один H.264 video и один AAC audio stream, 1080×1920, 30 FPS, 810 кадров и 27 секунд.
+Проверяются полный decode и hash выбранного render; кадры всех семи сцен и metadata остаются
+в `out/release-smoke/`. CLI help проверяется запуском установленного CLI. `tests/env.test.js` проверяет nested/hoisted
+npm layout, ожидаемую package identity и запрет bin symlink за пределы dependency.
+`tests/remotion-package.test.js` выполняет настоящий Webpack bundle JSX под `node_modules` и
+проверяет, что исключение ограничено только собственным `src`, без соседних пакетов.
+`npm run smoke:release -- --motion-only` запускает только этот путь, включая Linux CI.
+Это автоматическое approval только нового синтетического демо; команда не принимает клиентский
+workspace. Обычное пользовательское approval по-прежнему требует явного согласия владельца.
 
 ### Чистый клон кандидата
 
@@ -449,6 +466,12 @@ npm run demo
 npm run smoke:release
 npm pack --dry-run
 ```
+
+Для проверки именно поставляемого npm-пакета создай tarball через `npm pack`, установи его
+в пустой каталог (`npm install <tarball> --no-audit --no-fund`) и выполни там
+`node node_modules/automontage-agent/scripts/smoke-release.js --motion-only`.
+Не копируй `.env`, provider keys и приватную тему. Зависимости и Remotion browser предварительно
+устанавливаются с доступом к сети; само демо использует только локальные синтетические ресурсы.
 
 `tests/package-privacy.test.js` отдельно читает реальный npm packlist: публичные CLI, batch-guide,
 skill и `.env.example` обязаны присутствовать, а `docs/superpowers/`, project workspace, рендеры

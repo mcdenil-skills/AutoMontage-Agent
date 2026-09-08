@@ -177,7 +177,7 @@ Preview не имеет отдельного HTML- или FFmpeg-дизайна:
 
 Публичный путь: тема → script в текущей агентной сессии → выбор готового аудио или платного
 provider → canonical words → timed motion draft → полный preview → явное approval → final → QA.
-Канон инструкции — `skills/motion-reel/SKILL.md` с reference; `.agents` и `.codex` хранят
+Канон инструкции – `skills/motion-reel/SKILL.md` с reference; `.agents` и `.codex` хранят
 byte-identical копии. `reel-turnkey` маршрутизирует запросы без камеры до применения lesson-правил.
 
 `automontage demo --motion` использует `scripts/project/cli-options.js` и отдельный
@@ -189,7 +189,7 @@ approval/render. Любая существующая папка назначен
 Демо длится 27 секунд: steps/list получают 5/7 секунд и минимум 0,75 секунды полной видимости
 последнего элемента. WAV и иллюстративные таймкоды выводятся из тех же границ сцен. Следующая
 preview-команда печатается с POSIX single-quote escaping как подсказка; исполнение остаётся argv-only.
-Scheduling и автопубликация — будущая отдельная orchestration-система, не часть этого pipeline.
+Scheduling и автопубликация – будущая отдельная orchestration-система, не часть этого pipeline.
 
 `scripts/motion/build.js` владеет отдельным CLI-маршрутом. Первый вызов `motion <audio> --project`
 использует `createMotionProject`, dedicated audio probe и локальную транскрипцию; scaffold
@@ -342,14 +342,18 @@ approved-копии с сохранением происхождения мат�
 аутентифицированный локальный proxy. Read-only сессия не получает доступ к поиску или proxy.
 
 Remotion по умолчанию переносит все поля корневого `.env` в браузер рендера. Поэтому центральный
-resolver его CLI явно задаёт `config/remotion-public.env` без значений. Эта граница действует
+resolver находит установленный `@remotion/cli` через Node package lookup (включая hoisted npm
+installation), проверяет имя пакета и containment entrypoint, затем явно задаёт `config/remotion-public.env` без значений. Эта граница действует
 для preview, final, chunks и still; разрешённые `REMOTION_*` настройки сохраняются. Ключи
 провайдеров также исключены из наследуемого окружения preview-job. Реальный ключ не входит
 в браузерную модель или код сцены; regression проверяет поведение установленного Remotion
 с синтетическим ключом во временном fixture-проекте.
 Префикс `REMOTION_*` предназначен только для публичных значений. Настройки с этим префиксом из
 корневого `.env` сохраняются; значения из `.env.local` нужно явно экспортировать в запускающий
-процесс. Самостоятельный запуск сырого `npx remotion` обходит resolver движка.
+процесс. `remotion.config.js` сохраняет штатные Webpack-правила Remotion, исключая из
+`node_modules`-фильтра только реальный `src/` установленного AutoMontage-пакета: JSX публичного
+renderer бандлится и из npm tarball, а сторонние зависимости сохраняют штатные исключения.
+Самостоятельный запуск сырого `npx remotion` обходит resolver движка.
 
 `scripts/broll/remote.js` разрешает только HTTPS на точных доменах провайдера. Каждый redirect
 заново проходит проверку адреса и публичного DNS; соединение использует проверенный IP с исходным

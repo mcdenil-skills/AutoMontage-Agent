@@ -94,6 +94,8 @@ jobs:
         run: |
           ffprobe -version
           node --test tests/filesystem-capabilities.test.js tests/media-probe.test.js tests/opened-media-probe.test.js tests/render-media-bundle-windows.test.js
+          node --test tests/motion-source.test.js
+          node --test --test-name-pattern='motion|old video|legacy' tests/project-workspace.test.js
           node --test --test-name-pattern='import publishes video when ffprobe average FPS is 0/0|Windows-mode import requires identity and bytes|real tiny images and videos normalize|Windows-mode claim recovery ignores POSIX mode bits|Windows-mode handoff stays exclusive|review save returns a fixed 500|publish final fsyncs through a write-capable handle' tests/review-media-import.test.js tests/review-imported-assets.test.js tests/review-server-security.test.js tests/project-workspace.test.js
 
       - name: Проверить portable duration и geometry
@@ -146,3 +148,26 @@ jobs:
 
       - name: Проверить настоящий preview, approval и final на синтетических медиа
         run: node --test --test-concurrency=1 tests/broll-preview-e2e.test.js tests/video-broll-e2e.test.js tests/custom-face-media-real.test.js
+
+  motion-smoke:
+    name: Linux · credential-free motion release smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies and FFmpeg
+        run: |
+          npm ci --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+
+      - name: Prepare Remotion browser
+        run: npx remotion browser ensure
+
+      - name: Render synthetic motion demo through preview, approval and final
+        run: npm run smoke:release -- --motion-only

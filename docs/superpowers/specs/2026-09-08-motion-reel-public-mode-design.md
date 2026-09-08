@@ -1,4 +1,4 @@
-# Motion Reel Public Mode — Design
+# Motion Reel Public Mode – Design
 
 **Status:** proposed
 **Target release:** 1.7.0

@@ -18,7 +18,7 @@
 
 ## Что умеет
 
-- **MotionReel без камеры** — готовая озвучка или отдельно согласованный ElevenLabs API,
+- **MotionReel без камеры** – готовая озвучка или отдельно согласованный ElevenLabs API,
   семь анимационных сцен, полный preview, явное утверждение и final с QA.
 - **Субтитры-караоке** – распознаёт речь, ставит субтитры, подсвечивает текущее слово.
 - **Плашки и счётчики** – красивые карточки в твоём стиле: текст печатается, цифры бегут, прогресс-бары заполняются.
@@ -166,10 +166,10 @@ node scripts/qa-preview.js --project-dir projects/motion-demo
 сцен берутся из [публичного fixture](examples/motion-brief-demo.json); аудио и PNG генерируются
 локально, медиа не коммитятся. Интернет и `.env` для самого демо не нужны; первая установка
 Remotion browser может потребовать скачивание. Инициализация не создаёт preview/final и ничего
-не утверждает. Существующая папка не перезаписывается; новый прогон —
+не утверждает. Существующая папка не перезаписывается; новый прогон –
 `automontage demo --motion --project-dir projects/motion-demo-2`.
 
-Схема длится 5 секунд, список — 7: последние элементы полностью видны минимум 0,75 секунды.
+Схема длится 5 секунд, список – 7: последние элементы полностью видны минимум 0,75 секунды.
 Печатаемая подсказка `Next (POSIX shell)` безопасно заключает пути в кавычки для bash/zsh/sh,
 включая пробелы, апострофы и буквальные `$()`/backticks. Она не выполняется движком. В PowerShell
 используй команды выше с фактическими путями и синтаксисом кавычек PowerShell.
@@ -181,7 +181,7 @@ node scripts/project/approve-brief.js projects/motion-demo brief/v01-draft.motio
 automontage motion --project-dir projects/motion-demo --brief brief/v01-approved.motion.json --version-label reviewed
 ```
 
-Итог — `projects/motion-demo/final/neutral-motion-demo.mp4`; версия остаётся в `renders/v01-reviewed/`.
+Итог – `projects/motion-demo/final/neutral-motion-demo.mp4`; версия остаётся в `renders/v01-reviewed/`.
 Для своих роликов используй фактические `<id>` и `vNN` из `project.json`. Draft рендерится
 только через `automontage preview` с watermark. Approval связывает hashes draft, preview и
 озвучки; любые изменения требуют нового draft, полного preview и утверждения. Final проходит
@@ -190,8 +190,8 @@ decode/метаданные до публикации, затем агент п�
 
 Motion Review (`automontage review --project-dir projects/<id>`) пока только для просмотра:
 правки сценария делает агент новой draft-ревизией. Lesson-редактор и поиск Pexels в этом режиме
-не включены. Сцены и лимиты — в [каталоге](docs/SCENE-CATALOG.md), пакет brief —
-в [reference](skills/motion-reel/references/brief-package.md), простой путь —
+не включены. Сцены и лимиты – в [каталоге](docs/SCENE-CATALOG.md), пакет brief –
+в [reference](skills/motion-reel/references/brief-package.md), простой путь –
 в [инструкции монтажа](docs/MONTAGE-GUIDE.md#ролик-без-камеры-motion-reel).
 
 Расписание, очереди, автопубликация и аналитика остаются будущим отдельным слоем. Движок
@@ -670,7 +670,7 @@ Remotion (анимация плашек кодом), faster-whisper (распо�
 
 ### Версии и история изменений
 
-Текущая версия исходников: **v1.6.0**. Опубликованные сборки находятся на странице
+Текущая версия исходников: **v1.7.0**. Опубликованные сборки находятся на странице
 [GitHub Releases](https://github.com/mcdenil-skills/AutoMontage-Agent/releases). Источник номера
 в репозитории – `version` в `package.json` и корневая запись в `package-lock.json`; состав
 релиза описан в [CHANGELOG.md](CHANGELOG.md).

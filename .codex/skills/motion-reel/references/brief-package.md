@@ -32,7 +32,7 @@
 | `cta` | `title`, `action` ≤80, optional `handle` ≤80 |
 
 Optional `caption` ≤160. Верхние ограничения не цель: оставляй время на чтение.
-`media.kind` — `image` или `video`; `fit` — `contain` или `cover`. У video допустимы
+`media.kind` – `image` или `video`; `fit` – `contain` или `cover`. У video допустимы
 `trimStartSec` (frame-aligned) и `audioMode: mute|mix|replace`. Начало клипа локальное,
 начало scene глобальное; источник озвучки не запускается заново на каждой сцене.
 Файлы и их hashes проверяются при preview/approval/final. HTML, CSS, код и удалённые URL

@@ -94,7 +94,7 @@ function writeSecurityException(root, exception) {
   ].join('\n'));
 }
 
-test('repository dependency exception is reviewed for the 1.6.0 release window', () => {
+test('repository dependency exception is reviewed for the 1.7.0 release window', () => {
   const security = fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8');
   const match = security.match(/```json security-exception\s*([\s\S]*?)```/);
   assert.ok(match, 'SECURITY.md must contain one machine-readable dependency exception');
@@ -106,7 +106,7 @@ test('repository dependency exception is reviewed for the 1.6.0 release window',
     revisitBy: exception.revisitBy,
   }, {
     reviewedAt: '2026-09-08',
-    reviewedFor: '1.6.0',
+    reviewedFor: '1.7.0',
     revisitBy: '2026-10-06',
   });
 });
@@ -697,4 +697,59 @@ test('smoke guard detects any protected-file mutation', () => {
     () => assertProtectedFilesUnchanged(root, before),
     /protected file changed: src\/data\/captions\.js/,
   );
+});
+
+function enableMotionRelease(root) {
+  updateReleaseVersion(root, { version: '1.7.0', date: '2026-09-08', section: '### Добавлено\n\n- Public motion-reel.' });
+  for (const file of [
+    'schema/motion-brief.schema.json', 'src/Root.jsx', 'src/MotionDirector.jsx',
+    'src/motion/motion-theme.js', 'scripts/motion/brief.js', 'scripts/motion/build.js',
+    'scripts/motion/demo.js', 'scripts/cli.js', 'scripts/generate-neutral-fixtures.js',
+    'skills/motion-reel/SKILL.md', 'skills/motion-reel/references/brief-package.md',
+    'examples/motion-brief-demo.json', '.github/workflows/ci.yml', 'remotion.config.js', 'scripts/remotion-webpack.js',
+  ]) write(root, file, fs.readFileSync(path.join(__dirname, '..', file)));
+  git(root, ['add', '.']);
+  git(root, ['commit', '-qm', 'motion candidate']);
+}
+
+test('motion release refuses missing runtime, schema, skill or demo in the candidate tree', () => {
+  const root = makeRepository();
+  enableMotionRelease(root);
+  assert.equal(checkRelease({ cwd: root }).issues.filter(entry => entry.rule === 'motion-release').length, 0);
+  for (const file of ['schema/motion-brief.schema.json', 'src/MotionDirector.jsx', 'scripts/cli.js',
+    'scripts/motion/demo.js', 'skills/motion-reel/SKILL.md', 'examples/motion-brief-demo.json', 'remotion.config.js']) {
+    git(root, ['rm', file]);
+    git(root, ['commit', '-qm', 'incomplete motion candidate']);
+    assert.ok(checkRelease({ cwd: root }).issues.some(entry => entry.rule === 'motion-release' && entry.file === file), file);
+    git(root, ['restore', '--source=HEAD~1', '--staged', '--worktree', file]);
+    git(root, ['commit', '-qm', 'restore motion candidate']);
+  }
+});
+
+test('motion release refuses an unregistered composition and an invalid demo brief', () => {
+  const root = makeRepository();
+  enableMotionRelease(root);
+  write(root, 'src/Root.jsx', 'export const Root = () => null;\n');
+  const demo = JSON.parse(fs.readFileSync(path.join(root, 'examples/motion-brief-demo.json')));
+  demo.status = 'approved';
+  write(root, 'examples/motion-brief-demo.json', JSON.stringify(demo));
+  git(root, ['add', '.']);
+  git(root, ['commit', '-qm', 'broken motion contract']);
+  const issues = checkRelease({ cwd: root }).issues.filter(entry => entry.rule === 'motion-release');
+  assert.ok(issues.some(entry => entry.file === 'src/Root.jsx'));
+  assert.ok(issues.some(entry => entry.file === 'examples/motion-brief-demo.json'));
+});
+
+test('motion release refuses CI that drops Windows audio or Linux credential-free smoke', () => {
+  const root = makeRepository();
+  enableMotionRelease(root);
+  const file = '.github/workflows/ci.yml';
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  write(root, file, source.replaceAll('tests/motion-source.test.js', 'tests/media-probe.test.js')
+    .replaceAll('npm run smoke:release -- --motion-only', 'npm run check:release'));
+  git(root, ['add', '.']);
+  git(root, ['commit', '--allow-empty', '-qm', 'missing motion CI']);
+  const issues = checkRelease({ cwd: root }).issues.filter(entry => entry.rule === 'motion-ci');
+  assert.ok(issues.some(entry => /Windows/.test(entry.message)));
+  assert.ok(issues.some(entry => /Linux/.test(entry.message)));
 });

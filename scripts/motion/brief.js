@@ -179,8 +179,8 @@ function sceneSummary(scene) {
   if (scene.scene === 'steps') return [scene.title, ...(scene.steps || [])].filter(Boolean).join(' → ');
   if (scene.scene === 'list') return [scene.title, ...(scene.items || [])].filter(Boolean).join('; ');
   if (scene.scene === 'counter') return `${scene.label}: ${scene.prefix || ''}${scene.value}${scene.suffix || ''}`;
-  if (scene.scene === 'media') return `${scene.media?.kind}: ${scene.media?.src}${scene.overlayText ? ` — ${scene.overlayText}` : ''}`;
-  return [scene.title, scene.action, scene.handle].filter(Boolean).join(' — ');
+  if (scene.scene === 'media') return `${scene.media?.kind}: ${scene.media?.src}${scene.overlayText ? ` – ${scene.overlayText}` : ''}`;
+  return [scene.title, scene.action, scene.handle].filter(Boolean).join(' – ');
 }
 
 function formatMotionBriefMarkdown(brief) {

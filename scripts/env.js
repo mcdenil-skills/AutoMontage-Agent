@@ -70,8 +70,10 @@ function python() {
 // Запуск локального Remotion CLI кросс-платформенно, без shell, .cmd и npx downloads.
 // Читаем package.bin и всегда запускаем JavaScript entrypoint текущим Node.
 function resolveRemotionCommand(root = ROOT) {
-  const packageFile = path.join(root, 'node_modules', '@remotion', 'cli', 'package.json');
-  if (!fs.existsSync(packageFile)) {
+  let packageFile;
+  try {
+    packageFile = require.resolve('@remotion/cli/package.json', { paths: [path.resolve(root)] });
+  } catch (_) {
     throw new Error('@remotion/cli не найден; запусти npm ci, затем npm run doctor');
   }
 
@@ -81,6 +83,7 @@ function resolveRemotionCommand(root = ROOT) {
   } catch (_) {
     throw new Error('@remotion/cli package.json повреждён; повтори npm ci и npm run doctor');
   }
+  if (metadata.name !== '@remotion/cli') throw new Error('@remotion/cli: неверное имя пакета (package identity)');
   const relativeBin = typeof metadata.bin === 'string'
     ? metadata.bin
     : metadata.bin?.remotion;
@@ -92,6 +95,10 @@ function resolveRemotionCommand(root = ROOT) {
   const relative = path.relative(packageDir, entry);
   if (relative.startsWith('..') || path.isAbsolute(relative) || !fs.existsSync(entry)) {
     throw new Error('@remotion/cli bin.remotion недоступен; повтори npm ci и npm run doctor');
+  }
+  const realRelative = path.relative(fs.realpathSync(packageDir), fs.realpathSync(entry));
+  if (realRelative.startsWith('..') || path.isAbsolute(realRelative) || !fs.statSync(entry).isFile()) {
+    throw new Error('@remotion/cli bin.remotion недоступен; package bin escapes its package');
   }
   // Remotion exposes every key from its auto-discovered .env/.env.local to the
   // browser. Always select the packaged empty file instead. Its CLI parser

@@ -1,6 +1,6 @@
 {
   "name": "automontage-agent",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Движок автомонтажа видео для ИИ-агента (Claude Code/Codex). Кросс-платформенный: Windows/macOS/Linux.",
   "license": "MIT",
   "repository": {

@@ -68,7 +68,7 @@ override, or downgrade to the incompatible 3.x line. Reassess immediately on an 
 node-vibrant/Jimp update, if severity becomes high, if direct untrusted-image input is
 introduced, at the next release, or no later than 2026-10-06.
 
-For release 1.6.0, the GitHub Security Advisory, npm registry metadata, and the installed
+For release 1.7.0, the GitHub Security Advisory, npm registry metadata, and the installed
 transitive dependency chain were reviewed again on 2026-09-08. The latest upstream
 `node-vibrant` remains 4.0.4; the installed chain and limited local `--autotheme` exposure still
 match the advisory and mitigation recorded below. This review accepts the remaining moderate
@@ -104,7 +104,7 @@ after 10:00 UTC, when that date has already begun in UTC+14.
     "next release"
   ],
   "reviewedAt": "2026-09-08",
-  "reviewedFor": "1.6.0",
+  "reviewedFor": "1.7.0",
   "revisitBy": "2026-10-06"
 }
 ```
