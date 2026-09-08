@@ -36,7 +36,7 @@
     "@material/material-color-utilities": "^0.4.0",
     "@remotion/cli": "^4.0.504",
     "@remotion/fonts": "^4.0.504",
-    "@remotion/layout-utils": "^4.0.504",
+    "@remotion/layout-utils": "^4.0.520",
     "@remotion/transitions": "^4.0.504",
     "ajv": "^8.20.0",
     "node-vibrant": "^4.0.4",
