@@ -59,19 +59,24 @@ function createMotionProject({
 
 function validateCanonicalTranscript(value) {
   if (!Array.isArray(value)) throw new Error('motion transcription returned invalid words JSON');
+  let previousSegmentEnd = 0;
   for (const segment of value) {
     if (!segment || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)
       || segment.start < 0 || segment.end <= segment.start || typeof segment.text !== 'string'
-      || !Array.isArray(segment.words)) {
+      || !Array.isArray(segment.words) || segment.start < previousSegmentEnd) {
       throw new Error('motion transcription returned invalid segment timing');
     }
+    let previousWordEnd = segment.start;
     for (const word of segment.words) {
       if (!word || typeof word.w !== 'string' || !word.w.trim()
         || !Number.isFinite(word.s) || !Number.isFinite(word.e)
-        || word.s < 0 || word.e <= word.s) {
+        || word.s < segment.start || word.e > segment.end || word.e <= word.s
+        || word.s < previousWordEnd) {
         throw new Error('motion transcription returned invalid word timing');
       }
+      previousWordEnd = word.e;
     }
+    previousSegmentEnd = segment.end;
   }
   return value;
 }
@@ -83,6 +88,7 @@ function transcribeMotionNarration({
   prompt = null,
   pythonCommand = null,
   runToolImpl = runTool,
+  spawnSyncImpl,
   temporaryId = randomUUID,
 }) {
   assertMotionWorkspace(workspace);
@@ -104,8 +110,24 @@ function transcribeMotionNarration({
     runToolImpl(pythonCommand || python(), args, {
       cwd: path.resolve(root),
       stage: 'motion transcription',
+      spawnSyncImpl,
     });
-    const generated = validateCanonicalTranscript(JSON.parse(fs.readFileSync(generatedPath, 'utf8')));
+    let generatedBytes;
+    try {
+      generatedBytes = fs.readFileSync(generatedPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw new Error('motion transcription output is missing');
+      }
+      throw error;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(generatedBytes);
+    } catch (_) {
+      throw new Error('motion transcription returned invalid words JSON');
+    }
+    const generated = validateCanonicalTranscript(parsed);
     writeFilesNoReplace([{
       destination: wordsPath,
       data: `${JSON.stringify(generated, null, 2)}\n`,

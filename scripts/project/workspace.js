@@ -188,13 +188,49 @@ function sameFileIdentity(left, right) {
   return left && right && left.dev === right.dev && left.ino === right.ino;
 }
 
+function captureProjectDirectoryGuard(projectDir, destination, fileSystem, label) {
+  const root = path.resolve(projectDir);
+  const parent = path.dirname(destination);
+  if (!isInside(root, parent)) throw new Error(`${label} escapes the project workspace`);
+  const relative = path.relative(root, parent);
+  const paths = [root];
+  let current = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    paths.push(current);
+  }
+  const guards = paths.map((guardPath) => {
+    const stat = fileSystem.lstatSync(guardPath);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`${label} escapes through a symbolic link`);
+    }
+    return { path: guardPath, identity: stat };
+  });
+  return {
+    assertCurrent() {
+      for (const guard of guards) {
+        const stat = fileSystem.lstatSync(guard.path);
+        if (!stat.isDirectory() || stat.isSymbolicLink()
+          || !sameFileIdentity(stat, guard.identity)) {
+          throw new Error(`${label} directory identity changed`);
+        }
+      }
+    },
+  };
+}
+
 function stageOwnedSiblingFile(destination, data, {
   fileSystem = fs,
   temporaryId = randomUUID,
   purpose = 'write',
   platform = process.platform,
+  writeToHandle = null,
+  assertParentCurrent = null,
+  verifyPublishedIdentity = false,
 } = {}) {
-  const bytes = Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data, 'utf8');
+  const bytes = writeToHandle
+    ? null
+    : (Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data, 'utf8'));
   const temporaryPath = `${destination}.tmp-${purpose}-${safeTemporaryId(temporaryId)}`;
   const constants = fileSystem.constants || fs.constants;
   const flags = withNoFollow(
@@ -204,13 +240,28 @@ function stageOwnedSiblingFile(destination, data, {
   );
   let handle = null;
   let identity = null;
+  const assertStageCurrent = () => {
+    const current = lstatIfPresent(fileSystem, temporaryPath);
+    if (!current || !current.isFile() || current.isSymbolicLink()
+      || !sameFileIdentity(identity, current)) {
+      throw new Error('staged project file identity changed');
+    }
+  };
   try {
+    if (assertParentCurrent) assertParentCurrent();
     handle = fileSystem.openSync(temporaryPath, flags, 0o600);
     identity = fileSystem.fstatSync(handle);
     if (!identity.isFile()) throw new Error('temporary project file must be regular');
     setPrivateDescriptorMode(fileSystem, handle, 0o600, platform);
-    fileSystem.writeFileSync(handle, data, { encoding: 'utf8' });
+    if (writeToHandle) writeToHandle(handle);
+    else fileSystem.writeFileSync(handle, data, { encoding: 'utf8' });
     fileSystem.fsyncSync(handle);
+    if (assertParentCurrent) assertParentCurrent();
+    assertStageCurrent();
+    fileSystem.closeSync(handle);
+    handle = null;
+    if (assertParentCurrent) assertParentCurrent();
+    assertStageCurrent();
   } catch (error) {
     if (handle !== null) fileSystem.closeSync(handle);
     const current = lstatIfPresent(fileSystem, temporaryPath);
@@ -219,19 +270,39 @@ function stageOwnedSiblingFile(destination, data, {
     }
     throw error;
   }
-  fileSystem.closeSync(handle);
 
   let committedPath = null;
   return {
     path: temporaryPath,
     commitReplace(target = destination) {
+      if (assertParentCurrent) assertParentCurrent();
+      assertStageCurrent();
       fileSystem.renameSync(temporaryPath, target);
       committedPath = target;
+      if (verifyPublishedIdentity) {
+        const current = lstatIfPresent(fileSystem, target);
+        if (!current || !current.isFile() || current.isSymbolicLink()
+          || !sameFileIdentity(identity, current)) {
+          throw new Error('published project file identity changed');
+        }
+      }
+      if (assertParentCurrent) assertParentCurrent();
       return { identity, bytes };
     },
     commitNoReplace(target = destination) {
+      if (assertParentCurrent) assertParentCurrent();
+      assertStageCurrent();
       fileSystem.linkSync(temporaryPath, target);
       committedPath = target;
+      if (verifyPublishedIdentity) {
+        const current = lstatIfPresent(fileSystem, target);
+        if (!current || !current.isFile() || current.isSymbolicLink()
+          || !sameFileIdentity(identity, current)) {
+          throw new Error('published project file identity changed');
+        }
+      }
+      if (assertParentCurrent) assertParentCurrent();
+      assertStageCurrent();
       fileSystem.unlinkSync(temporaryPath);
     },
     commit(target = destination) {
@@ -329,6 +400,12 @@ function copyProjectFileNoReplace({
     mustExist: false,
     type: 'file',
   });
+  const directoryGuard = captureProjectDirectoryGuard(
+    resolvedProjectDir,
+    destination,
+    fileSystem,
+    'project source destination',
+  );
   const source = path.resolve(sourcePath);
   const sourcePathStat = fileSystem.lstatSync(source);
   if (!sourcePathStat.isFile() || sourcePathStat.isSymbolicLink()) {
@@ -336,16 +413,7 @@ function copyProjectFileNoReplace({
   }
 
   const sourceHandle = fileSystem.openSync(source, openReadOnlyFlags(fileSystem, platform));
-  const temporaryPath = `${destination}.tmp-source-${safeTemporaryId(temporaryId)}`;
-  const constants = fileSystem.constants || fs.constants;
-  const flags = withNoFollow(
-    fileSystem,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-    platform,
-  );
-  let destinationHandle = null;
-  let destinationIdentity = null;
-  let committed = false;
+  let staged = null;
   try {
     const openedSource = fileSystem.fstatSync(sourceHandle);
     const currentSource = fileSystem.lstatSync(source);
@@ -354,35 +422,34 @@ function copyProjectFileNoReplace({
       throw new Error('project source changed or escapes through a symbolic link');
     }
 
-    destinationHandle = fileSystem.openSync(temporaryPath, flags, 0o600);
-    destinationIdentity = fileSystem.fstatSync(destinationHandle);
-    if (!destinationIdentity.isFile()) throw new Error('temporary project source must be regular');
-    setPrivateDescriptorMode(fileSystem, destinationHandle, 0o600, platform);
-    copyOpenedFile(fileSystem, sourceHandle, destinationHandle);
-    fileSystem.fsyncSync(destinationHandle);
-
-    const copiedSource = fileSystem.fstatSync(sourceHandle);
-    if (!sameFileIdentity(openedSource, copiedSource)
-      || openedSource.size !== copiedSource.size
-      || openedSource.mtimeMs !== copiedSource.mtimeMs
-      || openedSource.ctimeMs !== copiedSource.ctimeMs) {
-      throw new Error('project source changed while it was copied');
+    staged = stageOwnedSiblingFile(destination, null, {
+      fileSystem,
+      temporaryId,
+      purpose: 'source',
+      platform,
+      assertParentCurrent: directoryGuard.assertCurrent,
+      verifyPublishedIdentity: true,
+      writeToHandle(destinationHandle) {
+        copyOpenedFile(fileSystem, sourceHandle, destinationHandle);
+        const copiedSource = fileSystem.fstatSync(sourceHandle);
+        if (!sameFileIdentity(openedSource, copiedSource)
+          || openedSource.size !== copiedSource.size
+          || openedSource.mtimeMs !== copiedSource.mtimeMs
+          || openedSource.ctimeMs !== copiedSource.ctimeMs) {
+          throw new Error('project source changed while it was copied');
+        }
+      },
+    });
+    try {
+      staged.commitNoReplace();
+    } catch (error) {
+      staged.removeCommitted();
+      throw error;
     }
-    fileSystem.closeSync(destinationHandle);
-    destinationHandle = null;
-    fileSystem.linkSync(temporaryPath, destination);
-    committed = true;
-    fileSystem.unlinkSync(temporaryPath);
     return destination;
   } finally {
-    if (destinationHandle !== null) fileSystem.closeSync(destinationHandle);
     fileSystem.closeSync(sourceHandle);
-    if (!committed) {
-      const current = lstatIfPresent(fileSystem, temporaryPath);
-      if (current && destinationIdentity && sameFileIdentity(current, destinationIdentity)) {
-        fileSystem.unlinkSync(temporaryPath);
-      }
-    }
+    if (staged) staged.cleanupTemp();
   }
 }
 

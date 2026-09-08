@@ -131,6 +131,104 @@ test('project copy rejects traversal and source or destination symlinks without 
   assert.equal(fs.existsSync(path.join(root, 'escaped.wav')), false);
 });
 
+test('project copy rejects an input ancestor swapped after containment validation', (t) => {
+  const root = makeFixture(t);
+  const projectDir = path.join(root, 'project');
+  const inputDir = path.join(projectDir, 'input');
+  const heldInputDir = path.join(projectDir, 'input-held');
+  const outsideDir = path.join(root, 'outside');
+  const source = path.join(root, 'source.wav');
+  fs.mkdirSync(inputDir, { recursive: true });
+  fs.mkdirSync(outsideDir);
+  fs.writeFileSync(source, 'trusted narration');
+  let swapped = false;
+  const fileSystem = new Proxy(fs, { get(target, key) {
+    if (key === 'fstatSync') {
+      return (descriptor, ...args) => {
+        const stat = target.fstatSync(descriptor, ...args);
+        if (!swapped) {
+          swapped = true;
+          target.renameSync(inputDir, heldInputDir);
+          target.symlinkSync(outsideDir, inputDir, 'dir');
+        }
+        return stat;
+      };
+    }
+    return target[key];
+  } });
+
+  assert.throws(() => copyProjectFileNoReplace({
+    projectDir,
+    sourcePath: source,
+    storedPath: 'input/narration.wav',
+    fileSystem,
+    temporaryId: () => 'ancestor-swap',
+  }), /identity|changed|symbolic/i);
+  assert.deepEqual(fs.readdirSync(outsideDir), []);
+});
+
+test('project copy rejects a staged pathname swapped before publication', (t) => {
+  const root = makeFixture(t);
+  const projectDir = path.join(root, 'project');
+  const source = path.join(root, 'source.wav');
+  const destination = path.join(projectDir, 'input', 'narration.wav');
+  const temporaryPath = `${destination}.tmp-source-stage-swap`;
+  const capturedPath = path.join(root, 'captured-stage.wav');
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(source, 'trusted narration');
+  let stageDescriptor = null;
+  let swapped = false;
+  const fileSystem = new Proxy(fs, { get(target, key) {
+    if (key === 'openSync') {
+      return (targetPath, ...args) => {
+        const descriptor = target.openSync(targetPath, ...args);
+        if (targetPath === temporaryPath) stageDescriptor = descriptor;
+        return descriptor;
+      };
+    }
+    if (key === 'closeSync') {
+      return (descriptor) => {
+        target.closeSync(descriptor);
+        if (!swapped && descriptor === stageDescriptor) {
+          swapped = true;
+          target.renameSync(temporaryPath, capturedPath);
+          target.writeFileSync(temporaryPath, 'foreign stage');
+        }
+      };
+    }
+    return target[key];
+  } });
+
+  assert.throws(() => copyProjectFileNoReplace({
+    projectDir,
+    sourcePath: source,
+    storedPath: 'input/narration.wav',
+    fileSystem,
+    temporaryId: () => 'stage-swap',
+  }), /identity|changed|staged/i);
+  assert.equal(fs.existsSync(destination), false);
+  assert.equal(fs.readFileSync(temporaryPath, 'utf8'), 'foreign stage');
+});
+
+test('project copy publishes an unchanged regular source through the guarded stage', (t) => {
+  const root = makeFixture(t);
+  const projectDir = path.join(root, 'project');
+  const source = path.join(root, 'source.wav');
+  fs.mkdirSync(path.join(projectDir, 'input'), { recursive: true });
+  fs.writeFileSync(source, 'legitimate narration');
+
+  const destination = copyProjectFileNoReplace({
+    projectDir,
+    sourcePath: source,
+    storedPath: 'input/narration.wav',
+    temporaryId: () => 'legitimate-copy',
+  });
+
+  assert.equal(destination, path.join(projectDir, 'input', 'narration.wav'));
+  assert.equal(fs.readFileSync(destination, 'utf8'), 'legitimate narration');
+  assert.deepEqual(fs.readdirSync(path.dirname(destination)), ['narration.wav']);
+});
+
 test('an old video project keeps its source contract and cannot be reopened as motion audio', (t) => {
   const root = makeFixture(t);
   const video = path.join(root, 'camera.mp4');
@@ -166,14 +264,22 @@ test('supplied narration writes canonical faster-whisper words inside the projec
     text: 'Первое слово',
     words: [{ w: 'Первое', s: 0, e: 0.1 }, { w: 'слово', s: 0.12, e: 0.24 }],
   }];
+  let temporaryOutput;
 
   const result = transcribeMotionNarration({
     root,
     workspace,
     pythonCommand: 'python3',
+    model: 'small',
+    prompt: 'Точный словарь темы',
     runToolImpl(command, args) {
       assert.equal(command, 'python3');
-      assert.equal(path.basename(args[0]), 'transcribe.py');
+      assert.deepEqual(args.slice(0, 2), [
+        path.join(root, 'scripts', 'transcribe.py'),
+        workspace.sourcePath,
+      ]);
+      assert.deepEqual(args.slice(3), ['small', '--prompt', 'Точный словарь темы']);
+      temporaryOutput = args[2];
       fs.writeFileSync(args[2], `${JSON.stringify(canonical)}\n`);
       return { status: 0, signal: null, stdout: '', stderr: '' };
     },
@@ -181,6 +287,123 @@ test('supplied narration writes canonical faster-whisper words inside the projec
 
   assert.deepEqual(JSON.parse(fs.readFileSync(result.wordsPath, 'utf8')), canonical);
   assert.equal(result.wordsPath, path.join(workspace.dir, 'transcript', 'words.json'));
+  assert.equal(fs.existsSync(path.dirname(temporaryOutput)), false);
+});
+
+test('transcription propagates nonzero and spawn failures without publishing or retaining temp output', (t) => {
+  const root = makeFixture(t);
+  const { wav } = generateAudioFixtures(root);
+  const { workspace } = createMotionProject({
+    projectDir: path.join(root, 'project'),
+    name: 'Whisper process errors',
+    narrationPath: wav,
+    now: new Date('2026-09-08T10:00:00Z'),
+  });
+  const wordsPath = path.join(workspace.dir, 'transcript', 'words.json');
+
+  for (const failure of [
+    {
+      expected: /status 7/,
+      result: { status: 7, signal: null, stdout: '', stderr: 'provider detail' },
+    },
+    {
+      expected: /python-fixture.*не найден/i,
+      result: {
+        status: null,
+        signal: null,
+        stdout: '',
+        stderr: '',
+        error: Object.assign(new Error('spawn failed'), { code: 'ENOENT' }),
+      },
+    },
+  ]) {
+    let calls = 0;
+    let temporaryOutput;
+    assert.throws(() => transcribeMotionNarration({
+      root,
+      workspace,
+      pythonCommand: 'python-fixture',
+      spawnSyncImpl(command, args) {
+        calls += 1;
+        temporaryOutput = args[2];
+        assert.equal(command, 'python-fixture');
+        assert.equal(args[1], workspace.sourcePath);
+        return failure.result;
+      },
+    }), failure.expected);
+    assert.equal(calls, 1);
+    assert.equal(fs.existsSync(wordsPath), false);
+    assert.equal(fs.existsSync(path.dirname(temporaryOutput)), false);
+  }
+});
+
+test('transcription rejects missing or malformed output and always removes its temp directory', (t) => {
+  const root = makeFixture(t);
+  const { wav } = generateAudioFixtures(root);
+  const { workspace } = createMotionProject({
+    projectDir: path.join(root, 'project'),
+    name: 'Whisper output errors',
+    narrationPath: wav,
+    now: new Date('2026-09-08T10:00:00Z'),
+  });
+  const wordsPath = path.join(workspace.dir, 'transcript', 'words.json');
+
+  for (const output of [null, '{broken']) {
+    let temporaryOutput;
+    assert.throws(() => transcribeMotionNarration({
+      root,
+      workspace,
+      pythonCommand: 'python3',
+      runToolImpl(_command, args) {
+        temporaryOutput = args[2];
+        if (output !== null) fs.writeFileSync(temporaryOutput, output);
+        return { status: 0, signal: null, stdout: '', stderr: '' };
+      },
+    }), /motion transcription.*(?:output|JSON)/i);
+    assert.equal(fs.existsSync(wordsPath), false);
+    assert.equal(fs.existsSync(path.dirname(temporaryOutput)), false);
+  }
+});
+
+test('transcription rejects invalid segment and word timing without publication', (t) => {
+  const root = makeFixture(t);
+  const { wav } = generateAudioFixtures(root);
+  const { workspace } = createMotionProject({
+    projectDir: path.join(root, 'project'),
+    name: 'Whisper timing errors',
+    narrationPath: wav,
+    now: new Date('2026-09-08T10:00:00Z'),
+  });
+  const wordsPath = path.join(workspace.dir, 'transcript', 'words.json');
+  const cases = [
+    [{ start: 1, end: 1, text: 'bad', words: [] }],
+    [{ start: 0, end: 1, text: 'bad', words: [{ w: 'bad', s: 0.5, e: 0.5 }] }],
+    [{ start: 0.2, end: 1, text: 'bad', words: [{ w: 'bad', s: 0.1, e: 0.5 }] }],
+    [{
+      start: 0, end: 1, text: 'bad',
+      words: [{ w: 'one', s: 0, e: 0.6 }, { w: 'two', s: 0.5, e: 0.9 }],
+    }],
+    [
+      { start: 0, end: 0.7, text: 'one', words: [] },
+      { start: 0.6, end: 1, text: 'two', words: [] },
+    ],
+  ];
+
+  for (const invalid of cases) {
+    let temporaryOutput;
+    assert.throws(() => transcribeMotionNarration({
+      root,
+      workspace,
+      pythonCommand: 'python3',
+      runToolImpl(_command, args) {
+        temporaryOutput = args[2];
+        fs.writeFileSync(temporaryOutput, JSON.stringify(invalid));
+        return { status: 0, signal: null, stdout: '', stderr: '' };
+      },
+    }), /invalid (?:segment|word) timing/i);
+    assert.equal(fs.existsSync(wordsPath), false);
+    assert.equal(fs.existsSync(path.dirname(temporaryOutput)), false);
+  }
 });
 
 test('motion render binds only narration to an isolated temporary public lease', (t) => {

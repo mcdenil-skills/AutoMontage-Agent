@@ -158,6 +158,7 @@ function parseAudioProbeJson(raw, stage = 'audio probe') {
     if (error.message.startsWith(`${stage}:`)) throw error;
     throw new Error(`${stage}: ffprobe вернул недопустимое JSON`);
   }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) fail(stage, 'JSON');
 
   const streams = Array.isArray(data.streams) ? data.streams : [];
   const audio = streams.find((stream) => stream && stream.codec_type === 'audio');

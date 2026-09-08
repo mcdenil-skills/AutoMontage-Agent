@@ -267,9 +267,15 @@ test('audio probe rejects malformed JSON, missing audio and invalid stream field
   const validAudio = {
     codec_type: 'audio', codec_name: 'aac', sample_rate: '48000', channels: 2, duration: '1.25',
   };
+  const invalidJson = (error) => (
+    error.message === 'audio probe: ffprobe вернул недопустимое JSON'
+  );
   const cases = [
     ['', /audio probe.*JSON/i],
     ['{broken', /audio probe.*JSON/i],
+    ['null', invalidJson],
+    ['[]', invalidJson],
+    ['"audio"', invalidJson],
     [JSON.stringify({ streams: [], format: { duration: '1' } }), /audio probe.*audio stream/i],
     [JSON.stringify({ streams: [{ codec_type: 'video' }], format: { duration: '1' } }), /audio probe.*audio stream/i],
     [JSON.stringify({ streams: [{ ...validAudio, duration: '0' }] }), /audio probe.*duration/i],
