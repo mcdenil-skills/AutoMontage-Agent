@@ -581,11 +581,22 @@ function checkMotionRelease(files, read, issues) {
   }
   const ciFile = '.github/workflows/ci.yml';
   const jobs = read(ciFile).split(/^  [a-zA-Z0-9_-]+:\s*$/m);
-  const windows = jobs.some(job => /runs-on:\s*windows-latest/.test(job)
-    && ['tests/media-probe.test.js', 'tests/motion-source.test.js', 'tests/project-workspace.test.js'].every(file => job.includes(file)));
+  const windowsJob = jobs.find(job => /runs-on:\s*windows-latest/.test(job));
+  const windows = windowsJob && ['tests/media-probe.test.js', 'tests/motion-source.test.js',
+    'tests/project-workspace.test.js'].every(file => windowsJob.includes(file));
+  // PowerShell can finish successfully after an earlier native command fails. Keep
+  // each Node suite in a dedicated scalar run step so Actions checks its exit code.
+  const isolatedWindowsTests = windowsJob && windowsJob.split(/^      - /m)
+    .filter(step => /node --test/.test(step)).every(step => {
+      const command = /^        run: (node --test [^\r\n]+)$/m.exec(step)?.[1];
+      if (!command) return false;
+      const outsideQuotes = command.replace(/'[^']*'|"[^"]*"/g, '');
+      return !/[;&|`]/.test(outsideQuotes) && !/continue-on-error:\s*true/.test(step);
+    });
   const linux = jobs.some(job => /runs-on:\s*ubuntu-latest/.test(job)
     && /npm run smoke:release -- --motion-only/.test(job) && !/\$\{\{\s*secrets\./i.test(job));
   if (!windows) issues.push(issue('motion-ci', ciFile, 1, 'Windows audio probe/workspace coverage is missing', 'run the portable audio and workspace suite on windows-latest.'));
+  if (windows && !isolatedWindowsTests) issues.push(issue('motion-ci', ciFile, 1, 'Windows native test failures require isolated run steps', 'put each node --test invocation in its own run step without command chaining.'));
   if (!linux) issues.push(issue('motion-ci', ciFile, 1, 'Linux credential-free motion smoke is missing', 'run npm run smoke:release -- --motion-only on ubuntu-latest without secrets.'));
 }
 

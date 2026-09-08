@@ -753,3 +753,44 @@ test('motion release refuses CI that drops Windows audio or Linux credential-fre
   assert.ok(issues.some(entry => /Windows/.test(entry.message)));
   assert.ok(issues.some(entry => /Linux/.test(entry.message)));
 });
+
+test('motion release refuses a Windows test step whose first native failure can be hidden', () => {
+  const root = makeRepository();
+  enableMotionRelease(root);
+  const file = '.github/workflows/ci.yml';
+  const safe = [
+    'jobs:',
+    '  windows:',
+    '    runs-on: windows-latest',
+    '    steps:',
+    '      - name: Audio probe',
+    '        shell: pwsh',
+    '        run: node --test tests/media-probe.test.js',
+    '      - name: Motion source',
+    '        shell: pwsh',
+    '        run: node --test tests/motion-source.test.js',
+    '      - name: Motion workspace',
+    '        shell: pwsh',
+    "        run: node --test --test-name-pattern='motion|old video|legacy' tests/project-workspace.test.js",
+    '  linux:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - run: npm run smoke:release -- --motion-only',
+    '',
+  ].join('\n');
+  write(root, file, safe);
+  git(root, ['add', file]);
+  git(root, ['commit', '-qm', 'isolated native test steps']);
+  assert.equal(checkRelease({ cwd: root }).issues.filter(entry => entry.rule === 'motion-ci').length, 0);
+
+  for (const unsafe of [
+    '        run: |\n          node --test tests/motion-source.test.js\n          node -e "process.exit(0)"',
+    '        run: node --test tests/motion-source.test.js; node -e "process.exit(0)"',
+  ]) {
+    write(root, file, safe.replace('        run: node --test tests/motion-source.test.js', unsafe));
+    git(root, ['add', file]);
+    git(root, ['commit', '-qm', 'native exit status can be overwritten']);
+    assert.ok(checkRelease({ cwd: root }).issues.some(entry => entry.rule === 'motion-ci'
+      && /Windows.*isolated|Windows.*failure/i.test(entry.message)));
+  }
+});

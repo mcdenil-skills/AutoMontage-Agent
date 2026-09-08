@@ -37,14 +37,14 @@ function finite(value, label) {
   return number;
 }
 
-function probeMedia(file) {
+function probeMedia(file, env = createSmokeEnvironment()) {
   const source = captureTool('ffprobe', [
     '-v', 'error',
     '-count_frames',
     '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate,start_time,duration,nb_read_frames:format=duration',
     '-of', 'json',
     path.resolve(file),
-  ], { cwd: ROOT, stage: `probe ${path.basename(file)}`, maxBuffer: 4 * 1024 * 1024 });
+  ], { cwd: ROOT, env, stage: `probe ${path.basename(file)}`, maxBuffer: 4 * 1024 * 1024 });
   let probe;
   try {
     probe = JSON.parse(source);
@@ -83,7 +83,7 @@ function probeMedia(file) {
   };
 }
 
-function decodeMedia(file) {
+function decodeMedia(file, env = createSmokeEnvironment()) {
   runTool('ffmpeg', [
     '-v', 'error',
     '-i', path.resolve(file),
@@ -91,14 +91,14 @@ function decodeMedia(file) {
     '-map', '0:a:0',
     '-f', 'null',
     '-',
-  ], { cwd: ROOT, stage: `decode ${path.basename(file)}` });
+  ], { cwd: ROOT, env, stage: `decode ${path.basename(file)}` });
 }
 
-function assertMedia(file, expectedFrames, expected = null) {
+function assertMedia(file, expectedFrames, expected = null, env = createSmokeEnvironment()) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
     throw new Error(`smoke final does not exist: ${file}`);
   }
-  const probe = probeMedia(file);
+  const probe = probeMedia(file, env);
   if (probe.frames !== expectedFrames) {
     throw new Error(`${file} has ${probe.frames} frames instead of ${expectedFrames}`);
   }
@@ -110,7 +110,7 @@ function assertMedia(file, expectedFrames, expected = null) {
     if (probe.videoTracks !== 1 || probe.audioTracks !== expected.audioTracks) throw new Error(`${file} has unexpected video/audio track count`);
     if (Math.abs(probe.duration - expectedFrames / expected.fps) >= MAX_DRIFT_SECONDS) throw new Error(`${file} has wrong duration`);
   }
-  decodeMedia(file);
+  decodeMedia(file, env);
   return probe;
 }
 
@@ -201,13 +201,13 @@ function runMotionReleaseSmoke({ root = ROOT, workDir = path.join(root, 'out/rel
   const draft = readProjectManifest(projectDir);
   if (draft.currentPreview?.kind !== 'full' || draft.briefs.some(brief => brief.status !== 'draft')
     || draft.renders.length || fs.existsSync(path.join(projectDir, draft.final))) throw new Error('motion demo bypassed draft preview gates');
-  decodeMedia(path.join(projectDir, 'previews/current-preview.mp4'));
+  decodeMedia(path.join(projectDir, 'previews/current-preview.mp4'), childEnv);
   // Explicit approval of a generated synthetic fixture for automated release verification.
   // This smoke harness never accepts a user project or approves client material.
   node('scripts/project/approve-brief.js', [projectDir, 'brief/v01-draft.motion.json', '--confirm-preview-viewed'], 'release motion fixture approval');
   cli(['motion', '--project-dir', projectDir, '--brief', 'brief/v01-approved.motion.json', '--version-label', 'release-smoke'], 'release motion final');
   const motionFinal = assertProjectFinal(projectDir);
-  const metadata = assertMedia(motionFinal, 810, { width: 1080, height: 1920, fps: 30, videoCodec: 'h264', audioCodec: 'aac', audioTracks: 1 });
+  const metadata = assertMedia(motionFinal, 810, { width: 1080, height: 1920, fps: 30, videoCodec: 'h264', audioCodec: 'aac', audioTracks: 1 }, childEnv);
   const brief = JSON.parse(fs.readFileSync(path.join(projectDir, 'brief/v01-approved.motion.json')));
   for (const scene of brief.scenes) runTool('ffmpeg', ['-v', 'error', '-ss', String(scene.end - 0.75),
     '-i', motionFinal, '-frames:v', '1', path.join(working, `${scene.scene}.png`)], { cwd: working, env: childEnv, stage: `motion ${scene.scene} frame` });
@@ -236,7 +236,7 @@ function runReleaseSmoke({ root = ROOT, id = `${Date.now()}-${process.pid}-${ran
       '--id', lessonId,
       '--outdir', lessonDir,
     ], { cwd: resolvedRoot, env: childEnv, stage: 'release lesson smoke' });
-    assertMedia(lessonFinal, 75);
+    assertMedia(lessonFinal, 75, null, childEnv);
 
     const workspace = createOrOpenProject({
       baseDir: path.join(resolvedRoot, 'projects'),
@@ -259,7 +259,7 @@ function runReleaseSmoke({ root = ROOT, id = `${Date.now()}-${process.pid}-${ran
       '--no-transcribe',
     ], { cwd: resolvedRoot, env: childEnv, stage: 'release dynamic smoke' });
     const projectFinal = assertProjectFinal(workspace.dir);
-    assertMedia(projectFinal, 75);
+    assertMedia(projectFinal, 75, null, childEnv);
     const motion = runMotionReleaseSmoke({ root: resolvedRoot, workDir: path.join(resolvedRoot, 'out/release-smoke', id, 'motion') });
     completed = true;
     return { lessonFinal, projectFinal, ...motion };

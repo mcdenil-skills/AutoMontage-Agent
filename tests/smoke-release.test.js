@@ -125,3 +125,39 @@ test('motion media gate rejects wrong geometry, codec or extra audio while accep
     else assert.throws(() => assertMedia(file, 3, expected), /geometry|codec|audio track/i, name);
   }
 });
+
+test('spawned probe and decode children receive sanitized environment with the configured tool PATH', {
+  skip: process.platform === 'win32' ? 'POSIX executable fixtures; Windows portable tests run separately' : false,
+}, t => {
+  const { assertMedia, createSmokeEnvironment } = require('../scripts/smoke-release');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-child-env-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sentinelName = 'SMOKE_ENV_SENTINEL';
+  const originalPath = process.env.PATH;
+  const originalSentinel = process.env[sentinelName];
+  t.after(() => {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalSentinel === undefined) delete process.env[sentinelName]; else process.env[sentinelName] = originalSentinel;
+  });
+  const observed = path.join(root, 'observed.jsonl');
+  const probe = { streams: [
+    { codec_type: 'video', start_time: 0, duration: 0.1, nb_read_frames: 3 },
+    { codec_type: 'audio', start_time: 0, duration: 0.1 },
+  ], format: { duration: 0.1 } };
+  for (const command of ['ffprobe', 'ffmpeg']) {
+    const executable = path.join(root, command);
+    fs.writeFileSync(executable, `#!/usr/bin/env node\n`
+      + `require('node:fs').appendFileSync(${JSON.stringify(observed)}, JSON.stringify({ command: ${JSON.stringify(command)}, sentinelPresent: Object.hasOwn(process.env, ${JSON.stringify(sentinelName)}), path: process.env.PATH }) + '\\n');\n`
+      + (command === 'ffprobe' ? `console.log(${JSON.stringify(JSON.stringify(probe))});\n` : ''));
+    fs.chmodSync(executable, 0o755);
+  }
+  process.env.PATH = `${root}${path.delimiter}${originalPath || ''}`;
+  process.env[sentinelName] = 'synthetic-parent-only';
+  const source = path.join(root, 'fixture.mp4');
+  fs.writeFileSync(source, 'environment boundary fixture');
+  const env = createSmokeEnvironment();
+  assertMedia(source, 3, null, env);
+  const children = fs.readFileSync(observed, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(children.map(child => [child.command, child.sentinelPresent]), [['ffprobe', false], ['ffmpeg', false]]);
+  assert.ok(children.every(child => child.path === env.PATH));
+});

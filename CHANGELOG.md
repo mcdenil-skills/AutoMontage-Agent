@@ -39,6 +39,9 @@
 
 ### Исправлено
 
+- Windows CI выполняет каждый native Node suite отдельным шагом, чтобы поздний успех не
+  скрывал раннюю ошибку. Probe/decode в release smoke теперь получают очищенное окружение,
+  как preview/final, с сохранением выбранного FFmpeg PATH.
 - Установка npm tarball поддерживает hoisted Remotion-зависимость: resolver использует
   Node package lookup, проверяет имя пакета и containment CLI entrypoint, сохраняя запрет
   произвольного PATH binary и загрузки через npx. Узкий Webpack override разрешает JSX только

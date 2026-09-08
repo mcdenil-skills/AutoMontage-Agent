@@ -410,7 +410,8 @@ Git-объект и игнорирует незакоммиченные поль
 разрешает pending notes в `[Unreleased]`; флаг `--release` включает строгую проверку кандидата.
 С версии 1.7.0 gate также требует motion schema, зарегистрированную MotionReel-композицию,
 CLI, публичный навык, валидный neutral draft demo со всеми семью сценами и CI-покрытие:
-Windows audio probe/workspace плюс Linux motion smoke без secrets. Эти проверки читают
+Windows audio probe/workspace плюс Linux motion smoke без secrets. Каждый Windows Node suite
+выполняется отдельным run-step: последующая успешная native-команда не может скрыть ранний отказ. Эти проверки читают
 кандидат как данные; реальные CLI help и renderer проверяет отдельный smoke.
 Current-tree правила
 сверяют версию, Node engines, env-декларации, локальные Markdown-ссылки, приватные id,
@@ -428,7 +429,9 @@ Current-tree правила
 публичной пунктуации; если history/ref недоступен, ошибка содержит команду fetch.
 
 `smoke:release` передаёт дочерним процессам только системное окружение и optional FFmpeg path;
-provider keys, voice ID, `THEMES_EXT` и `NODE_OPTIONS` не наследуются. Он рендерит 75 кадров
+provider keys, voice ID, `THEMES_EXT` и `NODE_OPTIONS` не наследуются, включая probe/decode.
+Регрессия запускает реальные дочерние tool-fixtures и проверяет отсутствие закрытого sentinel
+при сохранении выбранного PATH. Он рендерит 75 кадров
 `examples/lesson-neutral-approved.json`, затем через project API создаёт отдельный Dynamic
 workspace и рендерит его через `--project-dir`. Для обоих финалов обязательны video/audio,
 A/V drift меньше 80 мс, ровно 75 кадров и полный decode. У project-финала SHA-256 должен
