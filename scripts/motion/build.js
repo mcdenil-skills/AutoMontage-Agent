@@ -110,6 +110,7 @@ function runMotion(options, dependencies = {}) {
   if (!options.briefPath) {
     const { workspace, probe } = createMotionProject({ baseDir: process.cwd(), name: options.project,
       projectDir: options.projectDir, narrationPath: options.narrationPath, ...probeOptions });
+    dependencies.narrationGuard?.assertCurrent();
     if (workspace.manifest.currentBrief) throw new Error('project already has a brief; continue with preview or an approved --brief');
     const wordsPath = resolveProjectPath(workspace.dir, workspace.manifest.transcript.words, { mustExist: false, type: 'file' });
     const transcript = fs.existsSync(wordsPath)
@@ -123,6 +124,7 @@ function runMotion(options, dependencies = {}) {
       output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames },
       scenes: [{ scene: 'kinetic-title', start: 0, end: durationInFrames / 30, text }],
     };
+    dependencies.narrationGuard?.assertCurrent();
     const published = publishBriefRevision(workspace, { kind: 'motion-reel', brief });
     return { action: 'draft', projectDir: workspace.dir, ...published };
   }
@@ -216,9 +218,17 @@ async function runScriptMotion(options, dependencies) {
   const { workspace } = createMotionProject({ projectDir, name: options.project, narrationPath: narration.audioPath,
     ...(dependencies.probeOpenedAudioImpl ? { probeOpenedAudioImpl: dependencies.probeOpenedAudioImpl } : {}),
   });
-  writeFilesNoReplace([{ destination: resolveProjectPath(projectDir, workspace.manifest.transcript.words, { type: 'file' }),
-    data: `${JSON.stringify(validateCanonicalTranscript(narration.transcript), null, 2)}\n`, purpose: 'motion-tts-words' }]);
-  return runMotion({ projectDir }, dependencies);
+  const copied = openBriefSnapshot(projectDir, workspace.manifest.source.localPath);
+  try {
+    if (createHash('sha256').update(copied.bytes).digest('hex') !== narration.audioSha256) {
+      throw new Error('motion narration copy does not match the verified cache digest');
+    }
+    writeFilesNoReplace([{ destination: resolveProjectPath(projectDir, workspace.manifest.transcript.words, { type: 'file' }),
+      data: `${JSON.stringify(validateCanonicalTranscript(narration.transcript), null, 2)}\n`, purpose: 'motion-tts-words' }], {
+      assertParentCurrent: copied.assertCurrent,
+    });
+    return runMotion({ projectDir }, { ...dependencies, narrationGuard: copied });
+  } finally { copied.close(); }
 }
 
 async function main(argv = process.argv.slice(2)) {

@@ -93,6 +93,29 @@ function forbiddenRoot(relativePath) {
   return FORBIDDEN_ROOTS.find((root) => relativePath.startsWith(root));
 }
 
+function providerAssignmentValue(content, match, isYaml) {
+  let rest = content.slice(match.index + match[0].length);
+  if (isYaml && /^(?:#[^\n]*)?\r?\n/u.test(rest)) {
+    const keyPosition = match.index + match[0].indexOf(match[1]);
+    const lineStart = content.lastIndexOf('\n', keyPosition) + 1;
+    const indentation = /^[ \t]*/u.exec(content.slice(lineStart))[0].length;
+    const lines = rest.split(/\r?\n/u);
+    rest = '';
+    for (let index = 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!line.trim() || line.trimStart().startsWith('#')) continue;
+      if (/^[ \t]*/u.exec(line)[0].length > indentation) rest = lines.slice(index).join('\n').trimStart();
+      break;
+    }
+  }
+  for (const quote of ['"""', "'''", '"', "'"]) {
+    if (!rest.startsWith(quote)) continue;
+    const end = rest.indexOf(quote, quote.length);
+    return rest.slice(quote.length, end === -1 ? undefined : end).trim();
+  }
+  return rest.split(/[\s#,}]/u)[0].trim();
+}
+
 function providerPrivacyIssues(relativePath, content) {
   const issues = [];
   const basename = path.posix.basename(relativePath);
@@ -105,9 +128,9 @@ function providerPrivacyIssues(relativePath, content) {
       try { assignments = JSON.stringify(JSON.parse(content)); } catch (_) { /* scan malformed config as text */ }
     }
     // Match assignments, not arbitrary prose or programmatic environment reads.
-    const assignment = /(?:^|[\s{,])(?:export[ \t]+)?["']?(ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|elevenlabs_api_key|elevenlabs_voice_id|elevenlabsApiKey|elevenlabsVoiceId|xi-api-key)["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s#,}\r\n]*))/gmu;
+    const assignment = /(?:^|[\s{,])(?:export[ \t]+)?["']?(ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|elevenlabs_api_key|elevenlabs_voice_id|elevenlabsApiKey|elevenlabsVoiceId|xi-api-key)["']?[ \t]*[:=][ \t]*/gmu;
     for (const match of assignments.matchAll(assignment)) {
-      const value = (match[2] ?? match[3] ?? match[4]).trim();
+      const value = providerAssignmentValue(assignments, match, /\.ya?ml$/iu.test(relativePath));
       if (placeholder(value)) continue;
       const voice = /voice/i.test(match[1]);
       issues.push({ path: relativePath, rule: voice ? 'private-voice-id' : 'provider-secret',

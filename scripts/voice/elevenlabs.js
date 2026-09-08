@@ -31,6 +31,28 @@ function narrationInput({ script, voiceId, modelId = DEFAULT_MODEL, voiceSetting
 }
 function buildNarrationCacheKey(options) { return sha(JSON.stringify(narrationInput(options))); }
 
+// Persist each new directory and its entry in the parent before advancing to the
+// next level. Recursive mkdir plus syncing only the leaf can lose the whole cache.
+function ensureDurableDirectoryChain(target, fileSystem) {
+  const missing = []; let existing = target;
+  while (!fileSystem.existsSync(existing)) {
+    missing.push(existing); existing = path.dirname(existing);
+  }
+  const parentIdentity = fileSystem.lstatSync(existing);
+  if (!parentIdentity.isDirectory() || parentIdentity.isSymbolicLink()) throw configError();
+  for (const directory of missing.reverse()) {
+    const parent = path.dirname(directory);
+    const before = fileSystem.lstatSync(parent);
+    if (!before.isDirectory() || before.isSymbolicLink()) throw configError();
+    fileSystem.mkdirSync(directory, { mode: 0o700 });
+    const created = fileSystem.lstatSync(directory); const after = fileSystem.lstatSync(parent);
+    if (!created.isDirectory() || created.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino) throw configError();
+    fsyncDirectoryIfSupported(fileSystem, directory);
+    fsyncDirectoryIfSupported(fileSystem, parent);
+  }
+  fsyncDirectoryIfSupported(fileSystem, target);
+}
+
 // A local ignore rule protects workspaces even when the CLI is installed globally.
 // Never turn an existing tracked repository into a private workspace.
 function prepareNarrationWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl = spawnSync } = {}) {
@@ -47,10 +69,13 @@ function prepareNarrationWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl 
       const tracked = spawnSyncImpl('git', ['ls-files', '-z', '--', dir], { cwd: root, encoding: 'utf8' });
       if (tracked.status !== 0 || tracked.stdout.length) throw configError();
     } else if (repo.error && repo.error.code !== 'ENOENT') throw configError();
-    fileSystem.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensureDurableDirectoryChain(dir, fileSystem);
     const ignore = resolveProjectPath(dir, '.gitignore', { fileSystem, type: 'file' });
     if (!fileSystem.existsSync(ignore)) fileSystem.writeFileSync(ignore, '*\n', { flag: 'wx', mode: 0o600 });
     if (fileSystem.readFileSync(ignore, 'utf8').trim() !== '*') throw configError();
+    const ignoreHandle = fileSystem.openSync(ignore, fileSystem.constants.O_RDWR | (fileSystem.constants.O_NOFOLLOW || 0));
+    try { fileSystem.fsyncSync(ignoreHandle); } finally { fileSystem.closeSync(ignoreHandle); }
+    fsyncDirectoryIfSupported(fileSystem, dir);
     resolveProjectPath(dir, 'voice-cache', { fileSystem, type: 'directory' });
     return dir;
   } catch (_) { throw new Error('ElevenLabs requires a private, untracked project workspace without symbolic links'); }
@@ -109,7 +134,7 @@ async function synthesizeWithTimestamps(options, { fetchImpl = fetch, fileSystem
   let cachePath; let audioPath; let assertWorkspaceCurrent;
   try {
     const cacheDir = resolveProjectPath(dir, relative, { fileSystem, type: 'directory' });
-    fileSystem.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+    ensureDurableDirectoryChain(cacheDir, fileSystem);
     const ignorePath = resolveProjectPath(dir, '.gitignore', { fileSystem, type: 'file', mustExist: true });
     const identities = [dir, path.join(dir, 'voice-cache'), cacheDir, ignorePath].map(filename => ({ filename, stat: fileSystem.lstatSync(filename) }));
     assertWorkspaceCurrent = () => {
@@ -130,7 +155,7 @@ async function synthesizeWithTimestamps(options, { fetchImpl = fetch, fileSystem
       const transcript = validateCanonicalTranscript(JSON.parse(wordsBytes));
       if (!transcript.length || !transcript[0].words.length) throw configError();
       assertWorkspaceCurrent();
-      return { cacheKey, cachePath, audioPath, transcript, cached: true };
+      return { cacheKey, cachePath, audioPath, audioSha256: receipt.audioSha256, transcript, cached: true };
     }
     if (fileSystem.existsSync(resolve('attempt.json'))) {
       throw new Error('previous attempt');
@@ -179,9 +204,14 @@ async function synthesizeWithTimestamps(options, { fetchImpl = fetch, fileSystem
       { destination: resolve('narration.mp3'), data: result.audio, purpose: 'narration-cache' },
       { destination: resolve('words.json'), data: wordsBytes, purpose: 'narration-words' },
       { destination: resolve('receipt.json'), data: `${JSON.stringify(receipt)}\n`, purpose: 'narration-receipt' },
-    ], { fileSystem });
-    assertWorkspaceCurrent();
-    return { cacheKey, cachePath, audioPath, transcript: result.transcript, cached: false };
+    ], { fileSystem, assertParentCurrent: assertWorkspaceCurrent, verifyPublishedIdentity: true,
+      afterCommit() {
+        assertWorkspaceCurrent();
+        fsyncDirectoryIfSupported(fileSystem, path.dirname(audioPath));
+        assertWorkspaceCurrent();
+      },
+    });
+    return { cacheKey, cachePath, audioPath, audioSha256: receipt.audioSha256, transcript: result.transcript, cached: false };
   } catch (_) {
     // Never include provider body, URL/voice ID, credentials, script or low-level causes.
     throw new Error(`ElevenLabs ${timedOut ? 'timeout' : status && status >= 400 ? `HTTP ${status}` : 'request or response failure'}; outcome may be ambiguous. Request not retried; check provider history and the private cache before retrying.`);

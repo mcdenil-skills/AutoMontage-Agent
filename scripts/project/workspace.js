@@ -252,6 +252,8 @@ function stageOwnedSiblingFile(destination, data, {
     handle = fileSystem.openSync(temporaryPath, flags, 0o600);
     identity = fileSystem.fstatSync(handle);
     if (!identity.isFile()) throw new Error('temporary project file must be regular');
+    // A parent can change inside openSync; no sensitive bytes may be written first.
+    if (assertParentCurrent) assertParentCurrent();
     setPrivateDescriptorMode(fileSystem, handle, 0o600, platform);
     if (writeToHandle) writeToHandle(handle);
     else fileSystem.writeFileSync(handle, data, { encoding: 'utf8' });
@@ -324,6 +326,8 @@ function stageOwnedSiblingFile(destination, data, {
 function stageNoReplaceFileSet(files, {
   fileSystem = fs,
   temporaryId = randomUUID,
+  assertParentCurrent = null,
+  verifyPublishedIdentity = false,
 } = {}) {
   const stages = [];
   try {
@@ -331,7 +335,7 @@ function stageNoReplaceFileSet(files, {
       stages.push(stageOwnedSiblingFile(
         destination,
         data,
-        { fileSystem, temporaryId, purpose },
+        { fileSystem, temporaryId, purpose, assertParentCurrent, verifyPublishedIdentity },
       ));
     }
   } catch (error) {
@@ -355,6 +359,8 @@ function writeFilesNoReplace(files, options = {}) {
   const staged = stageNoReplaceFileSet(files, options);
   try {
     staged.commit();
+    if (options.afterCommit) options.afterCommit();
+    if (options.assertParentCurrent) options.assertParentCurrent();
   } catch (error) {
     try {
       staged.rollback();

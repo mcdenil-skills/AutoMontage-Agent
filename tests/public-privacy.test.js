@@ -189,3 +189,24 @@ test('multiline JSON provider assignments cannot bypass the privacy gate', t => 
   const result = checkPublicPrivacy({ root, scope: 'staged' });
   assert.ok(result.issues.some(issue => issue.rule === 'private-voice-id'));
 });
+
+for (const [extension, contents] of [
+  ['yaml', 'ELEVENLABS_VOICE_ID:\n  synthetic-private-voice\n'],
+  ['yaml', 'ELEVENLABS_VOICE_ID:\n  "synthetic-private-voice"\n'],
+  ['toml', 'ELEVENLABS_VOICE_ID = """\nsynthetic-private-voice\n"""\n'],
+  ['toml', "ELEVENLABS_VOICE_ID = '''\nsynthetic-private-voice\n'''\n"],
+]) {
+  test(`staged privacy rejects multiline ${extension} provider identity: ${JSON.stringify(contents).slice(0, 38)}`, t => {
+    const root = fixtureRepo(t); const filename = `config/voice.${extension}`;
+    stageBytes(root, filename, contents); write(root, filename, '');
+    const result = checkPublicPrivacy({ root, scope: 'staged' });
+    assert.ok(result.issues.some(issue => issue.rule === 'private-voice-id'));
+    assert.doesNotMatch(JSON.stringify(result.issues), /synthetic-private/);
+  });
+}
+test('empty multiline YAML/TOML settings and explicit placeholders remain public', t => {
+  const root = fixtureRepo(t);
+  stageBytes(root, 'config/voice.yaml', 'ELEVENLABS_VOICE_ID:\n  ""\nELEVENLABS_API_KEY: <api-key>\n');
+  stageBytes(root, 'config/voice.toml', 'ELEVENLABS_VOICE_ID = """\n"""\nELEVENLABS_API_KEY = """<api-key>"""\n');
+  assert.deepEqual(checkPublicPrivacy({ root, scope: 'staged' }), { ok: true, issues: [] });
+});

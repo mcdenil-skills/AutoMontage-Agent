@@ -26,6 +26,10 @@
 
 ### Исправлено
 
+- Усилены границы ElevenLabs cache: guard до записи provider bytes, rollback до последней
+  проверки, fsync новых папок/ignore/receipt и сверка фактически скопированного narration с
+  receipt до draft. Privacy gate также закрывает multiline YAML и TOML voice-ID assignments.
+
 - Motion preview связывает narration hash с фактически скопированными bytes и отклоняет подмену
   аудио на время snapshot. Final повторяет общий контроль approved/draft/preview/narration
   после digest-проверок и при публикации; поздняя правка откатывает MP4 и сохраняет `latestRender`.

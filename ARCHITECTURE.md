@@ -189,7 +189,14 @@ character entries с кириллицей/Unicode в канонический tr
 SHA-256 кэш включает текст, ID голоса, модель, voice settings и output format. Workspace имеет
 локальный `.gitignore` с `*`; tracked-папки и symlinks отклоняются. Exclusive `attempt.json`
 резервирует запрос до отправки, сохраняется при неоднозначном отказе и предотвращает дубликаты.
+До fetch сохраняются файл `.gitignore`, каждая новая папка цепочки и её запись в родителе;
+directory fsync следует общей платформенной политике `filesystem-capabilities` (POSIX).
+Общий `writeFilesNoReplace` принимает optional parent guard и after-commit проверку: guard
+повторяется сразу после temp open до записи bytes, rollback ownership сохраняется до
+последнего fsync каталога и workspace-check. При отказе удаляются только собственные output-файлы.
 Готовый receipt связывает hashes MP3/words; повреждение кэша не вызывает новый платный запрос.
+После probe/copy actual `input/narration.*` сверяется с digest receipt; открытый snapshot
+удерживается и проверяется до публикации canonical words и draft.
 Конфигурация читается в локальный объект из `.env`/environment без записи в `process.env`, manifest
 или props. Кэш и canonical transcript переходят в прежний motion draft/approval pipeline.
 

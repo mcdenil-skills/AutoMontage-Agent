@@ -612,3 +612,11 @@ node --test tests/elevenlabs-voice.test.js tests/public-privacy.test.js tests/br
 во время ответа не позволяют опубликовать provider output. Privacy tests читают staged bytes,
 ловят непустые настройки в env/JSON и оставляют пустые примеры рабочими. Реальный Remotion env
 loader проверяет отсутствие ElevenLabs key/voice ID в браузере. Live API и оплаченных тестов нет.
+
+Cache security-регрессии подменяют cache directory на symlink перед temp open, удаляют ignore
+при записи аудио, при публикации receipt и последнем directory fsync. Отказ не оставляет
+provider outputs снаружи или незавершённые опубликованные файлы внутри. Instrumented filesystem
+проверяет fsync полной новой цепочки, parent entries, ignore и attempt до fetch и каталога кэша
+после final links (directory fsync применяется на POSIX). Отдельная подмена кэшированного аудио
+на первом probe не допускает words/draft с чужой записью. Staged privacy проверяет многострочные
+YAML values и TOML triple-quoted strings рядом с пустыми значениями и placeholders.

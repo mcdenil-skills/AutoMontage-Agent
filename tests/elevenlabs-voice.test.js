@@ -236,8 +236,16 @@ test('orphaned cached audio cannot trigger paid replacement generation', async t
 });
 test('attempt persistence failure refuses the paid request before fetch', async t => {
   const { projectDir } = workspace(t); let calls = 0;
-  const fileSystem = Object.create(fs);
-  fileSystem.fsyncSync = () => { throw new Error('synthetic disk failure'); };
+  const fileSystem = Object.create(fs); let marker;
+  fileSystem.openSync = (filename, ...args) => {
+    const fd = fs.openSync(filename, ...args);
+    if (path.basename(String(filename)) === 'attempt.json') marker = fd;
+    return fd;
+  };
+  fileSystem.fsyncSync = fd => {
+    if (fd === marker) throw new Error('synthetic disk failure');
+    return fs.fsyncSync(fd);
+  };
   const mock = await mockServer(t, (_, res) => { calls++; res.end(JSON.stringify(payload())); });
   await assert.rejects(synthesizeWithTimestamps(options(projectDir), { ...mock, fileSystem }), /not retried/i);
   assert.equal(calls, 0);
@@ -251,4 +259,97 @@ test('invalid project name is rejected before generating narration even with an 
     probeOpenedAudioImpl: () => ({ mediaKind: 'audio', durationSec: 2 }),
   }));
   assert.equal(mock.requests.length, 0);
+});
+
+for (const failurePoint of ['before-temp-open', 'during-write', 'after-receipt-link', 'final-directory-sync']) {
+  test(`guarded cache publication rolls back owned output at ${failurePoint}`, {
+    skip: failurePoint === 'final-directory-sync' && process.platform === 'win32',
+  }, async t => {
+    const { root, projectDir } = workspace(t);
+    const outside = path.join(root, 'outside'); fs.mkdirSync(outside);
+    const cacheDir = path.join(projectDir, 'voice-cache', buildNarrationCacheKey(options(projectDir)));
+    const fileSystem = Object.create(fs); let mutated = false; let receiptLinked = false;
+    const descriptors = new Map();
+    fileSystem.openSync = (filename, ...args) => {
+      if (failurePoint === 'before-temp-open' && !mutated && String(filename).includes('.tmp-narration-cache-')) {
+        mutated = true; fs.renameSync(cacheDir, cacheDir + '-moved'); fs.symlinkSync(outside, cacheDir, 'dir');
+      }
+      const fd = fs.openSync(filename, ...args); descriptors.set(fd, String(filename)); return fd;
+    };
+    fileSystem.closeSync = fd => { descriptors.delete(fd); return fs.closeSync(fd); };
+    fileSystem.fsyncSync = fd => {
+      fs.fsyncSync(fd);
+      if (failurePoint === 'final-directory-sync' && !mutated && receiptLinked && descriptors.get(fd) === cacheDir) {
+        mutated = true; fs.unlinkSync(path.join(projectDir, '.gitignore'));
+      }
+    };
+    fileSystem.writeFileSync = (filename, data, ...args) => {
+      const result = fs.writeFileSync(filename, data, ...args);
+      if (failurePoint === 'during-write' && !mutated && Buffer.isBuffer(data) && data.equals(Buffer.from('synthetic audio bytes'))) {
+        mutated = true; fs.unlinkSync(path.join(projectDir, '.gitignore'));
+      }
+      return result;
+    };
+    fileSystem.linkSync = (source, destination) => {
+      fs.linkSync(source, destination);
+      if (path.basename(destination) === 'receipt.json') receiptLinked = true;
+      if (failurePoint === 'after-receipt-link' && !mutated && path.basename(destination) === 'receipt.json') {
+        mutated = true; fs.unlinkSync(path.join(projectDir, '.gitignore'));
+      }
+    };
+    const mock = await mockServer(t, (_, res) => res.end(JSON.stringify(payload())));
+    await assert.rejects(synthesizeWithTimestamps(options(projectDir), { ...mock, fileSystem }), /not retried/i);
+    assert.equal(mutated, true);
+    assert.deepEqual(fs.readdirSync(outside), []);
+    const remaining = fs.readdirSync(failurePoint === 'before-temp-open' ? cacheDir + '-moved' : cacheDir);
+    assert.deepEqual(remaining, ['attempt.json']);
+  });
+}
+
+test('full directory chain and ignore file are durable before fetch; completed entries are durable before success', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-voice-durable-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectDir = path.join(root, 'new-parent', 'projects', 'test');
+  const cacheDir = path.join(projectDir, 'voice-cache', buildNarrationCacheKey(options(projectDir)));
+  const events = []; const handles = new Map(); const fileSystem = Object.create(fs);
+  fileSystem.openSync = (filename, ...args) => { const fd = fs.openSync(filename, ...args); handles.set(fd, String(filename)); return fd; };
+  fileSystem.closeSync = fd => { handles.delete(fd); return fs.closeSync(fd); };
+  fileSystem.fsyncSync = fd => { events.push({ type: 'sync', path: handles.get(fd) }); return fs.fsyncSync(fd); };
+  fileSystem.linkSync = (source, destination) => { events.push({ type: 'link', path: destination }); return fs.linkSync(source, destination); };
+  const mock = await mockServer(t, (_, res) => res.end(JSON.stringify(payload())));
+  const result = await synthesizeWithTimestamps(options(projectDir), { fileSystem, fetchImpl(url, init) {
+    events.push({ type: 'fetch' });
+    return mock.fetchImpl(url, init);
+  } });
+  const fetchIndex = events.findIndex(e => e.type === 'fetch');
+  const syncedBefore = new Set(events.slice(0, fetchIndex).filter(e => e.type === 'sync').map(e => e.path));
+  if (process.platform !== 'win32') for (const directory of [root, path.join(root, 'new-parent'), path.join(root, 'new-parent/projects'), projectDir, path.join(projectDir, 'voice-cache'), cacheDir]) {
+    assert.ok(syncedBefore.has(directory), `directory entry was not durable before fetch: ${path.relative(root, directory)}`);
+  }
+  assert.ok(syncedBefore.has(path.join(projectDir, '.gitignore')));
+  assert.ok(syncedBefore.has(path.join(cacheDir, 'attempt.json')));
+  if (process.platform !== 'win32') {
+    const lastLink = events.findLastIndex(e => e.type === 'link');
+    assert.ok(events.slice(lastLink + 1).some(e => e.type === 'sync' && e.path === cacheDir));
+  }
+  assert.equal(result.cached, false);
+  assert.equal(mock.requests.length, 1);
+});
+
+test('changing cached narration during the first probe never publishes mismatched words or draft', async t => {
+  const { root, projectDir } = workspace(t);
+  const scriptPath = path.join(root, 'script.txt'); fs.writeFileSync(scriptPath, script);
+  const mock = await mockServer(t, (_, res) => res.end(JSON.stringify(payload())));
+  const cached = await synthesizeWithTimestamps(options(projectDir), mock);
+  let probes = 0;
+  await assert.rejects(runMotion({ projectDir, project: 'Synthetic', scriptPath, voice: 'elevenlabs', voiceId, acceptProviderCost: true }, {
+    voiceEnv: { ELEVENLABS_API_KEY: apiKey }, voiceDependencies: mock,
+    probeOpenedAudioImpl() {
+      if (probes++ === 0) fs.writeFileSync(cached.audioPath, 'different narration');
+      return { mediaKind: 'audio', durationSec: 2 };
+    },
+  }), /narration|cache|digest|hash/i);
+  assert.equal(mock.requests.length, 1);
+  assert.equal(fs.existsSync(path.join(projectDir, 'transcript/words.json')), false);
+  assert.deepEqual(fs.readdirSync(path.join(projectDir, 'brief')), []);
 });
