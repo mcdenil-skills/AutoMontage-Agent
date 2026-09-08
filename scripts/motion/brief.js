@@ -20,7 +20,7 @@ const MOTION_MEDIA_EXTENSIONS = {
 
 const schemaPath = path.join(__dirname, '../../schema/motion-brief.schema.json');
 const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
-const validator = new Ajv({ allErrors: true, strict: false }).compile(schema);
+const validator = new Ajv({ allErrors: true, strict: false, strictNumbers: true }).compile(schema);
 
 function schemaErrors(brief) {
   if (validator(brief)) return [];
@@ -41,6 +41,31 @@ function isFrameSnapped(seconds, fps) {
   }
 }
 
+function hasEncodedPathSeparatorOrTraversal(value) {
+  return value.split('/').some((rawSegment) => {
+    let segment = rawSegment;
+    for (let depth = 0; depth < 16; depth += 1) {
+      let decoded;
+      try {
+        decoded = decodeURIComponent(segment);
+      } catch (_) {
+        return false;
+      }
+      if (decoded === segment) return false;
+      if (decoded === '.' || decoded === '..' || decoded.includes('/') || decoded.includes('\\')) {
+        return true;
+      }
+      segment = decoded;
+    }
+    return true;
+  });
+}
+
+function isCanonicalMotionReference(value) {
+  return isCanonicalBrollReference(value)
+    && !hasEncodedPathSeparatorOrTraversal(value);
+}
+
 function containsExecutableMarkup(value) {
   if (typeof value === 'string') {
     return /<\/?(?:script|style|iframe|object|embed|svg|math|link|meta)\b/i.test(value)
@@ -58,7 +83,7 @@ function validateMotionBrief(brief, { requireApproved = false } = {}) {
   const fps = brief?.output?.fps;
   const durationInFrames = brief?.output?.durationInFrames;
 
-  if (typeof brief?.source === 'string' && !isCanonicalBrollReference(brief.source)) {
+  if (typeof brief?.source === 'string' && !isCanonicalMotionReference(brief.source)) {
     errors.push('source: ссылка на narration должна быть канонической относительной внутри проекта');
   }
   if (containsExecutableMarkup(brief)) {
@@ -88,7 +113,7 @@ function validateMotionBrief(brief, { requireApproved = false } = {}) {
     }
     if (scene?.scene === 'media' && scene.media) {
       const { kind, src } = scene.media;
-      if (!isCanonicalBrollReference(src)) {
+      if (!isCanonicalMotionReference(src)) {
         errors.push(`scenes[${index}].media.src: ссылка должна быть канонической относительной внутри проекта`);
       } else if (MOTION_MEDIA_EXTENSIONS[kind]
         && !MOTION_MEDIA_EXTENSIONS[kind].has(path.posix.extname(src).toLowerCase())) {

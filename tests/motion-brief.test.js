@@ -90,6 +90,32 @@ test('motion brief rejects overlapping, off-frame and over-duration timing', () 
   }
 });
 
+test('motion brief rejects every non-finite scene time and counter value', () => {
+  const parsedInfinity = JSON.parse('{"value":1e309}').value;
+  const cases = [
+    ['start Infinity', { scene: 'card', start: parsedInfinity, end: 3, title: 'Тест' }],
+    ['start -Infinity', { scene: 'card', start: -Infinity, end: 3, title: 'Тест' }],
+    ['start NaN', { scene: 'card', start: NaN, end: 3, title: 'Тест' }],
+    ['end Infinity', { scene: 'card', start: 0, end: Infinity, title: 'Тест' }],
+    ['end -Infinity', { scene: 'card', start: 0, end: -Infinity, title: 'Тест' }],
+    ['end NaN', { scene: 'card', start: 0, end: NaN, title: 'Тест' }],
+    ['counter Infinity', {
+      scene: 'counter', start: 0, end: 3, label: 'Тест', value: Infinity,
+    }],
+    ['counter -Infinity', {
+      scene: 'counter', start: 0, end: 3, label: 'Тест', value: -Infinity,
+    }],
+    ['counter NaN', {
+      scene: 'counter', start: 0, end: 3, label: 'Тест', value: NaN,
+    }],
+  ];
+  const accepted = cases
+    .filter(([, scene]) => validateMotionBrief(makeBrief({ scenes: [scene] })).ok)
+    .map(([name]) => name);
+
+  assert.deepEqual(accepted, []);
+});
+
 test('motion brief rejects text beyond its scene limit and unknown executable fields', () => {
   const tooLong = makeBrief({
     scenes: [{ scene: 'kinetic-title', start: 0, end: 3, text: 'я'.repeat(121) }],
@@ -112,6 +138,10 @@ test('motion media requires a content-bound canonical project reference', () => 
     '../outside.png',
     '/tmp/outside.png',
     'assets/broll/../outside.png',
+    'assets/%2e%2e%2f%2e%2e%2foutside.png',
+    'assets%2f..%2foutside.png',
+    'assets/%5c..%5coutside.png',
+    'assets/%252e%252e%252foutside.png',
   ]) {
     const brief = makeBrief({
       scenes: [{
@@ -132,6 +162,21 @@ test('motion media requires a content-bound canonical project reference', () => 
     }],
   });
   assert.equal(validateMotionBrief(withoutHash).ok, false);
+
+  const canonicalEncodedName = makeBrief({
+    scenes: [{
+      scene: 'media',
+      start: 0,
+      end: 3,
+      media: {
+        kind: 'image',
+        src: 'assets/broll/diagram%20final.png',
+        sha256: 'c'.repeat(64),
+        fit: 'contain',
+      },
+    }],
+  });
+  assert.deepEqual(validateMotionBrief(canonicalEncodedName), { ok: true, errors: [] });
 });
 
 test('draft and approved builders enforce status and expose camera-free props', () => {
