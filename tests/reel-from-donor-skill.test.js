@@ -10,6 +10,8 @@ test('reel-from-donor requires consent gates and concrete content', () => {
   const skill = read('skills/reel-from-donor/SKILL.md');
   const contract = read('skills/reel-from-donor/references/content-contract.md');
   const qa = read('skills/reel-from-donor/references/qa-checklist.md');
+  const turnkeyQa = read('skills/reel-turnkey/references/qa-checklist.md');
+  const batchGuide = read('docs/BATCH-REELS-WORKFLOW.md');
   const combined = `${skill}\n${contract}\n${qa}`;
 
   for (const required of [
@@ -24,6 +26,11 @@ test('reel-from-donor requires consent gates and concrete content', () => {
     /первоисточник/iu,
   ]) {
     assert.match(combined, required);
+  }
+
+  for (const safeZoneRule of [skill, qa, turnkeyQa, batchGuide]) {
+    assert.match(safeZoneRule, /70 px\s+слева/iu);
+    assert.match(safeZoneRule, /translateX/iu);
   }
 });
 
