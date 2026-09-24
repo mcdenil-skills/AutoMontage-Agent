@@ -48,12 +48,21 @@ function invoke(command, args, options, stdioOptions) {
     spawnSyncImpl = spawnSync,
     cwd,
     env,
+    timeout,
   } = options;
   assertInvocation(command, args, stage);
+  if (timeout !== undefined && (!Number.isSafeInteger(timeout) || timeout <= 0)) {
+    throw new Error(`${stage}: timeout должен быть положительным целым`);
+  }
+  // Зависший ffprobe/ffmpeg (например файл ещё копируется по сети) не должен вешать
+  // однопоточный сервер пульта навечно — timeout настраивается только по явному
+  // запросу вызывающего кода, старые вызовы без него ведут себя как прежде.
+  const timeoutOptions = timeout === undefined ? {} : { timeout, killSignal: 'SIGKILL' };
   const result = spawnSyncImpl(command, args, {
     cwd,
     env,
     shell: false,
+    ...timeoutOptions,
     ...stdioOptions,
   });
   return assertProcessResult(result, { command, stage });

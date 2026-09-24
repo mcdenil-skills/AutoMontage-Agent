@@ -85,3 +85,70 @@ test('captured commands require an explicit positive maxBuffer', () => {
     /maxBuffer/,
   );
 });
+
+test('an explicit timeout is forwarded to spawnSync with SIGKILL, and is absent otherwise', () => {
+  let withTimeout;
+  captureTool(process.execPath, ['--version'], {
+    stage: 'probe',
+    maxBuffer: 1024,
+    timeout: 5000,
+    spawnSyncImpl: (command, args, options) => {
+      withTimeout = options;
+      return { status: 0, signal: null, error: null, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(withTimeout.timeout, 5000);
+  assert.equal(withTimeout.killSignal, 'SIGKILL');
+
+  let withoutTimeout;
+  captureTool(process.execPath, ['--version'], {
+    stage: 'probe',
+    maxBuffer: 1024,
+    spawnSyncImpl: (command, args, options) => {
+      withoutTimeout = options;
+      return { status: 0, signal: null, error: null, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal('timeout' in withoutTimeout, false);
+  assert.equal('killSignal' in withoutTimeout, false);
+});
+
+test('an invalid timeout is rejected before spawning anything', () => {
+  assert.throws(
+    () => captureTool(process.execPath, ['--version'], {
+      stage: 'probe',
+      maxBuffer: 1024,
+      timeout: -1,
+      spawnSyncImpl: () => { throw new Error('must not spawn'); },
+    }),
+    /probe.*timeout должен быть положительным целым/,
+  );
+  assert.throws(
+    () => captureTool(process.execPath, ['--version'], {
+      stage: 'probe',
+      maxBuffer: 1024,
+      timeout: 1.5,
+      spawnSyncImpl: () => { throw new Error('must not spawn'); },
+    }),
+    /probe.*timeout должен быть положительным целым/,
+  );
+});
+
+// Свой timeout у spawnSync убивает дочерний процесс и сообщает об этом через
+// result.error/result.signal — assertProcessResult обязан превратить это в обычную
+// ошибку, а не в тихое зависание.
+test('a timed-out spawnSync result surfaces as a thrown error', () => {
+  assert.throws(
+    () => captureTool(process.execPath, ['--version'], {
+      stage: 'probe',
+      maxBuffer: 1024,
+      timeout: 50,
+      spawnSyncImpl: () => {
+        const error = new Error('spawnSync /bin/x ETIMEDOUT');
+        error.code = 'ETIMEDOUT';
+        return { status: null, signal: 'SIGKILL', error, stdout: null, stderr: null };
+      },
+    }),
+    /probe.*не запустился/,
+  );
+});
