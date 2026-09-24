@@ -169,16 +169,17 @@ function legacyEntries(folder, projectDir, card) {
 function scanFolder(projectsDir, folder) {
   const empty = () => ({ entries: [], unregistered: [], broken: [] });
   if (!isSafeName(folder)) return empty();
+  // APFS и NTFS по умолчанию нечувствительны к регистру и нормализации Unicode:
+  // проверка через lstat нашла бы папку «Clip» и по ключу «clip», и по NFC-записи
+  // NFD-имени. Сервер обращается сюда по ключу из браузера, поэтому разное написание
+  // одной и той же папки не должно давать один результат — иначе архивные id, кэш и
+  // билеты утверждения разъедутся между «одинаковыми» на вид ключами. Сверяем точное
+  // имя из readdir, а не доверяем тому, что нашла файловая система; заодно это и есть
+  // проверка «папка реально существует, это каталог и не симлинк», которую раньше
+  // делал отдельный lstat — listFolders уже её выполняет.
+  if (!listFolders(projectsDir).includes(folder)) return empty();
 
   const projectDir = path.join(projectsDir, folder);
-  let stat;
-  try {
-    stat = fs.lstatSync(projectDir);
-  } catch (_) {
-    return empty();
-  }
-  // lstat не идёт по симлинку: ссылка на чужую папку здесь никогда не isDirectory().
-  if (!stat.isDirectory()) return empty();
 
   if (folder.includes('#')) {
     // '#' в имени папки конфликтует с разделителем варианта в ключе (`folder#index`):
@@ -227,8 +228,10 @@ function scanFolder(projectsDir, folder) {
 }
 
 // Ключ варианта — `folder` либо `folder#index`; для точечного поиска (Task 10) нужно имя
-// самой папки на диске.
+// самой папки на диске. Ключ может прийти прямо из запроса браузера, поэтому не строка —
+// не паспорт ролика, а просто пустой результат.
 function folderFromKey(key) {
+  if (typeof key !== 'string') return '';
   return key.replace(/#\d{1,3}$/, '');
 }
 

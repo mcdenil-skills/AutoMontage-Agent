@@ -166,9 +166,48 @@ test('scanFolder ignores a symlinked folder', { skip: process.platform === 'win3
   assert.deepEqual(scanFolder(projectsDir, 'linked'), { entries: [], unregistered: [], broken: [] });
 });
 
+// APFS/NTFS по умолчанию не различают регистр и нормализацию Unicode при поиске файла,
+// но ключ приходит от браузера — разное написание одной и той же папки не должно находить
+// её и выдавать один и тот же результат под разными ключами.
+test('scanFolder requires the exact on-disk spelling, not a case-insensitive match', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'Clip' });
+  const empty = { entries: [], unregistered: [], broken: [] };
+  assert.deepEqual(scanFolder(projectsDir, 'clip'), empty);
+  assert.deepEqual(scanFolder(projectsDir, 'CLIP'), empty);
+  const exact = scanFolder(projectsDir, 'Clip');
+  assert.equal(exact.entries.length, 1);
+  assert.equal(exact.entries[0].key, 'Clip');
+});
+
+test('scanFolder requires the exact Unicode normalization of an on-disk folder name', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const folder = 'Мой'.normalize('NFD');
+  addLegacyFolder(projectsDir, folder, {
+    files: { 'out/one.mp4': '1' },
+    card: {
+      version: 1,
+      legacy: { status: 'ready', variants: [{ label: 'Ролик', video: 'out/one.mp4', final: true }] },
+    },
+  });
+  assert.deepEqual(
+    scanFolder(projectsDir, folder.normalize('NFC')),
+    { entries: [], unregistered: [], broken: [] },
+  );
+  const exact = scanFolder(projectsDir, folder);
+  assert.equal(exact.entries.length, 1);
+  assert.equal(exact.entries[0].key, `${folder}#0`);
+});
+
 test('folderFromKey strips the trailing variant suffix', () => {
   assert.equal(folderFromKey('a#1'), 'a');
   assert.equal(folderFromKey('a'), 'a');
+});
+
+test('folderFromKey returns an empty string for non-string input', () => {
+  assert.equal(folderFromKey(undefined), '');
+  assert.equal(folderFromKey(null), '');
+  assert.equal(folderFromKey(42), '');
 });
 
 test('a folder name containing # is reported as broken instead of scanned', (t) => {
