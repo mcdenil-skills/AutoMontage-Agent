@@ -337,6 +337,27 @@ function displayDimensions({ width, height, rotation = 0 }) {
     : { width, height };
 }
 
+// FLV и часть MKV/WebM пишут длительность только контейнера. probeVideo для master такие файлы
+// принимал, поэтому недостающая длительность потока берётся из контейнера.
+function fillContainerOnlyStreamDurations(stdout) {
+  let data;
+  try {
+    data = JSON.parse(stdout);
+  } catch (_) {
+    return stdout;
+  }
+  const containerDuration = parseContainerDuration(data?.format);
+  if (containerDuration === null) return stdout;
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  for (const stream of streams) {
+    if (stream && (stream.codec_type === 'video' || stream.codec_type === 'audio')
+      && parseStreamDuration(stream) === null) {
+      stream.duration = String(containerDuration);
+    }
+  }
+  return JSON.stringify(data);
+}
+
 function probeMediaPath(filePath, {
   stage = 'media probe',
   fileSystem = fs,
@@ -355,7 +376,7 @@ function probeMediaPath(filePath, {
     '-of', 'json',
     resolved,
   ], { stage, maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES });
-  return parseMediaProbeJson(stdout);
+  return parseMediaProbeJson(fillContainerOnlyStreamDurations(stdout));
 }
 
 module.exports = {

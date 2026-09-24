@@ -61,6 +61,73 @@ test('probeMediaPath probes a regular file by path and refuses symbolic links', 
   );
 });
 
+test('probeMediaPath fills missing stream durations from the container', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-flv-unit-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'clip.flv');
+  fs.writeFileSync(file, 'MEDIA');
+  const streamsWithoutDuration = [
+    {
+      codec_type: 'video',
+      codec_name: 'h264',
+      width: 160,
+      height: 90,
+      avg_frame_rate: '25/1',
+      r_frame_rate: '25/1',
+    },
+    {
+      codec_type: 'audio',
+      codec_name: 'aac',
+      sample_rate: '48000',
+      channels: 2,
+    },
+  ];
+  const media = probeMediaPath(file, {
+    captureToolImpl: () => JSON.stringify({
+      streams: streamsWithoutDuration,
+      format: { format_name: 'flv', duration: '3.000000' },
+    }),
+  });
+  assert.equal(media.videoDurationSec, 3);
+  assert.equal(media.audioDurationSec, 3);
+
+  assert.throws(
+    () => probeMediaPath(file, {
+      captureToolImpl: () => JSON.stringify({
+        streams: streamsWithoutDuration,
+        format: { format_name: 'flv' },
+      }),
+    }),
+    /video stream duration/,
+  );
+});
+
+test('real probe by path accepts FLV whose streams carry no duration', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('FLV container-only duration probe requires ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-flv-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const clipFlv = path.join(dir, 'clip.flv');
+  const encode = spawnSync('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-shortest',
+    clipFlv,
+  ], { encoding: 'utf8' });
+  assert.equal(encode.status, 0, encode.stderr);
+
+  const media = probeMediaPath(clipFlv, { stage: 'flv probe' });
+  assert.ok(
+    Math.abs(media.videoDurationSec - 3) < 0.1,
+    `expected videoDurationSec near 3, got ${media.videoDurationSec}`,
+  );
+  assert.deepEqual(displayDimensions(media), { width: 160, height: 90 });
+});
+
 test('real rotated clip reports displayed portrait dimensions', { timeout: 60_000 }, (t) => {
   if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe')) {
     t.skip('rotation probe requires ffmpeg and ffprobe');
