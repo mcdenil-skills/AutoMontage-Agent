@@ -25,6 +25,23 @@ function fakeCapture(command, args) {
   return { stdout: '' };
 }
 
+// Двойник startReviewServer с той же формой ответа: server, token, origin, url и методы уборки.
+async function fakeReview(calls, handler = (incoming, outgoing) => outgoing.end('review')) {
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const token = 'r'.repeat(43);
+  return {
+    server,
+    token,
+    origin,
+    url: `${origin}/#token=${token}`,
+    // Запоминаем, слушал ли Review в момент вызова: так видно порядок abort → close → wait.
+    abortActiveImports() { calls.shutdown.push(['abort', server.listening]); },
+    async waitForActiveImports() { calls.shutdown.push(['wait', server.listening]); },
+  };
+}
+
 async function startTest(t, projectsDir, overrides = {}) {
   const calls = { reveal: [], windows: [], reviews: [], shutdown: [], logs: [] };
   const session = await startPultServer({
@@ -36,15 +53,7 @@ async function startTest(t, projectsDir, overrides = {}) {
     openWindowImpl: async (url) => { calls.windows.push(url); },
     startReviewServerImpl: async (options) => {
       calls.reviews.push(options);
-      const server = http.createServer((incoming, outgoing) => outgoing.end('review'));
-      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-      return {
-        server,
-        url: `http://127.0.0.1:${server.address().port}/#token=review`,
-        // Запоминаем, слушал ли Review в момент вызова: так видно порядок abort → close → wait.
-        abortActiveImports() { calls.shutdown.push(['abort', server.listening]); },
-        async waitForActiveImports() { calls.shutdown.push(['wait', server.listening]); },
-      };
+      return fakeReview(calls);
     },
     ...overrides,
   });
@@ -269,6 +278,53 @@ test('deleting an accepted comment or from a broken comments file is refused dis
   assert.ok(fs.existsSync(path.join(projectsDir, 'waiting-clip', 'project.json')));
 });
 
+test('adding a comment to a broken comments file is refused as broken, not as invalid', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  fs.mkdirSync(path.join(projectsDir, 'waiting-clip', 'pult'), { recursive: true });
+  fs.writeFileSync(path.join(projectsDir, 'waiting-clip', 'pult', 'comments.json'), '{broken');
+  const refused = await post(session, '/api/comments', { key: 'waiting-clip', timeSec: 1, text: 'Сдвинуть титр' });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(refused.json, {
+    code: 'COMMENTS_BROKEN',
+    message: 'Файл правок повреждён — попросите агента проверить pult/comments.json',
+  });
+  assert.equal(fs.readFileSync(path.join(projectsDir, 'waiting-clip', 'pult', 'comments.json'), 'utf8'), '{broken');
+});
+
+test('an unexpected comment failure is an internal error without details', { skip: process.platform === 'win32' }, async (t) => {
+  const projectsDir = await standardRoot(t);
+  const outside = path.join(path.dirname(projectsDir), 'outside-pult');
+  fs.mkdirSync(outside);
+  // pult — ссылка наружу: сохранять правку туда нельзя, и это не «битый файл правок».
+  fs.symlinkSync(outside, path.join(projectsDir, 'waiting-clip', 'pult'));
+  const { session, calls } = await startTest(t, projectsDir);
+  const failed = await post(session, '/api/comments', { key: 'waiting-clip', timeSec: 1, text: 'Сдвинуть титр' });
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.json, { code: 'INTERNAL', message: 'Внутренняя ошибка пульта' });
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.ok(calls.logs.length > 0);
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir)));
+});
+
+test('a legacy card pointing at a non-media file never serves it', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addLegacyFolder(projectsDir, 'old', {
+    files: { 'notes.txt': 'private notes', 'clip.mp4': 'mp4' },
+    card: {
+      version: 1,
+      legacy: { status: 'ready', variants: [{ label: 'Текст', video: 'notes.txt' }, { label: 'Видео', video: 'clip.mp4' }] },
+    },
+  });
+  const { session } = await startTest(t, projectsDir);
+  const notes = await request(session, '/media/video?key=old%230', { token: session.token, queryToken: true });
+  assert.equal(notes.status, 404);
+  assert.ok(!notes.body.toString('utf8').includes('private notes'));
+  const clip = await request(session, '/media/video?key=old%231', { token: session.token, queryToken: true });
+  assert.equal(clip.status, 200);
+  assert.equal(clip.body.toString('utf8'), 'mp4');
+});
+
 test('approve requires confirmation and the exact previewed video', async (t) => {
   const projectsDir = await standardRoot(t);
   const { session } = await startTest(t, projectsDir);
@@ -472,14 +528,17 @@ test('closing the pult shuts review down like the review cli: abort, close, wait
   assert.equal(session.server.listening, false);
 });
 
-function reviewGet(review) {
+// По умолчанию — запрос самой страницы Review: с её токеном и её Host.
+function reviewGet(review, { pathname = '/api/state', headers = { authorization: `Bearer ${review.token}` } } = {}) {
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port: review.server.address().port, path: '/' }, (response) => {
+    http.get({ host: '127.0.0.1', port: review.server.address().port, path: pathname, headers }, (response) => {
       response.resume();
       response.on('end', () => resolve(response.statusCode));
     }).on('error', reject);
   });
 }
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 test('work in the review window keeps the pult alive', async (t) => {
   const projectsDir = await standardRoot(t);
@@ -495,13 +554,148 @@ test('work in the review window keeps the pult alive', async (t) => {
   assert.equal(await reviewGet(review), 200);
   // 1800 после последнего запроса к пульту, но только 900 после запроса к Review.
   clock = 1800;
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await delay(50);
   assert.equal(session.server.listening, true);
   assert.equal(review.server.listening, true);
-  clock = 1901;
+  // Медиа Review передаёт токен в адресе — это тоже работа человека в окне.
+  assert.equal(await reviewGet(review, { pathname: `/media/source?token=${review.token}`, headers: {} }), 200);
+  clock = 2700;
+  await delay(50);
+  assert.equal(session.server.listening, true);
+  clock = 2801;
   await idleReached;
   assert.equal(session.server.listening, false);
   assert.equal(review.server.listening, false);
+});
+
+test('foreign or unauthenticated requests to review do not keep the pult alive', async (t) => {
+  const projectsDir = await standardRoot(t);
+  let clock = 0;
+  let idle;
+  const idleReached = new Promise((resolve) => { idle = resolve; });
+  const { session } = await startTest(t, projectsDir, {
+    now: () => clock, idleMs: 1000, idleCheckMs: 5, onIdle: idle,
+  });
+  assert.equal((await post(session, '/api/review', { key: 'waiting-clip' })).status, 200);
+  const [review] = session.reviewSessions.values();
+  clock = 900;
+  const bearer = { authorization: `Bearer ${review.token}` };
+  for (const headers of [
+    {},
+    { authorization: `Bearer ${'x'.repeat(43)}` },
+    { ...bearer, host: 'evil.test' },
+    { ...bearer, host: `localhost:${review.server.address().port}` },
+  ]) {
+    assert.equal(await reviewGet(review, { headers }), 200);
+  }
+  // Токен в адресе засчитывается только для медиа, как и в самом Review.
+  assert.equal(await reviewGet(review, { pathname: `/api/state?token=${review.token}`, headers: {} }), 200);
+  clock = 1001;
+  const outcome = await Promise.race([idleReached.then(() => 'idle'), delay(1000).then(() => 'alive')]);
+  assert.equal(outcome, 'idle');
+  assert.equal(session.server.listening, false);
+});
+
+// Закрывает все двойники Review, созданные тестом: даже если пульт «потерял» сервер,
+// тестовый процесс не должен зависнуть.
+function closeFakes(reviews) {
+  for (const review of reviews) {
+    if (review.server.listening) review.server.close();
+    review.server.closeAllConnections();
+  }
+}
+
+test('parallel review requests for one project start one review', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const reviews = [];
+  t.after(() => closeFakes(reviews));
+  const { session, calls } = await startTest(t, projectsDir, {
+    startReviewServerImpl: async (options) => {
+      calls.reviews.push(options);
+      await delay(30);
+      const review = await fakeReview(calls);
+      reviews.push(review);
+      return review;
+    },
+  });
+  const results = await Promise.all([
+    post(session, '/api/review', { key: 'waiting-clip' }),
+    post(session, '/api/review', { key: 'waiting-clip' }),
+  ]);
+  assert.deepEqual(results.map((result) => result.status), [200, 200]);
+  assert.equal(calls.reviews.length, 1);
+  assert.equal(calls.windows.length, 2);
+  assert.equal(session.reviewSessions.size, 1);
+});
+
+test('a review that finishes starting while the pult closes is shut down, and the pult answers 503', async (t) => {
+  const projectsDir = await standardRoot(t);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let started;
+  const startedPromise = new Promise((resolve) => { started = resolve; });
+  const reviews = [];
+  let created;
+  const createdPromise = new Promise((resolve) => { created = resolve; });
+  t.after(async () => {
+    release();
+    await createdPromise;
+    closeFakes(reviews);
+  });
+  const { session, calls } = await startTest(t, projectsDir, {
+    startReviewServerImpl: async () => {
+      started();
+      await gate;
+      const review = await fakeReview({ shutdown: [] });
+      reviews.push(review);
+      created();
+      return review;
+    },
+  });
+  const pending = post(session, '/api/review', { key: 'waiting-clip' }).catch(() => ({ status: 'reset' }));
+  await startedPromise;
+  const closing = session.close();
+  // Пока пульт закрывается, API и медиа уже не работают.
+  assert.equal((await get(session, '/api/cards')).status, 503);
+  assert.equal((await get(session, '/api/health')).status, 503);
+  const media = await request(session, '/media/video?key=ready-clip', { token: session.token, queryToken: true });
+  assert.equal(media.status, 503);
+  release();
+  await closing;
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].server.listening, false);
+  assert.equal(session.reviewSessions.size, 0);
+  assert.equal(calls.windows.length, 0);
+  assert.ok([503, 'reset'].includes((await pending).status));
+});
+
+test('review, window and reveal failures are reported without details', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const secret = path.join(projectsDir, 'waiting-clip');
+  const failing = (label) => async () => { throw new TypeError(`${label}: ${secret}`); };
+  const { session: reviewSession, calls: reviewCalls } = await startTest(t, projectsDir, {
+    startReviewServerImpl: failing('review'),
+  });
+  const reviewFailed = await post(reviewSession, '/api/review', { key: 'waiting-clip' });
+  assert.equal(reviewFailed.status, 409);
+  assert.deepEqual(reviewFailed.json, { code: 'REVIEW_FAILED', message: 'Проверку монтажа открыть не удалось' });
+  assert.ok(reviewCalls.logs.some((line) => line.includes('TypeError')));
+
+  const { session, calls } = await startTest(t, projectsDir, {
+    openWindowImpl: failing('window'),
+    revealImpl: failing('reveal'),
+  });
+  const windowFailed = await post(session, '/api/review', { key: 'waiting-clip' });
+  assert.equal(windowFailed.status, 409);
+  assert.deepEqual(windowFailed.json, { code: 'WINDOW_FAILED', message: 'Не удалось открыть окно проверки монтажа' });
+  for (const body of [{ key: 'ready-clip' }, { folder: 'research' }]) {
+    const revealFailed = await post(session, '/api/reveal', body);
+    assert.equal(revealFailed.status, 409);
+    assert.deepEqual(revealFailed.json, { code: 'REVEAL_FAILED', message: 'Не удалось открыть папку' });
+  }
+  const lines = [...reviewCalls.logs, ...calls.logs];
+  assert.ok(lines.length >= 4);
+  assert.ok(lines.every((line) => !line.includes(projectsDir)));
 });
 
 test('an open streaming review connection does not block closing the pult', async (t) => {
@@ -552,6 +746,28 @@ test('request bodies must be small JSON', async (t) => {
     method: 'POST', token: session.token, origin: session.origin, rawBody: JSON.stringify({ text: 'x'.repeat(70 * 1024) }),
   });
   assert.equal(huge.status, 413);
+});
+
+test('a throwing onIdle does not become an unhandled rejection', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const rejections = [];
+  const onRejection = (reason) => { rejections.push(reason); };
+  process.on('unhandledRejection', onRejection);
+  t.after(() => process.off('unhandledRejection', onRejection));
+  let called;
+  const idleCalled = new Promise((resolve) => { called = resolve; });
+  const { session } = await startTest(t, projectsDir, {
+    idleMs: 30,
+    idleCheckMs: 10,
+    onIdle: () => {
+      called();
+      throw new Error('onIdle failed');
+    },
+  });
+  await idleCalled;
+  await delay(50);
+  assert.deepEqual(rejections, []);
+  assert.equal(session.server.listening, false);
 });
 
 test('an idle pult shuts itself down', async (t) => {

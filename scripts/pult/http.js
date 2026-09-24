@@ -21,7 +21,7 @@ const CONTENT_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
 ]);
-// Только для serveFile: пульт никогда не отдаёт через него html/js/json, только медиа.
+// Только для serveFile: пульт отдаёт через него лишь эти медиа, всё остальное — 404.
 const MEDIA_CONTENT_TYPES = new Map([
   ['.jpeg', 'image/jpeg'],
   ['.jpg', 'image/jpeg'],
@@ -96,10 +96,6 @@ function contentType(filePath) {
   return CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
 }
 
-function mediaContentType(filePath) {
-  return MEDIA_CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
-}
-
 function readJsonBody(request, limit = BODY_LIMIT) {
   const type = String(request.headers['content-type'] || '');
   if (!JSON_CONTENT_TYPE.test(type)) {
@@ -161,6 +157,13 @@ function serveStatic(root, pathname, request, response) {
 // Отдаёт файл с поддержкой Range, чтобы видео можно было перематывать.
 function serveFile(request, response, filePath) {
   const head = request.method === 'HEAD';
+  // Только известные видео и картинки: legacy-карточка может указать «видео» на
+  // notes.txt или .html рядом с роликом — такие файлы браузер не получит вовсе.
+  const mediaType = MEDIA_CONTENT_TYPES.get(path.extname(filePath).toLowerCase());
+  if (!mediaType) {
+    sendError(response, 404, head);
+    return;
+  }
   let descriptor;
   let stat;
   try {
@@ -189,7 +192,7 @@ function serveFile(request, response, filePath) {
     ...SECURITY_HEADERS,
     'Accept-Ranges': 'bytes',
     'Content-Length': length,
-    'Content-Type': mediaContentType(filePath),
+    'Content-Type': mediaType,
     ...(range ? { 'Content-Range': `bytes ${start}-${end}/${stat.size}` } : {}),
   });
   if (head || stat.size === 0) {

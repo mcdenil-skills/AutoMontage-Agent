@@ -152,17 +152,42 @@ test('serveFile: a regular file serves 200, a symlinked final component is rejec
   assert.equal(linkedStatus, 404);
 });
 
-test('serveFile only ever sends media content types, never text/html', async (t) => {
+function statusAndType(filePath) {
+  return withServeFileServer(filePath, {}, (response) => {
+    const chunks = [];
+    response.on('data', (chunk) => chunks.push(chunk));
+    return new Promise((resolve) => response.on('end', () => resolve({
+      status: response.statusCode,
+      type: response.headers['content-type'],
+      body: Buffer.concat(chunks).toString('utf8'),
+    })));
+  });
+}
+
+test('serveFile refuses anything that is not a known media file, never sending text/html', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const filePath = path.join(dir, 'page.html');
-  fs.writeFileSync(filePath, '<html></html>');
+  for (const [name, content] of [['page.html', '<html></html>'], ['notes.txt', 'private notes'], ['clip', 'no extension']]) {
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, content);
+    const result = await statusAndType(filePath);
+    assert.equal(result.status, 404, name);
+    assert.doesNotMatch(result.type, /text\/html/, name);
+    assert.ok(!result.body.includes(content), name);
+  }
+});
 
-  const contentType = await withServeFileServer(filePath, {}, (response) => {
-    response.resume();
-    return new Promise((resolve) => response.on('end', () => resolve(response.headers['content-type'])));
-  });
-  assert.equal(contentType, 'application/octet-stream');
+test('serveFile serves known video and image files with their media type', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const [name, type] of [['clip.mp4', 'video/mp4'], ['CLIP.MOV', 'video/quicktime'], ['frame.jpg', 'image/jpeg']]) {
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, `bytes of ${name}`);
+    const result = await statusAndType(filePath);
+    assert.equal(result.status, 200, name);
+    assert.equal(result.type, type, name);
+    assert.equal(result.body, `bytes of ${name}`, name);
+  }
 });
 
 test('serveFile answers an unsatisfiable range with 416 and Content-Range: bytes */size', async (t) => {

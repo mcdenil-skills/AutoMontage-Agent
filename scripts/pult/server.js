@@ -34,6 +34,7 @@ const APPROVAL_BLOCKED_MESSAGE = 'Движок не принял утвержд�
 
 const badRequest = () => new PultRequestError(400, 'INVALID_REQUEST', 'Неверный запрос');
 const notFound = () => new PultRequestError(404, 'NOT_FOUND', 'Ролик не найден');
+const shuttingDown = () => new PultRequestError(503, 'SHUTTING_DOWN', 'Пульт закрывается');
 const previewChanged = () => new PultRequestError(
   409,
   'PREVIEW_CHANGED',
@@ -83,6 +84,8 @@ async function startPultServer({
   const mediaOptions = captureImpl ? { captureImpl } : {};
   const ticketSecret = randomBytes(32);
   const reviewSessions = new Map();
+  const reviewStarts = new Map();
+  let closing = false;
   let origin = 'http://127.0.0.1';
   let lastActivity = now();
 
@@ -199,6 +202,65 @@ async function startPultServer({
     }
   }
 
+  // Работа в окне Review — тоже активность пульта: иначе человек, закрывший окно пульта
+  // и правящий монтаж в Review, через 30 минут потерял бы Review вместе с ним. Считаем
+  // только запросы, которые сам Review признал бы своими: его Host и его токен.
+  function watchReviewActivity(review) {
+    if (typeof review.token !== 'string' || !review.token || typeof review.origin !== 'string') return;
+    let reviewHost;
+    try {
+      reviewHost = new URL(review.origin).host;
+    } catch (_) {
+      return;
+    }
+    review.server.on('request', (request) => {
+      if (request.headers.host !== reviewHost) return;
+      let url;
+      try {
+        url = new URL(request.url, review.origin);
+      } catch (_) {
+        return;
+      }
+      if (safeTokenEqual(requestToken(request, url), review.token)) lastActivity = now();
+    });
+  }
+
+  async function startReview(projectDir) {
+    let review;
+    try {
+      review = await startReviewServerImpl({ root: resolvedRoot, projectDir, editable: true, open: false });
+    } catch (error) {
+      logger.error(`Пульт: проверка монтажа не запустилась (${errorName(error)})`);
+      throw new PultRequestError(409, 'REVIEW_FAILED', 'Проверку монтажа открыть не удалось');
+    }
+    // Пока Review запускался, пульт начал закрываться: такой сервер никому не нужен,
+    // и оставить его слушать порт нельзя.
+    if (closing) {
+      await closeReview(review);
+      throw shuttingDown();
+    }
+    watchReviewActivity(review);
+    reviewSessions.set(projectDir, review);
+    return review;
+  }
+
+  // Один Review на проект: повторное нажатие лишь снова открывает его окно, а два
+  // одновременных нажатия ждут один и тот же запуск, а не поднимают два сервера.
+  function reviewFor(projectDir) {
+    const existing = reviewSessions.get(projectDir);
+    if (existing && existing.server.listening) return Promise.resolve(existing);
+    let start = reviewStarts.get(projectDir);
+    if (!start) {
+      start = startReview(projectDir);
+      reviewStarts.set(projectDir, start);
+      const forget = () => {
+        if (reviewStarts.get(projectDir) === start) reviewStarts.delete(projectDir);
+      };
+      start.then(forget, forget);
+    }
+    return start;
+  }
+
   function handleMedia(url, request, response) {
     const head = request.method === 'HEAD';
     const entry = findEntry(url.searchParams.get('key'));
@@ -246,8 +308,15 @@ async function startPultServer({
           captureFrame: (videoPath, timeSec, outPath) => extractFrame(videoPath, timeSec, outPath, mediaOptions),
         });
       } catch (error) {
-        const message = /^правка/.test(error.message) ? error.message : 'Правку не удалось сохранить';
-        throw new PultRequestError(400, 'COMMENT_INVALID', message);
+        const message = error && typeof error.message === 'string' ? error.message : '';
+        // Ошибки проверки ввода — фиксированные русские фразы «правка: …», их можно показать.
+        if (/^правка/.test(message)) throw new PultRequestError(400, 'COMMENT_INVALID', message);
+        // Битый comments.json — не вина ввода: та же подсказка, что при удалении и чтении.
+        if (/comments\.json/.test(message)) {
+          throw new PultRequestError(409, 'COMMENTS_BROKEN', COMMENTS_BROKEN_MESSAGE);
+        }
+        // Остальное — неожиданный сбой: общий обработчик ответит 500 и запишет только имя класса.
+        throw error;
       }
       sendJson(response, 201, { comment: browserComment(entry, comment) });
       return;
@@ -329,7 +398,12 @@ async function startPultServer({
       } else {
         throw badRequest();
       }
-      await revealImpl(target);
+      try {
+        await revealImpl(target);
+      } catch (error) {
+        logger.error(`Пульт: не удалось открыть папку (${errorName(error)})`);
+        throw new PultRequestError(409, 'REVEAL_FAILED', 'Не удалось открыть папку');
+      }
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -338,21 +412,13 @@ async function startPultServer({
       const entry = findEntry(body.key);
       if (!entry) throw notFound();
       if (!entry.reviewable) throw new PultRequestError(409, 'NOT_REVIEWABLE', 'Для этого ролика проверка монтажа недоступна');
-      const projectDir = projectDirOf(entry);
-      // Один Review на проект: повторное нажатие лишь снова открывает его окно.
-      let review = reviewSessions.get(projectDir);
-      if (!review || !review.server.listening) {
-        try {
-          review = await startReviewServerImpl({ root: resolvedRoot, projectDir, editable: true, open: false });
-        } catch (_) {
-          throw new PultRequestError(409, 'REVIEW_FAILED', 'Проверку монтажа открыть не удалось');
-        }
-        // Работа в окне Review — тоже активность пульта: иначе человек, закрывший окно
-        // пульта и правящий монтаж в Review, через 30 минут потерял бы Review вместе с ним.
-        review.server.on('request', () => { lastActivity = now(); });
-        reviewSessions.set(projectDir, review);
+      const review = await reviewFor(projectDirOf(entry));
+      try {
+        await openWindowImpl(review.url);
+      } catch (error) {
+        logger.error(`Пульт: не удалось открыть окно проверки монтажа (${errorName(error)})`);
+        throw new PultRequestError(409, 'WINDOW_FAILED', 'Не удалось открыть окно проверки монтажа');
       }
-      await openWindowImpl(review.url);
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -383,6 +449,13 @@ async function startPultServer({
       return;
     }
     const { pathname } = url;
+    // Закрывающийся пульт больше не принимает работу: страница увидит 503, а не
+    // ответ сервера, который через миг исчезнет.
+    if (closing && (pathname.startsWith('/api/') || pathname.startsWith('/media/'))) {
+      request.resume();
+      sendError(response, 503, head);
+      return;
+    }
     if (pathname === '/api/health') {
       if (request.method !== 'GET') {
         request.resume();
@@ -503,8 +576,12 @@ async function startPultServer({
   // Закрывает и открытые из пульта окна Review: они живут только вместе с ним.
   async function close() {
     if (closed) return closed;
+    closing = true;
     closed = (async () => {
       if (idleTimer) clearInterval(idleTimer);
+      // Review, который ещё запускается, увидит closing и сам закроет свой сервер —
+      // дожидаемся этого, чтобы после close() ни один порт Review не остался открытым.
+      await Promise.allSettled([...reviewStarts.values()]);
       for (const review of reviewSessions.values()) {
         await closeReview(review);
       }
@@ -517,7 +594,8 @@ async function startPultServer({
   // Пульт сам завершается, если страница давно не обращалась к серверу.
   idleTimer = idleMs > 0
     ? setInterval(() => {
-      if (now() - lastActivity >= idleMs) close().then(() => onIdle());
+      // catch: ошибка в onIdle не должна превратиться в необработанный отказ промиса.
+      if (now() - lastActivity >= idleMs) close().then(() => onIdle()).catch(() => {});
     }, idleCheckMs)
     : null;
   if (idleTimer && typeof idleTimer.unref === 'function') idleTimer.unref();
