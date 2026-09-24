@@ -96,6 +96,11 @@ function contentType(filePath) {
   return CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
 }
 
+// Можно ли отдать этот файл браузеру через serveFile: только известные видео и картинки.
+function isServableMedia(filePath) {
+  return MEDIA_CONTENT_TYPES.has(path.extname(filePath).toLowerCase());
+}
+
 function readJsonBody(request, limit = BODY_LIMIT) {
   const type = String(request.headers['content-type'] || '');
   if (!JSON_CONTENT_TYPE.test(type)) {
@@ -211,6 +216,7 @@ module.exports = {
   PultRequestError,
   SECURITY_HEADERS,
   hasUnsafePath,
+  isServableMedia,
   readJsonBody,
   requestToken,
   safeTokenEqual,

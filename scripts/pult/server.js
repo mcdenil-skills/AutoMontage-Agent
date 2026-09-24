@@ -12,6 +12,7 @@ const { hashFile } = require('./files');
 const {
   PultRequestError,
   hasUnsafePath,
+  isServableMedia,
   readJsonBody,
   requestToken,
   safeTokenEqual,
@@ -40,6 +41,15 @@ const previewChanged = () => new PultRequestError(
   'PREVIEW_CHANGED',
   'Ролик изменился — обновите страницу и посмотрите новую версию',
 );
+const previewDamaged = () => new PultRequestError(
+  409,
+  'PREVIEW_DAMAGED',
+  'Файл preview не совпадает с паспортом ролика — попросите агента пересобрать preview',
+);
+const projectBusy = () => new PultRequestError(409, 'PROJECT_BUSY', 'Агент сейчас меняет этот ролик — попробуйте через минуту');
+// Код, которым движок помечает занятый или изменившийся во время записи project.json
+// (scripts/project/workspace.js, manifestConflict). Движок его не экспортирует.
+const ENGINE_MANIFEST_CONFLICT = 'PROJECT_MANIFEST_CONFLICT';
 
 // Для лога — только имя класса ошибки, и то лишь если оно похоже на имя класса:
 // сообщение и произвольные поля могут содержать абсолютные пути.
@@ -154,6 +164,9 @@ async function startPultServer({
   function browserVariant(entry) {
     const query = `key=${encodeURIComponent(entry.key)}`;
     const videoFile = entry.video ? entryFile(entry, entry.video.path) : null;
+    // Видео, которое пульт не может отдать браузеру (нет файла или формат вроде .mkv),
+    // нельзя ни посмотреть, ни утвердить. Обложку ffmpeg всё равно сделает.
+    const playable = Boolean(videoFile) && isServableMedia(videoFile);
     return {
       key: entry.key,
       folder: entry.folder,
@@ -164,11 +177,12 @@ async function startPultServer({
       projectKind: entry.projectKind,
       pendingComments: entry.pendingComments,
       reviewable: entry.reviewable,
-      approvable: entry.approvable,
-      approvalTicket: approvalTicket(entry),
-      video: videoFile ? { kind: entry.video.kind, url: `/media/video?${query}` } : null,
+      approvable: entry.approvable && playable,
+      approvalTicket: playable ? approvalTicket(entry) : null,
+      video: playable ? { kind: entry.video.kind, url: `/media/video?${query}` } : null,
+      videoUnsupported: Boolean(videoFile) && !playable,
       thumbUrl: videoFile ? `/media/thumb?${query}` : null,
-      meta: videoFile ? probeMedia(resolvedProjectsDir, videoFile, mediaOptions) : null,
+      meta: playable ? probeMedia(resolvedProjectsDir, videoFile, mediaOptions) : null,
       history: entry.history.map((item, index) => ({ label: item.label, url: `/media/history?${query}&index=${index}` })),
     };
   }
@@ -247,6 +261,9 @@ async function startPultServer({
   // Один Review на проект: повторное нажатие лишь снова открывает его окно, а два
   // одновременных нажатия ждут один и тот же запуск, а не поднимают два сервера.
   function reviewFor(projectDir) {
+    // Тело POST могло прийти уже после начала close(): проверка в начале маршрута тогда
+    // пройдена, а запуск, начатый сейчас, close() уже не дождался бы.
+    if (closing) return Promise.reject(shuttingDown());
     const existing = reviewSessions.get(projectDir);
     if (existing && existing.server.listening) return Promise.resolve(existing);
     let start = reviewStarts.get(projectDir);
@@ -361,7 +378,9 @@ async function startPultServer({
       // Движок сверяет expectedPreviewSha256 только там, где preview обязателен (motion,
       // discovery b-roll); для обычного lesson он его пропускает. Поэтому пульт сам
       // проверяет, что байты, которые он отдавал странице, всё ещё те, что в паспорте.
-      if (!servedPreviewMatches(entry)) throw previewChanged();
+      // Билет при этом актуален, так что обновление страницы не поможет — нужен новый
+      // preview от агента, отсюда отдельный код PREVIEW_DAMAGED.
+      if (!servedPreviewMatches(entry)) throw previewDamaged();
       try {
         const projectDir = projectDirOf(entry);
         const workspace = createOrOpenProject({ projectDir });
@@ -378,10 +397,11 @@ async function startPultServer({
         // Иначе за время утверждения агент успел что-то поменять.
         const current = findEntry(body.key);
         const currentTicket = current ? approvalTicket(current) : null;
-        if (currentTicket && safeTokenEqual(body.ticket, currentTicket)) {
-          throw new PultRequestError(422, 'APPROVAL_BLOCKED', APPROVAL_BLOCKED_MESSAGE);
-        }
-        throw previewChanged();
+        if (!currentTicket || !safeTokenEqual(body.ticket, currentTicket)) throw previewChanged();
+        // Ролик тот же, но project.json сейчас занят другой записью (агент меняет проект):
+        // это временно, в отличие от отказа по самому черновику.
+        if (error && error.code === ENGINE_MANIFEST_CONFLICT) throw projectBusy();
+        throw new PultRequestError(422, 'APPROVAL_BLOCKED', APPROVAL_BLOCKED_MESSAGE);
       }
       sendJson(response, 201, { ok: true });
       return;

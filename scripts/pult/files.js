@@ -57,8 +57,23 @@ function hashBytes(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+const HASH_CHUNK_BYTES = 1024 * 1024;
+
+// Preview и финалы весят сотни мегабайт: читаем кусками по 1 МиБ, а не целиком в память.
 function hashFile(filePath) {
-  return hashBytes(fs.readFileSync(filePath));
+  const hash = createHash('sha256');
+  const descriptor = fs.openSync(filePath, 'r');
+  try {
+    const buffer = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
+    let bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+    while (bytesRead > 0) {
+      hash.update(buffer.subarray(0, bytesRead));
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest('hex');
 }
 
 module.exports = { ensureDirectory, hashBytes, hashFile, readJsonIfExists, writeJsonAtomic };

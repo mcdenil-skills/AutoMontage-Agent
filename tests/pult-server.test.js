@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const path = require('node:path');
 
 const { planPreview, publishCurrentPreview } = require('../scripts/project/preview-workspace');
@@ -307,6 +308,23 @@ test('an unexpected comment failure is an internal error without details', { ski
   assert.ok(calls.logs.every((line) => !line.includes(projectsDir)));
 });
 
+test('a legacy video in a format the pult cannot play is marked unsupported but keeps its cover', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addLegacyFolder(projectsDir, 'archive-cut', {
+    files: { 'out/a.mkv': 'mkv bytes' },
+    card: { version: 1, legacy: { status: 'ready', variants: [{ label: 'MKV', video: 'out/a.mkv', final: true }] } },
+  });
+  const { session } = await startTest(t, projectsDir);
+  const variant = await variantOf(session, 'archive-cut#0');
+  assert.equal(variant.video, null);
+  assert.equal(variant.meta, null);
+  assert.equal(variant.videoUnsupported, true);
+  assert.equal(variant.thumbUrl, '/media/thumb?key=archive-cut%230');
+  const thumb = await request(session, variant.thumbUrl, { token: session.token, queryToken: true });
+  assert.equal(thumb.status, 200);
+  assert.match(thumb.headers['content-type'], /image\/jpeg/);
+});
+
 test('a legacy card pointing at a non-media file never serves it', async (t) => {
   const { projectsDir } = makePultRoot(t);
   addLegacyFolder(projectsDir, 'old', {
@@ -397,6 +415,22 @@ test('an engine failure after the draft changed reports a changed preview', asyn
   assert.equal(changed.json.code, 'PREVIEW_CHANGED');
 });
 
+test('an engine lock conflict on a current ticket asks to retry later', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir, {
+    approveBriefImpl: () => {
+      const error = new Error('project manifest changed concurrently; stale snapshot');
+      error.code = 'PROJECT_MANIFEST_CONFLICT';
+      throw error;
+    },
+  });
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const busy = await approve(session, 'waiting-clip', ticket);
+  assert.equal(busy.status, 409);
+  assert.deepEqual(busy.json, { code: 'PROJECT_BUSY', message: 'Агент сейчас меняет этот ролик — попробуйте через минуту' });
+  assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
+});
+
 test('approval checks the preview bytes the page was shown', async (t) => {
   const projectsDir = await standardRoot(t);
   const { session } = await startTest(t, projectsDir);
@@ -405,14 +439,24 @@ test('approval checks the preview bytes the page was shown', async (t) => {
   const original = fs.readFileSync(previewFile);
   fs.chmodSync(previewFile, 0o644);
 
+  // Билет актуален, но файл не тот, что в паспорте: обновление страницы не поможет,
+  // нужен новый preview от агента — поэтому другой код, чем у устаревшего билета.
   fs.writeFileSync(previewFile, 'bytes the author never saw');
   const swapped = await approve(session, 'waiting-clip', ticket);
   assert.equal(swapped.status, 409);
-  assert.equal(swapped.json.code, 'PREVIEW_CHANGED');
+  assert.deepEqual(swapped.json, {
+    code: 'PREVIEW_DAMAGED',
+    message: 'Файл preview не совпадает с паспортом ролика — попросите агента пересобрать preview',
+  });
   fs.rmSync(previewFile);
   const missing = await approve(session, 'waiting-clip', ticket);
   assert.equal(missing.status, 409);
-  assert.equal(missing.json.code, 'PREVIEW_CHANGED');
+  assert.equal(missing.json.code, 'PREVIEW_DAMAGED');
+  // Без файла preview страница не может его показать — и не предлагает утвердить.
+  const unplayable = await variantOf(session, 'waiting-clip');
+  assert.equal(unplayable.video, null);
+  assert.equal(unplayable.approvable, false);
+  assert.equal(unplayable.approvalTicket, null);
   assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
 
   fs.writeFileSync(previewFile, original);
@@ -626,6 +670,46 @@ test('parallel review requests for one project start one review', async (t) => {
   assert.equal(calls.reviews.length, 1);
   assert.equal(calls.windows.length, 2);
   assert.equal(session.reviewSessions.size, 1);
+});
+
+test('a review request whose body arrives after closing began starts no review', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const reviews = [];
+  t.after(() => closeFakes(reviews));
+  const { session, calls } = await startTest(t, projectsDir, {
+    startReviewServerImpl: async (options) => {
+      calls.reviews.push(options);
+      const review = await fakeReview(calls);
+      // Уборка открытого Review занимает время — в эту паузу и приходит тело запроса.
+      review.waitForActiveImports = () => delay(150);
+      reviews.push(review);
+      return review;
+    },
+  });
+  assert.equal((await post(session, '/api/review', { key: 'waiting-clip' })).status, 200);
+  const port = session.server.address().port;
+  const socket = net.connect(port, '127.0.0.1');
+  socket.on('error', () => {});
+  t.after(() => socket.destroy());
+  await new Promise((resolve) => { socket.once('connect', resolve); });
+  const body = JSON.stringify({ key: 'ready-clip' });
+  // Заголовки приходят до закрытия, тело — уже после: проверка в начале маршрута пройдена.
+  socket.write([
+    'POST /api/review HTTP/1.1',
+    `Host: 127.0.0.1:${port}`,
+    `Authorization: Bearer ${session.token}`,
+    `Origin: ${session.origin}`,
+    'Content-Type: application/json',
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    '',
+    '',
+  ].join('\r\n'));
+  await delay(20);
+  const closing = session.close();
+  socket.write(body);
+  await closing;
+  assert.equal(calls.reviews.length, 1);
+  assert.ok(reviews.every((review) => !review.server.listening));
 });
 
 test('a review that finishes starting while the pult closes is shut down, and the pult answers 503', async (t) => {
