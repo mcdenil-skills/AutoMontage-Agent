@@ -340,19 +340,22 @@ function displayDimensions({ width, height, rotation = 0 }) {
 function probeMediaPath(filePath, {
   stage = 'media probe',
   fileSystem = fs,
-  probeOpenedMediaImpl = probeOpenedMedia,
+  captureToolImpl = captureTool,
 } = {}) {
   const resolved = hostPath(filePath);
   const stat = fileSystem.lstatSync(resolved);
   if (!stat.isFile() || stat.isSymbolicLink()) {
     throw new Error(`${stage}: media must be a regular file, not a symbolic link`);
   }
-  const descriptor = fileSystem.openSync(resolved, openReadOnlyFlags(fileSystem));
-  try {
-    return probeOpenedMediaImpl({ fileDescriptor: descriptor, stage });
-  } finally {
-    fileSystem.closeSync(descriptor);
-  }
+  // ffprobe читает файл по пути, а не через pipe:0: по трубе нельзя перематывать, поэтому
+  // фрагментированный MP4 отдаёт длительность первого фрагмента, а MPEG-TS не отдаёт её вовсе.
+  const stdout = captureToolImpl('ffprobe', [
+    '-v', 'error',
+    '-show_entries', OPENED_MEDIA_PROBE_ENTRIES,
+    '-of', 'json',
+    resolved,
+  ], { stage, maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES });
+  return parseMediaProbeJson(stdout);
 }
 
 module.exports = {
