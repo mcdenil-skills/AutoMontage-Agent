@@ -158,3 +158,24 @@ test('takes are refused for motion-reel projects and missing files', (t) => {
     /take file not found/,
   );
 });
+
+test('takes stay registered when releasing the project lock fails after commit', (t) => {
+  const fixture = makeProject(t);
+  const { deps } = fakes({
+    fileSystem: {
+      ...fs,
+      unlinkSync(target) {
+        if (path.basename(target) === '.project-mutation.lock') {
+          throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        }
+        return fs.unlinkSync(target);
+      },
+    },
+  });
+  assert.throws(() => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps), /EPERM/);
+  const manifest = readProjectManifest(fixture.dir);
+  assert.equal(manifest.takes.length, 2);
+  assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov')), true);
+  assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'takes', 'take-02.json')), true);
+  assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'takes', 'take-01.json')), true);
+});

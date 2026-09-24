@@ -168,6 +168,8 @@ function addTakes({
 
   const workspace = { dir, manifest };
   const created = [];
+  // Коммит манифеста уже прошёл: ошибка освобождения замка не должна стирать зарегистрированные файлы.
+  let manifestCommitted = false;
   try {
     return withProjectMutation(workspace, (transaction) => {
       const current = transaction.manifest.takes || [];
@@ -210,10 +212,13 @@ function addTakes({
       nextManifest.takes = [...current, ...entries];
       nextManifest.updatedAt = now().toISOString();
       workspace.manifest = transaction.commitManifest(nextManifest, { purpose: 'takes-manifest' });
+      manifestCommitted = true;
       return { takes: entries };
     }, { fileSystem, temporaryId });
   } catch (error) {
-    for (const item of [...created].reverse()) removeOwned(fileSystem, item.target, item.identity);
+    if (!manifestCommitted) {
+      for (const item of [...created].reverse()) removeOwned(fileSystem, item.target, item.identity);
+    }
     throw error;
   }
 }
