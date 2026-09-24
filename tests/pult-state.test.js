@@ -27,7 +27,43 @@ test('archiving never touches the video folder', (t) => {
 
 test('invalid card ids are rejected', (t) => {
   const { projectsDir } = makePultRoot(t);
-  for (const id of ['', '../x', 'folder:', `folder:${'x'.repeat(200)}`, 'folder:a/b', 'other:x']) {
+  for (const id of [
+    '',
+    '../x',
+    'folder:',
+    'folder:a/b',
+    'other:x',
+    'folder:.pult',
+    'folder:..',
+    `folder:${'x'.repeat(300)}`,
+  ]) {
     assert.throws(() => setArchived(projectsDir, id, true), /карточк/, id);
   }
+});
+
+test('real folder names round-trip through the archive, including NFD Cyrillic', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const name = 'ёлка-2026 (финал) + бонус'.normalize('NFD');
+  const id = `folder:${name}`;
+  setArchived(projectsDir, id, true);
+  assert.deepEqual(readPultState(projectsDir).archived, [id]);
+});
+
+test('a corrupted state.json is treated as an empty archive and gets repaired on the next write', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  fs.mkdirSync(path.join(projectsDir, '.pult'), { recursive: true });
+  const statePath = path.join(projectsDir, '.pult', 'state.json');
+  for (const broken of ['{ broken', '{"version":2}']) {
+    fs.writeFileSync(statePath, broken);
+    assert.deepEqual(readPultState(projectsDir), { version: 1, archived: [] }, broken);
+    setArchived(projectsDir, 'folder:old-test', true);
+    assert.deepEqual(readPultState(projectsDir), { version: 1, archived: ['folder:old-test'] }, broken);
+    setArchived(projectsDir, 'folder:old-test', false);
+  }
+});
+
+test('a no-op unarchive on a fresh root creates no .pult folder', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  setArchived(projectsDir, 'folder:never-archived', false);
+  assert.deepEqual(fs.readdirSync(projectsDir), []);
 });
