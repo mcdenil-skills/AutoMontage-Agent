@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { addTakes } = require('../scripts/project/takes');
+const { addTakes, transcribeTakeFile } = require('../scripts/project/takes');
 const {
   createOrOpenProject,
   readProjectManifest,
@@ -133,7 +133,14 @@ test('failed transcription removes copied files and leaves the manifest unchange
       return [{ start: 0, end: 1, text: 'слово', words: [{ w: 'слово', s: 0.2, e: 0.6 }] }];
     },
   });
-  assert.throws(() => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps), /whisper failed/);
+  let thrown = null;
+  try {
+    addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown, 'addTakes should throw');
+  assert.match(thrown.message, /^take-02: whisper failed/);
   assert.equal(readProjectManifest(fixture.dir).takes, undefined);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov')), false);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'takes', 'take-01.json')), false);
@@ -178,4 +185,112 @@ test('takes stay registered when releasing the project lock fails after commit',
   assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov')), true);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'takes', 'take-02.json')), true);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'takes', 'take-01.json')), true);
+});
+
+test('addTakes clamps zero-length whisper word timings before storing the transcript', (t) => {
+  const fixture = makeProject(t);
+  const { deps } = fakes({
+    transcribeImpl: () => [{
+      start: 46.6,
+      end: 47,
+      text: 'а б',
+      words: [{ w: 'а', s: 46.6, e: 46.6 }, { w: 'б', s: 46.6, e: 47 }],
+    }],
+  });
+  addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps);
+  const stored = JSON.parse(fs.readFileSync(
+    path.join(fixture.dir, 'transcript', 'takes', 'take-02.json'), 'utf8',
+  ));
+  assert.equal(stored[0].words[0].e, 46.61);
+  assert.equal(stored[0].words[1].e, 47);
+});
+
+test('addTakes still rejects inverted word timings via collectWords', (t) => {
+  const fixture = makeProject(t);
+  const { deps } = fakes({
+    transcribeImpl: () => [{ start: 0, end: 1, text: 'x', words: [{ w: 'x', s: 2, e: 1 }] }],
+  });
+  assert.throws(() => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps), /таймкод/);
+});
+
+test('transcribeTakeFile clamps zero-length whisper words and removes its temporary directory', () => {
+  let capturedDir = null;
+  const segments = transcribeTakeFile({
+    videoPath: '/tmp/source.mp4',
+    model: 'large-v3-turbo',
+    prompt: 'привет',
+  }, {
+    pythonCommand: 'python3',
+    runToolImpl(command, args) {
+      if (String(args[0]).endsWith('transcribe.py')) {
+        capturedDir = path.dirname(args[1]);
+        assert.equal(args[3], 'large-v3-turbo');
+        assert.deepEqual(args.slice(4), ['--prompt', 'привет']);
+        fs.writeFileSync(args[2], JSON.stringify([
+          { start: 0, end: 1, text: 'а', words: [{ w: 'а', s: 46.6, e: 46.6 }] },
+        ]));
+      }
+    },
+  });
+  assert.equal(segments[0].words[0].e, 46.61);
+  assert.notEqual(capturedDir, null);
+  assert.equal(fs.existsSync(capturedDir), false);
+});
+
+test('a leftover take file from an interrupted run is rejected before transcribing', (t) => {
+  const fixture = makeProject(t);
+  fs.mkdirSync(path.join(fixture.dir, 'input', 'takes'), { recursive: true });
+  fs.writeFileSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov'), 'LEFTOVER');
+  const { deps, transcribed } = fakes();
+  assert.throws(
+    () => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps),
+    /leftover files.*input\/takes\/take-02\.mov/,
+  );
+  assert.deepEqual(transcribed, []);
+});
+
+test('a take file listed twice in one call is rejected before anything happens', (t) => {
+  const fixture = makeProject(t);
+  const { deps, transcribed } = fakes();
+  assert.throws(
+    () => addTakes({ projectDir: fixture.dir, files: [fixture.second, fixture.second] }, deps),
+    /listed more than once/,
+  );
+  assert.deepEqual(transcribed, []);
+  assert.equal(readProjectManifest(fixture.dir).takes, undefined);
+});
+
+test('the original source file cannot be added again as a take', (t) => {
+  const fixture = makeProject(t);
+  const { deps, transcribed } = fakes();
+  assert.throws(
+    () => addTakes({ projectDir: fixture.dir, files: [fixture.original] }, deps),
+    /already registered as take-01/,
+  );
+  assert.deepEqual(transcribed, []);
+  assert.equal(readProjectManifest(fixture.dir).takes, undefined);
+});
+
+test('an already registered take cannot be added again', (t) => {
+  const fixture = makeProject(t);
+  addTakes({ projectDir: fixture.dir, files: [fixture.second] }, fakes().deps);
+  const { deps, transcribed } = fakes();
+  assert.throws(
+    () => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps),
+    /already registered as take-02/,
+  );
+  assert.deepEqual(transcribed, []);
+  assert.equal(readProjectManifest(fixture.dir).takes.length, 2);
+});
+
+test('a leftover transcript file from an interrupted run is rejected before transcribing', (t) => {
+  const fixture = makeProject(t);
+  fs.mkdirSync(path.join(fixture.dir, 'transcript', 'takes'), { recursive: true });
+  fs.writeFileSync(path.join(fixture.dir, 'transcript', 'takes', 'take-01.json'), 'LEFTOVER');
+  const { deps, transcribed } = fakes();
+  assert.throws(
+    () => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps),
+    /leftover files.*transcript\/takes\/take-01\.json/,
+  );
+  assert.deepEqual(transcribed, []);
 });

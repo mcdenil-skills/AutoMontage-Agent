@@ -63,6 +63,25 @@ function assertCompatibleTakes(takes) {
   }
 }
 
+// transcribe.py округляет время слов до 0.01 с, и faster-whisper отдаёт слова нулевой длины.
+// Слово не теряем: даём ему 0.01 с.
+function normalizeWordTimings(segments) {
+  return segments.map((segment) => {
+    if (!Array.isArray(segment.words)) return { ...segment };
+    return {
+      ...segment,
+      words: segment.words.map((word) => {
+        const start = Number(word.s);
+        const end = Number(word.e);
+        if (Number.isFinite(start) && start >= 0 && end === start) {
+          return { ...word, e: Math.round((start + 0.01) * 100) / 100 };
+        }
+        return { ...word };
+      }),
+    };
+  });
+}
+
 function probeTake(id, filePath, { probeVideoImpl, probeMediaPathImpl }) {
   return describeTake(id, {
     filePath,
@@ -85,7 +104,7 @@ function transcribeTakeFile({ videoPath, model = 'large-v3-turbo', prompt = null
     const args = [path.join(ROOT, 'scripts', 'transcribe.py'), audioPath, wordsPath, model];
     if (prompt) args.push('--prompt', String(prompt));
     runToolImpl(pythonCommand || python(), args, { cwd: ROOT, stage: 'take transcription' });
-    const segments = JSON.parse(fileSystem.readFileSync(wordsPath, 'utf8'));
+    const segments = normalizeWordTimings(JSON.parse(fileSystem.readFileSync(wordsPath, 'utf8')));
     collectWords(segments);
     return segments;
   } finally {
@@ -103,6 +122,25 @@ function ensureProjectDirectory(projectDir, relative, fileSystem) {
   });
 }
 
+// Целевые имена создаются во время долгой транскрипции, а регистрируются только в конце:
+// Ctrl+C рвёт процесс без catch/finally. Ищем эти хвосты до повторной транскрипции.
+function findLeftoverTakeFiles(dir, planned, fileSystem) {
+  const leftovers = [];
+  for (const take of planned) {
+    const transcriptRelative = `transcript/takes/${take.id}.json`;
+    if (fileSystem.existsSync(path.join(dir, transcriptRelative))) leftovers.push(transcriptRelative);
+    if (take.copyFrom) {
+      const takesDirectory = path.join(dir, 'input', 'takes');
+      if (fileSystem.existsSync(takesDirectory)) {
+        for (const name of fileSystem.readdirSync(takesDirectory)) {
+          if (name.startsWith(`${take.id}.`)) leftovers.push(`input/takes/${name}`);
+        }
+      }
+    }
+  }
+  return leftovers;
+}
+
 function planTakes(manifest, files, fileSystem = fs) {
   const existing = manifest.takes || [];
   const planned = [];
@@ -114,11 +152,21 @@ function planTakes(manifest, files, fileSystem = fs) {
       copyFrom: null,
     });
   }
+  // Дубли в одном вызове и повторная регистрация уже известного файла отклоняются
+  // до какой-либо работы: без этого второй запуск тихо плодит копии одного дубля.
+  const registered = new Map([[path.resolve(manifest.source.originalPath), takeId(1)]]);
+  for (const take of existing) registered.set(path.resolve(take.originalPath), take.id);
+  const seen = new Set();
   let number = existing.length + planned.length;
   for (const file of files) {
+    const originalPath = path.resolve(file);
+    if (seen.has(originalPath)) throw new Error(`take file is listed more than once: ${originalPath}`);
+    seen.add(originalPath);
+    if (registered.has(originalPath)) {
+      throw new Error(`take file is already registered as ${registered.get(originalPath)}: ${originalPath}`);
+    }
     number += 1;
     if (number > MAX_TAKES) throw new Error(`a project supports at most ${MAX_TAKES} takes`);
-    const originalPath = path.resolve(file);
     if (!fileSystem.existsSync(originalPath)) throw new Error(`take file not found: ${originalPath}`);
     const extension = path.extname(originalPath).toLowerCase() || '.mp4';
     if (!TAKE_EXTENSION.test(extension)) throw new Error(`unsupported take extension: ${extension}`);
@@ -166,6 +214,11 @@ function addTakes({
   ensureProjectDirectory(dir, 'input/takes', fileSystem);
   ensureProjectDirectory(dir, 'transcript/takes', fileSystem);
 
+  const leftovers = findLeftoverTakeFiles(dir, planned, fileSystem);
+  if (leftovers.length) {
+    throw new Error(`leftover files from an interrupted takes add; remove them and retry: ${leftovers.join(', ')}`);
+  }
+
   const workspace = { dir, manifest };
   const created = [];
   // Коммит манифеста уже прошёл: ошибка освобождения замка не должна стирать зарегистрированные файлы.
@@ -193,8 +246,15 @@ function addTakes({
         const transcriptPath = resolveProjectPath(dir, transcriptRelative, {
           label: `${take.id} transcript path`, fileSystem, mustExist: false, type: 'file',
         });
-        const segments = transcribeImpl({ videoPath, model, prompt });
-        collectWords(segments);
+        let segments;
+        try {
+          segments = normalizeWordTimings(transcribeImpl({ videoPath, model, prompt }));
+          collectWords(segments);
+        } catch (error) {
+          // Без имени дубля непонятно, какой из нескольких кусков сломал расшифровку.
+          error.message = `${take.id}: ${error.message}`;
+          throw error;
+        }
         writeFilesNoReplace([{
           destination: transcriptPath,
           data: `${JSON.stringify(segments, null, 2)}\n`,
@@ -228,6 +288,7 @@ module.exports = {
   addTakes,
   assertCompatibleTakes,
   describeTake,
+  normalizeWordTimings,
   planTakes,
   probeTake,
   takeId,
