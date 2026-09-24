@@ -47,8 +47,9 @@ test('real segments concat keeps whole frames from a jittered variable-frame-rat
   const input = path.join(dir, 'input.mp4');
   const output = path.join(dir, 'output.mp4');
 
-  // Ноутбук-нативные 13с 30fps с детерминированным дрожанием таймстемпов ±0.5мс на таймбейзе 1/90000,
-  // как у типичной съёмки с телефона: имитирует не идеально ровный CFR исходник.
+  // Дубль 13 с с номинальными 30 fps и нарочно неровными таймстемпами: setpts считает в таймбейзе
+  // 1/30 и отбрасывает дробную часть, поэтому детерминированный random(1) даёт повторы и пропуски
+  // кадров, как у съёмки с переменной частотой. Старый порядок trim,setpts,fps терял здесь 3 кадра.
   runFixture('ffmpeg', [
     '-y', '-v', 'error',
     '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=30:d=13',
