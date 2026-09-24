@@ -71,3 +71,74 @@ test('health probe recognizes only the pult', async (t) => {
   t.after(() => other.close());
   assert.equal(await probeHealth(other.address().port), false);
 });
+
+// Сборка обложек через ffprobe/ffmpeg держит пульт занятым до ~15 с: один неответивший
+// /api/health не должен считаться смертью процесса и удалять его регистрацию.
+test('a busy pult survives an unresponsive health check without losing its registration', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  writeInstance(projectsDir, { pid: 1, port: 4100, token: TOKEN });
+  const probeCalls = [];
+  const result = await findRunningInstance(projectsDir, {
+    isAlive: () => true,
+    probe: async () => {
+      probeCalls.push(1);
+      return false;
+    },
+    busyWaitMs: 1000,
+    retryMs: 500,
+    sleep: async () => {}, // подменяем ожидание — тест не должен реально ждать секунду
+  });
+  assert.equal(result, null);
+  assert.equal(probeCalls.length, 3);
+  assert.ok(fs.existsSync(instancePath(projectsDir)));
+  assert.equal(readInstance(projectsDir).pid, 1);
+});
+
+test('a pult that answers again during the busy wait is found', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  writeInstance(projectsDir, { pid: 1, port: 4100, token: TOKEN });
+  let calls = 0;
+  const result = await findRunningInstance(projectsDir, {
+    isAlive: () => true,
+    probe: async () => {
+      calls += 1;
+      return calls >= 3;
+    },
+    busyWaitMs: 1000,
+    retryMs: 500,
+    sleep: async () => {},
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.url, `http://127.0.0.1:4100/#token=${TOKEN}`);
+});
+
+test('a dead pid never deletes a registration rewritten by another process meanwhile', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  writeInstance(projectsDir, { pid: 5, port: 4100, token: TOKEN });
+  const isAlive = (pid) => {
+    assert.equal(pid, 5);
+    // Пока мы решали, жив ли старый процесс, новый экземпляр уже переписал файл —
+    // findRunningInstance обязан снимать регистрацию через владельческую проверку,
+    // а не сырым rmSync по пути.
+    writeInstance(projectsDir, { pid: 9, port: 4200, token: TOKEN });
+    return false;
+  };
+  const result = await findRunningInstance(projectsDir, { isAlive, probe: async () => true });
+  assert.equal(result, null);
+  const current = readInstance(projectsDir);
+  assert.equal(current.pid, 9);
+  assert.equal(current.port, 4200);
+});
+
+test('probeHealth stops reading an oversized body from a foreign service on the port', async (t) => {
+  const bigBody = JSON.stringify({ app: 'automontage-pult', padding: 'x'.repeat(200 * 1024) });
+  const server = http.createServer((incoming, outgoing) => {
+    outgoing.setHeader('content-type', 'application/json');
+    outgoing.end(bigBody);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const started = Date.now();
+  assert.equal(await probeHealth(server.address().port, { timeoutMs: 5000 }), false);
+  assert.ok(Date.now() - started < 2000, 'не должен ждать таймаут, чтобы понять, что тело слишком большое');
+});

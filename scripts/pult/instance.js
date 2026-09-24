@@ -54,33 +54,74 @@ function isProcessAlive(pid) {
   }
 }
 
-function probeHealth(port, { timeoutMs = 1500 } = {}) {
+function probeHealth(port, { timeoutMs = 1500, maxBodyBytes = 4096 } = {}) {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const request = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (response) => {
       const chunks = [];
-      response.on('data', (chunk) => chunks.push(chunk));
+      let received = 0;
+      response.on('data', (chunk) => {
+        received += chunk.length;
+        // Пульт никогда не отвечает больше пары байт JSON: чужой сервис на переиспользованном
+        // порту не должен заставить нас буферизовать неограниченный или бесконечный ответ.
+        if (received > maxBodyBytes) {
+          request.destroy();
+          finish(false);
+          return;
+        }
+        chunks.push(chunk);
+      });
       response.on('end', () => {
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          resolve(response.statusCode === 200 && body.app === 'automontage-pult');
+          finish(response.statusCode === 200 && body.app === 'automontage-pult');
         } catch (_) {
-          resolve(false);
+          finish(false);
         }
       });
     });
     request.on('timeout', () => {
       request.destroy();
-      resolve(false);
+      finish(false);
     });
-    request.on('error', () => resolve(false));
+    request.on('error', () => finish(false));
   });
 }
 
-async function findRunningInstance(projectsDir, { isAlive = isProcessAlive, probe = probeHealth } = {}) {
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Сборка обложек через ffprobe/ffmpeg держит пульт синхронно занятым до ~15 с: один
+// неответивший /api/health не значит, что процесс мёртв. Повторяем проверку каждые
+// retryMs, пока не наберётся busyWaitMs, и только тогда сдаёмся — не удаляя файл: это
+// либо действительно зависший процесс (вызывающий код сам решит, запускать ли новый —
+// он перезапишет регистрацию), либо гонка, которую надёжнее оставить на следующий заход.
+async function findRunningInstance(projectsDir, {
+  isAlive = isProcessAlive,
+  probe = probeHealth,
+  busyWaitMs = 20000,
+  retryMs = 500,
+  sleep = defaultSleep,
+} = {}) {
   const instance = readInstance(projectsDir);
   if (!instance) return null;
-  if (isAlive(instance.pid) && await probe(instance.port)) return { ...instance, url: instanceUrl(instance) };
-  fs.rmSync(instancePath(projectsDir), { force: true });
+  if (!isAlive(instance.pid)) {
+    // Владельца больше нет, но файл снимаем только через проверку pid: за время проверки
+    // другой процесс мог успеть перезаписать регистрацию своей — её нельзя терять.
+    removeInstance(projectsDir, instance.pid);
+    return null;
+  }
+  const attempts = retryMs > 0 ? Math.max(1, Math.floor(busyWaitMs / retryMs) + 1) : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await probe(instance.port)) return { ...instance, url: instanceUrl(instance) };
+    if (attempt < attempts - 1) await sleep(retryMs);
+  }
   return null;
 }
 
