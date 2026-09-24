@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 
 const {
+  checkHealth,
   findRunningInstance,
   instancePath,
   instanceUrl,
@@ -43,9 +44,9 @@ test('malformed instance files are ignored', (t) => {
 test('a live healthy instance is found, a dead one is cleaned up', async (t) => {
   const { projectsDir } = makePultRoot(t);
   writeInstance(projectsDir, { pid: 1, port: 4100, token: TOKEN });
-  const found = await findRunningInstance(projectsDir, { isAlive: () => true, probe: async () => true });
+  const found = await findRunningInstance(projectsDir, { isAlive: () => true, check: async () => 'ok' });
   assert.equal(found.url, `http://127.0.0.1:4100/#token=${TOKEN}`);
-  assert.equal(await findRunningInstance(projectsDir, { isAlive: () => false, probe: async () => true }), null);
+  assert.equal(await findRunningInstance(projectsDir, { isAlive: () => false }), null);
   assert.equal(fs.existsSync(instancePath(projectsDir)), false);
 });
 
@@ -77,19 +78,19 @@ test('health probe recognizes only the pult', async (t) => {
 test('a busy pult survives an unresponsive health check without losing its registration', async (t) => {
   const { projectsDir } = makePultRoot(t);
   writeInstance(projectsDir, { pid: 1, port: 4100, token: TOKEN });
-  const probeCalls = [];
+  const checkCalls = [];
   const result = await findRunningInstance(projectsDir, {
     isAlive: () => true,
-    probe: async () => {
-      probeCalls.push(1);
-      return false;
+    check: async () => {
+      checkCalls.push('busy');
+      return 'busy';
     },
     busyWaitMs: 1000,
     retryMs: 500,
     sleep: async () => {}, // подменяем ожидание — тест не должен реально ждать секунду
   });
   assert.equal(result, null);
-  assert.equal(probeCalls.length, 3);
+  assert.equal(checkCalls.length, 3);
   assert.ok(fs.existsSync(instancePath(projectsDir)));
   assert.equal(readInstance(projectsDir).pid, 1);
 });
@@ -100,9 +101,9 @@ test('a pult that answers again during the busy wait is found', async (t) => {
   let calls = 0;
   const result = await findRunningInstance(projectsDir, {
     isAlive: () => true,
-    probe: async () => {
+    check: async () => {
       calls += 1;
-      return calls >= 3;
+      return calls >= 3 ? 'ok' : 'busy';
     },
     busyWaitMs: 1000,
     retryMs: 500,
@@ -123,7 +124,7 @@ test('a dead pid never deletes a registration rewritten by another process meanw
     writeInstance(projectsDir, { pid: 9, port: 4200, token: TOKEN });
     return false;
   };
-  const result = await findRunningInstance(projectsDir, { isAlive, probe: async () => true });
+  const result = await findRunningInstance(projectsDir, { isAlive });
   assert.equal(result, null);
   const current = readInstance(projectsDir);
   assert.equal(current.pid, 9);
@@ -141,4 +142,60 @@ test('probeHealth stops reading an oversized body from a foreign service on the 
   const started = Date.now();
   assert.equal(await probeHealth(server.address().port, { timeoutMs: 5000 }), false);
   assert.ok(Date.now() - started < 2000, 'не должен ждать таймаут, чтобы понять, что тело слишком большое');
+});
+
+test('checkHealth tells the pult (ok) from a foreign JSON server on the same shape (absent)', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const session = await startPultServer({ projectsDir, idleMs: 0 });
+  t.after(() => session.close());
+  assert.equal(await checkHealth(session.server.address().port), 'ok');
+
+  const foreign = http.createServer((incoming, outgoing) => {
+    outgoing.setHeader('content-type', 'application/json');
+    outgoing.end('{"app":"other"}');
+  });
+  await new Promise((resolve) => foreign.listen(0, '127.0.0.1', resolve));
+  t.after(() => foreign.close());
+  assert.equal(await checkHealth(foreign.address().port), 'absent');
+});
+
+// После перезагрузки pid из instance.json может достаться случайному чужому процессу: порт
+// пульта при этом никто не слушает. Это не «пульт занят» — ждать busyWaitMs на каждом запуске
+// значка бессмысленно, регистрацию нужно снять сразу же, как только пришла ECONNREFUSED.
+test('an alive pid whose port refuses connections is absent, not busy — removed fast', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  // Открываем порт и сразу закрываем: получаем свободный номер, на котором точно никто не слушает.
+  const scratch = http.createServer();
+  await new Promise((resolve) => scratch.listen(0, '127.0.0.1', resolve));
+  const port = scratch.address().port;
+  await new Promise((resolve) => scratch.close(resolve));
+  writeInstance(projectsDir, { pid: process.pid, port, token: TOKEN });
+  const started = Date.now();
+  const result = await findRunningInstance(projectsDir);
+  assert.equal(result, null);
+  assert.ok(Date.now() - started < 1000, 'ECONNREFUSED не должен дожидаться busyWaitMs');
+  assert.equal(fs.existsSync(instancePath(projectsDir)), false);
+});
+
+// Пульт, застрявший в синхронном ffprobe/ffmpeg, всё ещё слушает сокет: ядро принимает
+// соединение, ответа просто нет вовремя. Настоящий сервер и настоящие (маленькие) таймауты —
+// без подмены check/sleep, чтобы проверить именно ветку 'timeout' → 'busy'.
+test('a really busy pult (socket accepted, never answers) is retried and then left alone', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const stuck = http.createServer(() => {
+    // Соединение принято, но ответ никогда не отправляется.
+  });
+  await new Promise((resolve) => stuck.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    stuck.closeAllConnections?.();
+    stuck.close();
+  });
+  writeInstance(projectsDir, { pid: process.pid, port: stuck.address().port, token: TOKEN });
+  const result = await findRunningInstance(projectsDir, {
+    check: (port) => checkHealth(port, { timeoutMs: 100 }),
+    busyWaitMs: 300,
+    retryMs: 100,
+  });
+  assert.equal(result, null);
+  assert.equal(fs.existsSync(instancePath(projectsDir)), true);
 });
