@@ -53,8 +53,12 @@ function writeJsonAtomic(filePath, value, { mode = 0o644 } = {}) {
   if (process.platform !== 'win32') fs.chmodSync(filePath, mode);
 }
 
-function hashFile(filePath) {
-  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+function hashBytes(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
-module.exports = { ensureDirectory, hashFile, readJsonIfExists, writeJsonAtomic };
+function hashFile(filePath) {
+  return hashBytes(fs.readFileSync(filePath));
+}
+
+module.exports = { ensureDirectory, hashBytes, hashFile, readJsonIfExists, writeJsonAtomic };

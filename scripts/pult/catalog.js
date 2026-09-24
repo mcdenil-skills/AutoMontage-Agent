@@ -4,7 +4,7 @@ const path = require('node:path');
 const { readProjectManifest, resolveProjectPath } = require('../project/workspace');
 const { readPultCard } = require('./card-file');
 const { countNewComments } = require('./comments');
-const { hashFile } = require('./files');
+const { hashBytes } = require('./files');
 const { SAFE_NAME, isSafeName } = require('./names');
 const { deriveVariantStatus, pluralEdits } = require('./status');
 
@@ -21,6 +21,7 @@ const FOLDER_HASH_ERROR = 'Символ # в имени папки не подд
 const MANIFEST_UNREADABLE_ERROR = 'Паспорт ролика не читается';
 const FOLDER_UNREADABLE_ERROR = 'Папка ролика не читается';
 const MISSING_VIDEO_STEP = 'Видео не найдено — проверьте pult-card.json';
+const BROLL_BLOCKER = 'Выберите B-roll в проверке монтажа';
 // Реальные рендеры кладут промежуточные файлы вроде layout-revision.raw.mp4, не только
 // точное raw.mp4 — суффикс должен отсекать оба варианта, без учёта регистра.
 const RAW_RENDER_SUFFIX = /(^|\.)raw\.mp4$/i;
@@ -87,18 +88,40 @@ function renderHistory(projectDir, manifest) {
     });
 }
 
+// Черновик lesson с b-roll, для которого человек ещё не выбрал материал, — обычное
+// состояние (выбор делается в Review), но approveBrief его отклонит. Условие — ровно то,
+// что проверяет движок (scripts/project/workspace.js, approveBrief). Нечитаемый JSON —
+// не наша забота здесь: движок откажет сам, а сервер покажет это как APPROVAL_BLOCKED.
+function lessonApprovalBlocker(briefBytes) {
+  let brief;
+  try {
+    brief = JSON.parse(briefBytes.toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+  const scenes = brief && Array.isArray(brief.scenes) ? brief.scenes : [];
+  const unresolvedBroll = scenes.some((scene) => scene?.scene === 'broll'
+    && scene.brollIntent && !scene.brollMedia && !scene.brollSrc);
+  return unresolvedBroll ? BROLL_BLOCKER : null;
+}
+
 function standardEntry(folder, projectDir, manifest, card) {
   const briefEntry = manifest.currentBrief
     ? manifest.briefs.find((brief) => brief.jsonPath === manifest.currentBrief) || null
     : null;
   const briefFile = manifest.currentBrief ? projectFile(projectDir, manifest.currentBrief) : null;
+  // Байты brief читаем один раз: хеш и разбор должны относиться к одной и той же версии.
+  const briefBytes = briefFile ? fs.readFileSync(briefFile) : null;
+  const isLessonDraft = Boolean(briefEntry && briefEntry.status === 'draft'
+    && (briefEntry.kind || 'lesson') === 'lesson');
   const pendingComments = countNewComments(projectDir);
   const derived = deriveVariantStatus({
     manifest,
     currentBriefStatus: briefEntry ? briefEntry.status : null,
-    currentBriefSha256: briefFile ? hashFile(briefFile) : null,
+    currentBriefSha256: briefBytes ? hashBytes(briefBytes) : null,
     finalExists: Boolean(projectFile(projectDir, manifest.final)),
     pendingComments,
+    approvalBlocker: isLessonDraft && briefBytes ? lessonApprovalBlocker(briefBytes) : null,
   });
   return {
     key: folder,

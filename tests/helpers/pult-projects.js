@@ -37,6 +37,7 @@ function addDraftProject(projectsDir, {
   approve = false,
   final = false,
   card = null,
+  scenes = null,
 } = {}) {
   const sourcePath = path.join(path.dirname(projectsDir), `${folder}-source.mp4`);
   fs.writeFileSync(sourcePath, `source ${folder}`);
@@ -54,7 +55,7 @@ function addDraftProject(projectsDir, {
     title: name,
     output: { aspect: 'horizontal', width: 320, height: 180, fps: 25, durationInFrames: 100 },
     corrections: [],
-    scenes: [{ scene: 'fullscreen', start: 0, end: 4, caption: 'ПУЛЬТ' }],
+    scenes: scenes || [{ scene: 'fullscreen', start: 0, end: 4, caption: 'ПУЛЬТ' }],
   };
   const draft = publishBriefRevision(workspace, { brief, markdown: `# ${name}` });
   workspace = reopen(workspace.dir);
@@ -100,6 +101,23 @@ function addDraftProject(projectsDir, {
   return { projectDir: workspace.dir, workspace, draft, preview: previewResult, approved };
 }
 
+// Черновик с b-roll, для которого человек ещё не выбрал материал: обычное состояние
+// (выбор делается в Review), но движок такой brief утвердить не даст.
+function unresolvedBrollScenes() {
+  return [
+    { scene: 'fullscreen', start: 0, end: 2, caption: 'ПУЛЬТ' },
+    {
+      scene: 'broll',
+      start: 2,
+      end: 4,
+      headCream: 'ЭКРАН',
+      headOrange: 'ТУТ',
+      sub: 'вот экран',
+      brollIntent: { goal: 'показать экран', sourceText: 'вот экран', queryOriginal: 'экран', queryEnglish: 'screen' },
+    },
+  ];
+}
+
 function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) {
   const dir = path.join(projectsDir, folder);
   fs.mkdirSync(dir, { recursive: true });
@@ -112,4 +130,4 @@ function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) 
   return dir;
 }
 
-module.exports = { ROOT, addDraftProject, addLegacyFolder, makePultRoot, sha256 };
+module.exports = { ROOT, addDraftProject, addLegacyFolder, makePultRoot, sha256, unresolvedBrollScenes };

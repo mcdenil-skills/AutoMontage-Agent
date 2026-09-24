@@ -4,10 +4,13 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-const { readProjectManifest } = require('../scripts/project/workspace');
+const { planPreview, publishCurrentPreview } = require('../scripts/project/preview-workspace');
+const { createOrOpenProject, readProjectManifest } = require('../scripts/project/workspace');
 const { acceptComment } = require('../scripts/pult/comments');
 const { startPultServer } = require('../scripts/pult/server');
-const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
+const {
+  addDraftProject, addLegacyFolder, makePultRoot, sha256, unresolvedBrollScenes,
+} = require('./helpers/pult-projects');
 
 function fakeCapture(command, args) {
   if (command === 'ffprobe') {
@@ -23,11 +26,12 @@ function fakeCapture(command, args) {
 }
 
 async function startTest(t, projectsDir, overrides = {}) {
-  const calls = { reveal: [], windows: [], reviews: [], shutdown: [] };
+  const calls = { reveal: [], windows: [], reviews: [], shutdown: [], logs: [] };
   const session = await startPultServer({
     projectsDir,
     idleMs: 0,
     captureImpl: fakeCapture,
+    logger: { error: (message) => { calls.logs.push(String(message)); } },
     revealImpl: async (target) => { calls.reveal.push(target); },
     openWindowImpl: async (url) => { calls.windows.push(url); },
     startReviewServerImpl: async (options) => {
@@ -100,6 +104,42 @@ async function standardRoot(t) {
 
 function waitingVariant(cards) {
   return cards.waiting[0].variants[0];
+}
+
+async function variantOf(session, key) {
+  const cards = (await get(session, '/api/cards')).json;
+  return [...cards.waiting, ...cards.working, ...cards.ready, ...cards.archive]
+    .flatMap((card) => card.variants)
+    .find((variant) => variant.key === key);
+}
+
+const approve = (session, key, ticket) => post(session, '/api/approve', { key, ticket, confirmPreviewViewed: true });
+
+function approvedBriefs(projectsDir, folder) {
+  return fs.readdirSync(path.join(projectsDir, folder, 'brief')).filter((name) => /-approved\./.test(name));
+}
+
+function previewFileOf(projectsDir, folder) {
+  const manifest = readProjectManifest(path.join(projectsDir, folder));
+  return path.join(projectsDir, folder, ...manifest.currentPreview.filePath.split('/'));
+}
+
+// Новый полный preview того же черновика — как это делает агент после правки.
+function republishFullPreview(projectsDir, folder, bytes) {
+  const projectDir = path.join(projectsDir, folder);
+  const workspace = createOrOpenProject({ projectDir });
+  const manifest = readProjectManifest(projectDir);
+  const briefFile = path.join(projectDir, ...manifest.currentBrief.split('/'));
+  const plan = planPreview(workspace, {
+    briefPath: briefFile,
+    briefSha256: sha256(fs.readFileSync(briefFile)),
+    range: { kind: 'full', fromSec: 0, toSec: 4 },
+  });
+  const staged = path.join(projectDir, 'previews', 'stage-next.mp4');
+  fs.writeFileSync(staged, bytes);
+  publishCurrentPreview(workspace, plan, staged, {
+    width: 160, height: 90, fps: 25, generatedAt: '2026-09-20T11:00:00.000Z',
+  });
 }
 
 test('health is public, minimal and host-checked', async (t) => {
@@ -245,6 +285,141 @@ test('approve requires confirmation and the exact previewed video', async (t) =>
   const briefs = fs.readdirSync(path.join(projectsDir, 'waiting-clip', 'brief'));
   assert.ok(briefs.some((name) => /-approved\.lesson\.json$/.test(name)));
   assert.equal((await post(session, '/api/approve', { key: 'waiting-clip', ticket, confirmPreviewViewed: true })).status, 409);
+});
+
+test('a draft waiting for the author to pick b-roll gets no approval ticket', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'intent-clip', name: 'Нужен B-roll', scenes: unresolvedBrollScenes() });
+  const { session } = await startTest(t, projectsDir);
+  const variant = await variantOf(session, 'intent-clip');
+  assert.equal(variant.status, 'waiting');
+  assert.equal(variant.nextStep, 'Выберите B-roll в проверке монтажа');
+  assert.equal(variant.approvable, false);
+  assert.equal(variant.approvalTicket, null);
+  assert.equal(variant.reviewable, true);
+  assert.equal(variant.video.kind, 'preview');
+  const refused = await approve(session, 'intent-clip', 'x'.repeat(43));
+  assert.equal(refused.status, 409);
+  assert.deepEqual(approvedBriefs(projectsDir, 'intent-clip'), []);
+});
+
+test('an engine refusal of a still-current ticket is reported as blocked and leaks no path', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const secret = path.join(projectsDir, 'waiting-clip', 'brief', 'v01-draft.lesson.json');
+  const { session, calls } = await startTest(t, projectsDir, {
+    approveBriefImpl: () => { throw new TypeError(`scenes[1].brollSrc: ${secret}`); },
+  });
+  const manifestFile = path.join(projectsDir, 'waiting-clip', 'project.json');
+  const manifestBefore = fs.readFileSync(manifestFile);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const blocked = await approve(session, 'waiting-clip', ticket);
+  assert.equal(blocked.status, 422);
+  assert.deepEqual(blocked.json, {
+    code: 'APPROVAL_BLOCKED',
+    message: 'Движок не принял утверждение: черновик ещё не готов. Откройте проверку монтажа или передайте ролик агенту.',
+  });
+  assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
+  assert.deepEqual(fs.readFileSync(manifestFile), manifestBefore);
+  assert.equal((await variantOf(session, 'waiting-clip')).approvalTicket, ticket);
+  assert.ok(calls.logs.length > 0);
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('brollSrc')));
+  assert.ok(!blocked.body.toString('utf8').includes(projectsDir));
+});
+
+test('an engine failure after the draft changed reports a changed preview', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir, {
+    approveBriefImpl: (workspace, briefFile) => {
+      // Агент успел переписать черновик, пока шло утверждение.
+      fs.appendFileSync(briefFile, '\n');
+      throw new Error('manifest changed');
+    },
+  });
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const changed = await approve(session, 'waiting-clip', ticket);
+  assert.equal(changed.status, 409);
+  assert.equal(changed.json.code, 'PREVIEW_CHANGED');
+});
+
+test('approval checks the preview bytes the page was shown', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const previewFile = previewFileOf(projectsDir, 'waiting-clip');
+  const original = fs.readFileSync(previewFile);
+  fs.chmodSync(previewFile, 0o644);
+
+  fs.writeFileSync(previewFile, 'bytes the author never saw');
+  const swapped = await approve(session, 'waiting-clip', ticket);
+  assert.equal(swapped.status, 409);
+  assert.equal(swapped.json.code, 'PREVIEW_CHANGED');
+  fs.rmSync(previewFile);
+  const missing = await approve(session, 'waiting-clip', ticket);
+  assert.equal(missing.status, 409);
+  assert.equal(missing.json.code, 'PREVIEW_CHANGED');
+  assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
+
+  fs.writeFileSync(previewFile, original);
+  assert.equal((await approve(session, 'waiting-clip', ticket)).status, 201);
+  assert.equal(approvedBriefs(projectsDir, 'waiting-clip').length > 0, true);
+});
+
+test('a ticket for an older preview, an excerpt or another video is refused', async (t) => {
+  const projectsDir = await standardRoot(t);
+  addDraftProject(projectsDir, { folder: 'other-clip', name: 'Другой' });
+  addDraftProject(projectsDir, { folder: 'excerpt-clip', name: 'Отрывок', previewKind: 'excerpt' });
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const excerpt = await variantOf(session, 'excerpt-clip');
+  assert.equal(excerpt.status, 'working');
+  assert.equal(excerpt.approvalTicket, null);
+
+  for (const key of ['excerpt-clip', 'other-clip']) {
+    const refused = await approve(session, key, ticket);
+    assert.equal(refused.status, 409, key);
+    assert.equal(refused.json.code, 'PREVIEW_CHANGED', key);
+    assert.deepEqual(approvedBriefs(projectsDir, key), [], key);
+  }
+
+  republishFullPreview(projectsDir, 'waiting-clip', 'preview v2');
+  const stale = await approve(session, 'waiting-clip', ticket);
+  assert.equal(stale.status, 409);
+  assert.equal(stale.json.code, 'PREVIEW_CHANGED');
+  assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
+  const fresh = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  assert.notEqual(fresh, ticket);
+  assert.equal((await approve(session, 'waiting-clip', fresh)).status, 201);
+});
+
+test('a valid token does not help a request with a foreign Host', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const port = session.server.address().port;
+  for (const host of ['evil.test', `localhost:${port}`]) {
+    assert.equal((await request(session, '/api/cards', { token: session.token, host })).status, 403, host);
+    const media = await request(session, '/media/video?key=ready-clip', { token: session.token, queryToken: true, host });
+    assert.equal(media.status, 403, host);
+  }
+});
+
+test('internal errors never leak absolute paths to the page or the log', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const secret = path.join(projectsDir, 'waiting-clip', 'previews', 'secret.mp4');
+  let broken = false;
+  const { session, calls } = await startTest(t, projectsDir, {
+    // Любая неожиданная ошибка внутри маршрута доходит до общего обработчика 500.
+    now: () => {
+      if (broken) throw new Error(`EACCES: permission denied, open '${secret}'`);
+      return 0;
+    },
+  });
+  broken = true;
+  const failed = await get(session, '/api/cards');
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.json, { code: 'INTERNAL', message: 'Внутренняя ошибка пульта' });
+  assert.ok(!failed.body.toString('utf8').includes(projectsDir));
+  assert.ok(calls.logs.length > 0);
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('EACCES')));
 });
 
 test('archive hides a card without touching its folder', async (t) => {

@@ -8,6 +8,7 @@ const { startReviewServer } = require('../review/server');
 const { buildCards } = require('./cards');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalog');
 const { addComment, deleteComment, readComments } = require('./comments');
+const { hashFile } = require('./files');
 const {
   PultRequestError,
   hasUnsafePath,
@@ -28,9 +29,23 @@ const { readPultState, setArchived } = require('./state');
 const IDLE_MS = 30 * 60 * 1000;
 const IDLE_CHECK_MS = 60 * 1000;
 const COMMENTS_BROKEN_MESSAGE = 'Файл правок повреждён — попросите агента проверить pult/comments.json';
+const APPROVAL_BLOCKED_MESSAGE = 'Движок не принял утверждение: черновик ещё не готов. '
+  + 'Откройте проверку монтажа или передайте ролик агенту.';
 
 const badRequest = () => new PultRequestError(400, 'INVALID_REQUEST', 'Неверный запрос');
 const notFound = () => new PultRequestError(404, 'NOT_FOUND', 'Ролик не найден');
+const previewChanged = () => new PultRequestError(
+  409,
+  'PREVIEW_CHANGED',
+  'Ролик изменился — обновите страницу и посмотрите новую версию',
+);
+
+// Для лога — только имя класса ошибки, и то лишь если оно похоже на имя класса:
+// сообщение и произвольные поля могут содержать абсолютные пути.
+function errorName(error) {
+  const name = error && typeof error.name === 'string' ? error.name : '';
+  return /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
+}
 
 // Тело запроса должно содержать ровно эти поля: лишнее поле — признак чужого клиента.
 function exactKeys(body, keys) {
@@ -86,6 +101,19 @@ async function startPultServer({
       return resolveProjectPath(projectDirOf(entry), relative, { mustExist: true, type: 'file' });
     } catch (_) {
       return null;
+    }
+  }
+
+  // Страница смотрела файл preview из паспорта; утверждать можно, только если его
+  // байты на диске до сих пор совпадают с хешем, к которому привязан билет.
+  function servedPreviewMatches(entry) {
+    if (!entry.video || entry.video.kind !== 'preview' || !entry.previewSha256) return false;
+    const file = entryFile(entry, entry.video.path);
+    if (!file) return false;
+    try {
+      return hashFile(file) === entry.previewSha256;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -260,22 +288,31 @@ async function startPultServer({
       const entry = findEntry(body.key);
       if (!entry) throw notFound();
       const expected = approvalTicket(entry);
-      if (!expected || !safeTokenEqual(body.ticket, expected)) {
-        throw new PultRequestError(409, 'PREVIEW_CHANGED', 'Ролик изменился — обновите страницу и посмотрите новую версию');
-      }
+      if (!expected || !safeTokenEqual(body.ticket, expected)) throw previewChanged();
+      // Движок сверяет expectedPreviewSha256 только там, где preview обязателен (motion,
+      // discovery b-roll); для обычного lesson он его пропускает. Поэтому пульт сам
+      // проверяет, что байты, которые он отдавал странице, всё ещё те, что в паспорте.
+      if (!servedPreviewMatches(entry)) throw previewChanged();
       try {
         const projectDir = projectDirOf(entry);
         const workspace = createOrOpenProject({ projectDir });
         const briefFile = resolveProjectPath(projectDir, entry.briefPath, { mustExist: true, type: 'file' });
-        // expectedPreviewSha256: движок ещё раз сверит, что утверждается ровно тот
-        // preview, который был на экране, даже если файл подменили после выдачи билета.
         approveBriefImpl(workspace, briefFile, {
           root: resolvedRoot,
           confirmPreviewViewed: true,
           expectedPreviewSha256: entry.previewSha256,
         });
-      } catch (_) {
-        throw new PultRequestError(409, 'APPROVAL_FAILED', 'Утвердить не удалось: preview или brief изменились. Обновите страницу.');
+      } catch (error) {
+        // В лог — только класс ошибки: сообщение движка может содержать абсолютные пути.
+        logger.error(`Пульт: движок не принял утверждение (${errorName(error)})`);
+        // Билет по-прежнему актуален — значит, ролик не менялся и дело в самом черновике.
+        // Иначе за время утверждения агент успел что-то поменять.
+        const current = findEntry(body.key);
+        const currentTicket = current ? approvalTicket(current) : null;
+        if (currentTicket && safeTokenEqual(body.ticket, currentTicket)) {
+          throw new PultRequestError(422, 'APPROVAL_BLOCKED', APPROVAL_BLOCKED_MESSAGE);
+        }
+        throw previewChanged();
       }
       sendJson(response, 201, { ok: true });
       return;
@@ -419,7 +456,7 @@ async function startPultServer({
         return;
       }
       // В лог — только класс ошибки: сообщение может содержать абсолютные пути.
-      logger.error(`Пульт: внутренняя ошибка (${error && error.name ? error.name : 'Error'})`);
+      logger.error(`Пульт: внутренняя ошибка (${errorName(error)})`);
       sendProblem(response, 500, 'INTERNAL', 'Внутренняя ошибка пульта');
     });
   });

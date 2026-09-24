@@ -6,7 +6,9 @@ const path = require('node:path');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
 const { nextRenderPaths, recordRender } = require('../scripts/project/workspace');
-const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
+const {
+  addDraftProject, addLegacyFolder, makePultRoot, unresolvedBrollScenes,
+} = require('./helpers/pult-projects');
 
 function seriesCard() {
   return {
@@ -45,6 +47,21 @@ test('scan classifies standard, legacy, unregistered and broken folders', (t) =>
   assert.equal(byKey['series#1'].status, 'ready');
   assert.deepEqual(scan.unregistered.map((item) => item.folder), ['research']);
   assert.deepEqual(scan.broken.map((item) => item.folder), ['broken']);
+});
+
+test('a draft with an unresolved b-roll intent waits for the author to pick b-roll, not to approve', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'intent-clip', scenes: unresolvedBrollScenes() });
+  addDraftProject(projectsDir, { folder: 'plain-clip' });
+  const byKey = Object.fromEntries(scanProjects({ projectsDir }).entries.map((entry) => [entry.key, entry]));
+  const intent = byKey['intent-clip'];
+  assert.equal(intent.status, 'waiting');
+  assert.equal(intent.nextStep, 'Выберите B-roll в проверке монтажа');
+  assert.equal(intent.approvable, false);
+  assert.equal(intent.video.kind, 'preview');
+  assert.equal(intent.reviewable, true);
+  assert.equal(byKey['plain-clip'].approvable, true);
+  assert.equal(byKey['plain-clip'].nextStep, 'Посмотрите preview и утвердите');
 });
 
 test('history lists complete renders newest first without raw files', (t) => {
@@ -120,7 +137,7 @@ test('legacy folder names with NFD Cyrillic and punctuation stay addressable', (
 });
 
 // Сервер вызывает scanProjects на каждый запрос: одна нечитаемая папка не должна ронять
-// весь каталог. chmod 000 на brief делает hashFile внутри standardEntry непредсказуемо
+// весь каталог. chmod 000 на brief делает чтение brief внутри standardEntry непредсказуемо
 // падающим — именно такой сбой должен превращаться в «Папка ролика не читается», а не
 // в необработанное исключение.
 test('scanProjects keeps other folders when one folder throws while building its entry', {

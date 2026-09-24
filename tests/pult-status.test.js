@@ -123,6 +123,28 @@ test('new comments hand the video back to the agent', () => {
   assert.equal(result.video.kind, 'preview');
 });
 
+test('a current preview the engine would refuse stays with the author but is not approvable', () => {
+  const blocker = 'Выберите B-roll в проверке монтажа';
+  const blocked = derive({}, { approvalBlocker: blocker });
+  assert.equal(blocked.status, 'waiting');
+  assert.equal(blocked.nextStep, blocker);
+  assert.equal(blocked.approvable, false);
+  assert.equal(blocked.video.kind, 'preview');
+  assert.equal(blocked.previewSha256, PREVIEW_SHA);
+
+  // Без актуального preview блокер ничего не меняет: сначала агент готовит preview.
+  const noPreview = derive({ currentPreview: null }, { approvalBlocker: blocker });
+  assert.equal(noPreview.status, 'working');
+  assert.equal(noPreview.nextStep, 'Агент готовит preview');
+  // Новые правки по-прежнему важнее: ролик у агента.
+  const commented = derive({}, { approvalBlocker: blocker, pendingComments: 1 });
+  assert.equal(commented.status, 'working');
+  assert.equal(commented.nextStep, 'Ждёт агента: 1 правка');
+  assert.equal(commented.approvable, false);
+  // По умолчанию блокера нет — прежнее поведение.
+  assert.equal(derive().approvable, true);
+});
+
 test('russian plural forms for edits', () => {
   assert.deepEqual(
     [1, 2, 5, 11, 12, 21, 22, 25].map(pluralEdits),
