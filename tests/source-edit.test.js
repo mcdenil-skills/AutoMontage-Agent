@@ -144,6 +144,9 @@ test('master publication preserves the original and selects immutable source and
         ? { duration: 8, fps: 25, width: 1920, height: 1080 }
         : { duration: 6, fps: 25, width: 1920, height: 1080 };
     },
+    probeMediaPathImpl() {
+      return { width: 1920, height: 1080, rotation: 0 };
+    },
     now: () => new Date('2026-08-23T13:00:00.000Z'),
     temporaryId: () => 'master-test',
   });
@@ -191,6 +194,9 @@ test('failed master encode leaves active source transcript preview and draft unc
   }, {
     runTrimImpl() { throw new Error('encode failed'); },
     probeVideoImpl() { return { duration: 8, fps: 25, width: 1920, height: 1080 }; },
+    probeMediaPathImpl() {
+      return { width: 1920, height: 1080, rotation: 0 };
+    },
     temporaryId: () => 'failed-master',
   }), /encode failed/);
 
@@ -198,4 +204,29 @@ test('failed master encode leaves active source transcript preview and draft unc
   assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'transcript', 'words.json')), transcriptBefore);
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'input', 'source-v02.mp4')), false);
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'transcript', 'words-v02.json')), false);
+});
+
+test('master accepts an auto-rotated portrait source whose output is stored upright', (t) => {
+  const fixture = makeProject(t);
+  const result = buildMaster({
+    projectDir: fixture.workspace.dir,
+    editPath: fixture.editPath,
+  }, {
+    runTrimImpl(options) {
+      fs.writeFileSync(options.output, 'ROTATED-MASTER');
+    },
+    runToolImpl() {},
+    probeVideoImpl(filename) {
+      return filename.endsWith('source.mp4')
+        ? { duration: 8, fps: 25, width: 1920, height: 1080 }
+        : { duration: 6, fps: 25, width: 1080, height: 1920 };
+    },
+    probeMediaPathImpl() {
+      return { width: 1920, height: 1080, rotation: 90 };
+    },
+    now: () => new Date('2026-08-23T13:00:00.000Z'),
+    temporaryId: () => 'rotated-master',
+  });
+  assert.equal(result.revision, 2);
+  assert.equal(readProjectManifest(fixture.workspace.dir).source.localPath, 'input/source-v02.mp4');
 });
