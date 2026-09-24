@@ -17,6 +17,13 @@ const LEGACY_STEPS = Object.freeze({
   waiting: 'Посмотрите и напишите правки',
   working: 'Агент работает',
 });
+const FOLDER_HASH_ERROR = 'Символ # в имени папки не поддерживается — переименуйте папку';
+const MANIFEST_UNREADABLE_ERROR = 'Паспорт ролика не читается';
+const FOLDER_UNREADABLE_ERROR = 'Папка ролика не читается';
+const MISSING_VIDEO_STEP = 'Видео не найдено — проверьте pult-card.json';
+// Реальные рендеры кладут промежуточные файлы вроде layout-revision.raw.mp4, не только
+// точное raw.mp4 — суффикс должен отсекать оба варианта, без учёта регистра.
+const RAW_RENDER_SUFFIX = /(^|\.)raw\.mp4$/i;
 
 function listFolders(projectsDir) {
   let dirents;
@@ -51,15 +58,28 @@ function renderHistory(projectDir, manifest) {
       let names = [];
       try {
         names = fs.readdirSync(path.join(projectDir, ...render.dir.split('/')), { withFileTypes: true })
-          .filter((dirent) => dirent.isFile() && dirent.name.toLowerCase().endsWith('.mp4') && dirent.name !== 'raw.mp4')
+          .filter((dirent) => dirent.isFile()
+            && dirent.name.toLowerCase().endsWith('.mp4')
+            && !RAW_RENDER_SUFFIX.test(dirent.name))
           .map((dirent) => dirent.name)
-          .sort();
+          // final.mp4 всегда первым, дальше по алфавиту — человек должен сразу видеть
+          // главный файл рендера, даже если у него несколько экспортов.
+          .sort((left, right) => {
+            const leftIsFinal = left.toLowerCase() === 'final.mp4';
+            const rightIsFinal = right.toLowerCase() === 'final.mp4';
+            if (leftIsFinal !== rightIsFinal) return leftIsFinal ? -1 : 1;
+            return left.localeCompare(right);
+          });
       } catch (_) {
         names = [];
       }
       const version = `v${String(render.version).padStart(2, '0')}`;
-      return names.slice(0, 3).map((name) => ({
-        label: `Рендер ${version} — ${render.label}`,
+      const selected = names.slice(0, 3);
+      return selected.map((name) => ({
+        // Имя файла в подписи нужно только когда файлов несколько — иначе это шум.
+        label: selected.length > 1
+          ? `Рендер ${version} — ${render.label} (${name})`
+          : `Рендер ${version} — ${render.label}`,
         path: `${render.dir}/${name}`,
       }));
     });
@@ -100,12 +120,30 @@ function legacyEntries(folder, projectDir, card) {
     const pendingComments = countNewComments(projectDir, variant.video);
     const file = projectFile(projectDir, variant.video);
     let updatedAt = new Date(0).toISOString();
-    if (file) updatedAt = fs.statSync(file).mtime.toISOString();
+    if (file) {
+      try {
+        updatedAt = fs.statSync(file).mtime.toISOString();
+      } catch (_) {
+        // Файл мог исчезнуть между resolveProjectPath и statSync — остаётся эпоха.
+      }
+    }
+    let nextStep;
+    if (pendingComments > 0) {
+      nextStep = `Ждёт агента: ${pluralEdits(pendingComments)}`;
+    } else if (!file) {
+      // Карточка ссылается на видео, которого нет на диске — это ошибка карточки,
+      // а не обычный шаг монтажа, и должно быть явно видно человеку.
+      nextStep = MISSING_VIDEO_STEP;
+    } else {
+      nextStep = legacy.nextStep || LEGACY_STEPS[legacy.status];
+    }
     return {
       key: `${folder}#${index}`,
       folder,
       kind: 'legacy',
-      title: card.title || folder,
+      // Папка может быть в NFD (macOS), а заголовок должен выглядеть привычно;
+      // сам ключ остаётся «сырым», чтобы не разойтись с именем на диске.
+      title: card.title || folder.normalize('NFC'),
       group: card.group || null,
       variantLabel: variant.label,
       projectKind: 'video',
@@ -114,9 +152,7 @@ function legacyEntries(folder, projectDir, card) {
       reviewable: false,
       history: [],
       status: pendingComments > 0 ? 'working' : legacy.status,
-      nextStep: pendingComments > 0
-        ? `Ждёт агента: ${pluralEdits(pendingComments)}`
-        : (legacy.nextStep || LEGACY_STEPS[legacy.status]),
+      nextStep,
       video: file ? { kind: variant.final ? 'final' : 'preview', path: variant.video, sha256: null } : null,
       approvable: false,
       needsFinal: false,
@@ -126,37 +162,95 @@ function legacyEntries(folder, projectDir, card) {
   });
 }
 
-// Только чтение: сканирование никогда не меняет папки роликов.
+// Сканирует одну папку и классифицирует её без исключений наружу — сервер вызывает эту
+// функцию и на весь каталог (из scanProjects), и точечно по одному ключу (Task 10), в том
+// числе с именем папки, пришедшим из URL. Поэтому здесь же — полная проверка безопасности
+// имени, а не только та, что уже прошла через listFolders.
+function scanFolder(projectsDir, folder) {
+  const empty = () => ({ entries: [], unregistered: [], broken: [] });
+  if (!isSafeName(folder)) return empty();
+
+  const projectDir = path.join(projectsDir, folder);
+  let stat;
+  try {
+    stat = fs.lstatSync(projectDir);
+  } catch (_) {
+    return empty();
+  }
+  // lstat не идёт по симлинку: ссылка на чужую папку здесь никогда не isDirectory().
+  if (!stat.isDirectory()) return empty();
+
+  if (folder.includes('#')) {
+    // '#' в имени папки конфликтует с разделителем варианта в ключе (`folder#index`):
+    // папка `series#0` неотличима от варианта 0 папки `series`. Дальше не сканируем.
+    return { entries: [], unregistered: [], broken: [{ folder, error: FOLDER_HASH_ERROR }] };
+  }
+
+  const cardResult = readPultCard(projectDir);
+  const card = cardResult.ok ? cardResult.card : null;
+  const hasManifest = fs.existsSync(path.join(projectDir, 'project.json'));
+
+  if (hasManifest) {
+    let manifest = null;
+    let manifestReadOk = true;
+    try {
+      manifest = readProjectManifest(projectDir);
+    } catch (_) {
+      manifestReadOk = false;
+    }
+    if (manifestReadOk) {
+      try {
+        const entry = standardEntry(folder, projectDir, manifest, card);
+        // Карточка стандартного проекта необязательна, но если она есть и битая —
+        // человек должен увидеть это в «Не читается», а не потерять её незаметно.
+        const broken = cardResult.ok ? [] : [{ folder, error: cardResult.error }];
+        return { entries: [entry], unregistered: [], broken };
+      } catch (_) {
+        // Паспорт прочитался, но что-то внутри проекта (например, brief) само не
+        // читается — это отдельный класс ошибки от «паспорт не читается».
+        return { entries: [], unregistered: [], broken: [{ folder, error: FOLDER_UNREADABLE_ERROR }] };
+      }
+    }
+    if (!(card && card.legacy)) {
+      return { entries: [], unregistered: [], broken: [{ folder, error: MANIFEST_UNREADABLE_ERROR }] };
+    }
+    // project.json битый, но рядом легитимная legacy-карточка — читаем как legacy ниже.
+  }
+
+  if (!cardResult.ok) {
+    return { entries: [], unregistered: [], broken: [{ folder, error: cardResult.error }] };
+  }
+  if (card && card.legacy) {
+    return { entries: legacyEntries(folder, projectDir, card), unregistered: [], broken: [] };
+  }
+  return { entries: [], unregistered: [{ folder }], broken: [] };
+}
+
+// Ключ варианта — `folder` либо `folder#index`; для точечного поиска (Task 10) нужно имя
+// самой папки на диске.
+function folderFromKey(key) {
+  return key.replace(/#\d{1,3}$/, '');
+}
+
+// Только чтение: сканирование никогда не меняет папки роликов. Одна нечитаемая или
+// неожиданно ведущая себя папка не должна ронять весь каталог — сервер зовёт эту функцию
+// на каждый запрос.
 function scanProjects({ projectsDir }) {
   const entries = [];
   const unregistered = [];
   const broken = [];
   for (const folder of listFolders(projectsDir)) {
-    const projectDir = path.join(projectsDir, folder);
-    const cardResult = readPultCard(projectDir);
-    const card = cardResult.ok ? cardResult.card : null;
-    if (fs.existsSync(path.join(projectDir, 'project.json'))) {
-      try {
-        entries.push(standardEntry(folder, projectDir, readProjectManifest(projectDir), card));
-        continue;
-      } catch (_) {
-        if (!(card && card.legacy)) {
-          broken.push({ folder, error: 'Паспорт ролика не читается' });
-          continue;
-        }
-      }
+    let result;
+    try {
+      result = scanFolder(projectsDir, folder);
+    } catch (_) {
+      result = { entries: [], unregistered: [], broken: [{ folder, error: FOLDER_UNREADABLE_ERROR }] };
     }
-    if (!cardResult.ok) {
-      broken.push({ folder, error: cardResult.error });
-      continue;
-    }
-    if (card && card.legacy) {
-      entries.push(...legacyEntries(folder, projectDir, card));
-      continue;
-    }
-    unregistered.push({ folder });
+    entries.push(...result.entries);
+    unregistered.push(...result.unregistered);
+    broken.push(...result.broken);
   }
   return { entries, unregistered, broken };
 }
 
-module.exports = { ENTRY_KEY, scanProjects };
+module.exports = { ENTRY_KEY, folderFromKey, scanFolder, scanProjects };

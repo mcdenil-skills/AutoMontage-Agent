@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { ENTRY_KEY, scanProjects } = require('../scripts/pult/catalog');
+const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
+const { nextRenderPaths, recordRender } = require('../scripts/project/workspace');
 const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
 
 function seriesCard() {
@@ -116,4 +117,131 @@ test('legacy folder names with NFD Cyrillic and punctuation stay addressable', (
   const [entry] = scan.entries;
   assert.equal(entry.key, `${folder}#0`);
   assert.match(entry.key, ENTRY_KEY);
+});
+
+// Сервер вызывает scanProjects на каждый запрос: одна нечитаемая папка не должна ронять
+// весь каталог. chmod 000 на brief делает hashFile внутри standardEntry непредсказуемо
+// падающим — именно такой сбой должен превращаться в «Папка ролика не читается», а не
+// в необработанное исключение.
+test('scanProjects keeps other folders when one folder throws while building its entry', {
+  skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
+}, (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'ok-clip' });
+  const { draft } = addDraftProject(projectsDir, { folder: 'broken-brief' });
+  fs.chmodSync(draft.jsonPath, 0o000);
+  t.after(() => {
+    try {
+      fs.chmodSync(draft.jsonPath, 0o644);
+    } catch (_) {
+      // временная папка теста уже могла быть удалена — это не ошибка.
+    }
+  });
+
+  const scan = scanProjects({ projectsDir });
+  assert.deepEqual(scan.entries.map((entry) => entry.key).sort(), ['ok-clip']);
+  assert.deepEqual(scan.broken, [{ folder: 'broken-brief', error: 'Папка ролика не читается' }]);
+});
+
+test('scanFolder matches scanProjects for one folder and stays empty for unsafe or missing folders', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'waiting-clip', name: 'Ждёт меня' });
+  addLegacyFolder(projectsDir, 'series', { files: { 'out/one.mp4': '1', 'out/two.mp4': '2' }, card: seriesCard() });
+
+  const full = scanProjects({ projectsDir });
+  const seriesEntries = full.entries.filter((entry) => entry.folder === 'series');
+  assert.deepEqual(scanFolder(projectsDir, 'series'), { entries: seriesEntries, unregistered: [], broken: [] });
+
+  const empty = { entries: [], unregistered: [], broken: [] };
+  assert.deepEqual(scanFolder(projectsDir, '../x'), empty);
+  assert.deepEqual(scanFolder(projectsDir, '.pult'), empty);
+  assert.deepEqual(scanFolder(projectsDir, 'missing'), empty);
+});
+
+test('scanFolder ignores a symlinked folder', { skip: process.platform === 'win32' }, (t) => {
+  const { base, projectsDir } = makePultRoot(t);
+  const outside = path.join(base, 'outside');
+  addLegacyFolder(base, 'outside', { files: { 'notes.md': 'x' } });
+  fs.symlinkSync(outside, path.join(projectsDir, 'linked'), 'dir');
+  assert.deepEqual(scanFolder(projectsDir, 'linked'), { entries: [], unregistered: [], broken: [] });
+});
+
+test('folderFromKey strips the trailing variant suffix', () => {
+  assert.equal(folderFromKey('a#1'), 'a');
+  assert.equal(folderFromKey('a'), 'a');
+});
+
+test('a folder name containing # is reported as broken instead of scanned', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addLegacyFolder(projectsDir, 'series#0', { files: { 'out/one.mp4': '1' }, card: seriesCard() });
+  const scan = scanProjects({ projectsDir });
+  assert.deepEqual(scan.entries, []);
+  assert.deepEqual(scan.broken, [{
+    folder: 'series#0',
+    error: 'Символ # в имени папки не поддерживается — переименуйте папку',
+  }]);
+});
+
+test('render history orders files with final first, excludes raw suffixes, and labels multi-file renders', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { workspace } = addDraftProject(projectsDir, { folder: 'clip', approve: true, final: true });
+  const render2 = nextRenderPaths(workspace, 'final');
+  fs.writeFileSync(path.join(render2.dir, 'alt.mp4'), 'alt');
+  fs.writeFileSync(path.join(render2.dir, 'x.raw.mp4'), 'raw');
+  fs.writeFileSync(render2.finalPath, 'final v2');
+  recordRender(workspace, {
+    version: render2.version,
+    label: render2.label,
+    dir: render2.dir,
+    briefPath: null,
+    status: 'complete',
+  });
+
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.deepEqual(entry.history, [
+    { label: 'Рендер v02 — final (final.mp4)', path: 'renders/v02-final/final.mp4' },
+    { label: 'Рендер v02 — final (alt.mp4)', path: 'renders/v02-final/alt.mp4' },
+    { label: 'Рендер v01 — final', path: 'renders/v01-final/final.mp4' },
+  ]);
+});
+
+test('a standard project with an invalid pult-card.json keeps its entry and is also flagged broken', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addDraftProject(projectsDir, { folder: 'clip' });
+  fs.writeFileSync(path.join(projectDir, 'pult-card.json'), '{ not json');
+  const scan = scanProjects({ projectsDir });
+  assert.equal(scan.entries.length, 1);
+  assert.equal(scan.entries[0].key, 'clip');
+  assert.deepEqual(scan.broken, [{ folder: 'clip', error: 'pult-card.json: неверный JSON' }]);
+});
+
+test('a legacy variant with a missing video file reports a clear next step', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addLegacyFolder(projectsDir, 'missing-video', {
+    files: {},
+    card: {
+      version: 1,
+      legacy: { status: 'ready', variants: [{ label: 'Ролик', video: 'out/missing.mp4', final: true }] },
+    },
+  });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.video, null);
+  assert.equal(entry.status, 'ready');
+  assert.equal(entry.nextStep, 'Видео не найдено — проверьте pult-card.json');
+});
+
+test('a legacy card without a title falls back to the NFC-normalized folder name', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const folder = 'Ролик Ё'.normalize('NFD');
+  addLegacyFolder(projectsDir, folder, {
+    files: { 'out/one.mp4': '1' },
+    card: {
+      version: 1,
+      legacy: { status: 'ready', variants: [{ label: 'Ролик', video: 'out/one.mp4', final: true }] },
+    },
+  });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.key, `${folder}#0`);
+  assert.equal(entry.title, 'Ролик Ё'.normalize('NFC'));
+  assert.notEqual(entry.title, folder);
 });
