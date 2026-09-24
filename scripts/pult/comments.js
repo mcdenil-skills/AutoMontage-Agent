@@ -14,11 +14,50 @@ function commentsPath(projectDir) {
   return path.join(projectDir, 'pult', 'comments.json');
 }
 
+// Единственное каноническое имя файла кадра для правки: используется и при записи
+// (addComment), и при проверке чтения (isValidComment), и при удалении (deleteComment).
+function framePathFor(commentId) {
+  return `pult/frames/${commentId}.jpg`;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidVideoRecord(video) {
+  return isPlainObject(video)
+    && VIDEO_KINDS.has(video.kind)
+    && typeof video.path === 'string'
+    && (video.sha256 === null || /^[a-f0-9]{64}$/.test(video.sha256));
+}
+
+// Проверяет одну запись из уже прочитанного comments.json. Файл могли подменить
+// вручную, поэтому читаем его не доверяя форме: неизвестный статус, отрицательное
+// время, чужое видео или frame, не совпадающий с каноническим путём для этого id,
+// делают весь файл нечитаемым, а не одну запись.
+function isValidComment(comment) {
+  return isPlainObject(comment)
+    && typeof comment.id === 'string' && COMMENT_ID.test(comment.id)
+    && (comment.status === 'new' || comment.status === 'accepted')
+    && Number.isFinite(comment.timeSec) && comment.timeSec >= 0 && comment.timeSec <= MAX_TIME_SEC
+    && typeof comment.text === 'string'
+    && typeof comment.createdAt === 'string'
+    && isValidVideoRecord(comment.video)
+    && (comment.frame === null || comment.frame === framePathFor(comment.id));
+}
+
 function readComments(projectDir) {
   const value = readJsonIfExists(commentsPath(projectDir), 'pult/comments.json');
   if (value === undefined) return [];
   if (!value || value.version !== 1 || !Array.isArray(value.comments)) {
     throw new Error('pult/comments.json: неверный формат');
+  }
+  const seenIds = new Set();
+  for (const comment of value.comments) {
+    if (!isValidComment(comment) || seenIds.has(comment.id)) {
+      throw new Error('pult/comments.json: неверный формат');
+    }
+    seenIds.add(comment.id);
   }
   return value.comments;
 }
@@ -71,6 +110,8 @@ function addComment(projectDir, input, {
   captureFrame = null,
 } = {}) {
   const checked = validateInput(projectDir, input);
+  // Ранее чтение: битый comments.json должен упасть до запуска захвата кадра
+  // (он может занимать секунды через ffmpeg), а не после.
   const comments = readComments(projectDir);
   const commentId = id();
   if (!COMMENT_ID.test(commentId) || comments.some((comment) => comment.id === commentId)) {
@@ -78,11 +119,14 @@ function addComment(projectDir, input, {
   }
   let frame = null;
   if (typeof captureFrame === 'function') {
+    // Проверить саму pult до захода в неё mkdir -p: символическая ссылка на pult
+    // не должна позволить записать кадр вовне проекта.
+    ensureDirectory(path.join(projectDir, 'pult'));
     const framesDir = path.join(projectDir, 'pult', 'frames');
     ensureDirectory(framesDir);
     try {
       if (captureFrame(checked.videoPath, checked.timeSec, path.join(framesDir, `${commentId}.jpg`))) {
-        frame = `pult/frames/${commentId}.jpg`;
+        frame = framePathFor(commentId);
       }
     } catch (_) {
       frame = null;
@@ -97,7 +141,14 @@ function addComment(projectDir, input, {
     frame,
     status: 'new',
   };
-  writeComments(projectDir, [...comments, comment]);
+  // Повторное чтение перед записью: захват кадра мог занять секунды, за которые
+  // другой процесс (например `inbox --accept` от агента) мог изменить файл —
+  // писать поверх устаревшего списка нельзя.
+  const latest = readComments(projectDir);
+  if (latest.some((existing) => existing.id === commentId)) {
+    throw new Error('правка: неверный идентификатор');
+  }
+  writeComments(projectDir, [...latest, comment]);
   return comment;
 }
 
@@ -107,7 +158,18 @@ function deleteComment(projectDir, commentId) {
   if (!target) return false;
   if (target.status !== 'new') throw new Error('правка уже принята агентом');
   writeComments(projectDir, comments.filter((comment) => comment.id !== commentId));
-  if (target.frame) fs.rmSync(path.join(projectDir, ...target.frame.split('/')), { force: true });
+  // Кадр — только кэш: удаляем его лишь если путь в точности совпадает с каноническим
+  // именем для этого id (readComments уже это гарантирует, проверка здесь — вторая
+  // линия защиты) и только через движковый guard с проверкой символических ссылок.
+  // Запись правки уже удалена, поэтому ошибку удаления кадра можно игнорировать.
+  if (target.frame === framePathFor(target.id)) {
+    try {
+      const framePath = resolveProjectPath(projectDir, target.frame, { label: 'comment frame' });
+      fs.rmSync(framePath, { force: true });
+    } catch (_) {
+      // no-op: frame cache cleanup is best-effort
+    }
+  }
   return true;
 }
 
