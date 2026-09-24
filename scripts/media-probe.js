@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
 const { assertProcessResult, captureTool, hostPath } = require('./process');
@@ -330,13 +331,39 @@ function probeVideo(file, options = {}) {
   return parseVideoProbe(stdout, stage);
 }
 
+function displayDimensions({ width, height, rotation = 0 }) {
+  return rotation === 90 || rotation === 270
+    ? { width: height, height: width }
+    : { width, height };
+}
+
+function probeMediaPath(filePath, {
+  stage = 'media probe',
+  fileSystem = fs,
+  probeOpenedMediaImpl = probeOpenedMedia,
+} = {}) {
+  const resolved = hostPath(filePath);
+  const stat = fileSystem.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`${stage}: media must be a regular file, not a symbolic link`);
+  }
+  const descriptor = fileSystem.openSync(resolved, openReadOnlyFlags(fileSystem));
+  try {
+    return probeOpenedMediaImpl({ fileDescriptor: descriptor, stage });
+  } finally {
+    fileSystem.closeSync(descriptor);
+  }
+}
+
 module.exports = {
+  displayDimensions,
   fileSystemCapabilities,
   openReadOnlyFlags,
   parseAudioProbeJson,
   parseMediaProbeJson,
   parseRate,
   parseVideoProbe,
+  probeMediaPath,
   probeOpenedAudio,
   probeOpenedMedia,
   probeVideo,
