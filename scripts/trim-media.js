@@ -4,7 +4,10 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const { finiteNumber } = require('./build-options');
-const { hostPath, runTool } = require('./process');
+const { captureTool, hostPath, runTool } = require('./process');
+
+const MODERN_FILTER_SCRIPT_OPTION = '-/filter_complex';
+const LEGACY_FILTER_SCRIPT_OPTION = '-filter_complex_script';
 
 function validateIntervals(intervals) {
   if (!Array.isArray(intervals) || intervals.length === 0) {
@@ -55,13 +58,38 @@ function buildConcatFilter(intervals, {
   return `${filter}${videoInputs}concat=n=${keep.length}:v=1:a=0[vout];${audioInputs}concat=n=${keep.length}:v=0:a=1[aout]`;
 }
 
-function trimCommand(input, output, filterPath) {
+// FFmpeg 7.0 добавил синтаксис `-/option <file>`, а FFmpeg 9 удалил `-filter_complex_script`.
+// Сборки без номера версии (git master) новее 7.0, поэтому получают современную форму.
+function filterScriptOptionForVersion(versionOutput) {
+  const match = /^ffmpeg version n?(\d+)\./m.exec(String(versionOutput || ''));
+  if (match && Number(match[1]) < 7) return LEGACY_FILTER_SCRIPT_OPTION;
+  return MODERN_FILTER_SCRIPT_OPTION;
+}
+
+function detectFilterScriptOption({ capture = captureTool } = {}) {
+  try {
+    return filterScriptOptionForVersion(capture('ffmpeg', ['-hide_banner', '-version'], {
+      stage: 'ffmpeg version',
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (_) {
+    // Сам запуск ffmpeg ниже сообщит понятную ошибку об отсутствии инструмента.
+    return MODERN_FILTER_SCRIPT_OPTION;
+  }
+}
+
+function trimCommand(input, output, filterPath, {
+  filterScriptOption = MODERN_FILTER_SCRIPT_OPTION,
+} = {}) {
+  if (![MODERN_FILTER_SCRIPT_OPTION, LEGACY_FILTER_SCRIPT_OPTION].includes(filterScriptOption)) {
+    throw new Error('неизвестная опция filter script для ffmpeg');
+  }
   return {
     command: 'ffmpeg',
     args: [
       '-y',
       '-i', hostPath(input),
-      '-filter_complex_script', hostPath(filterPath),
+      filterScriptOption, hostPath(filterPath),
       '-map', '[vout]',
       '-map', '[aout]',
       '-c:v', 'libx264',
@@ -83,12 +111,16 @@ function runTrim({
 }, {
   fileSystem = fs,
   run = runTool,
+  filterScriptOption = null,
+  detectOption = detectFilterScriptOption,
 } = {}) {
   const filter = buildConcatFilter(intervals, { audioFadeSec, precision });
   const resolvedFilterPath = hostPath(filterPath);
   try {
     fileSystem.writeFileSync(resolvedFilterPath, filter);
-    const command = trimCommand(input, output, resolvedFilterPath);
+    const command = trimCommand(input, output, resolvedFilterPath, {
+      filterScriptOption: filterScriptOption || detectOption(),
+    });
     run(command.command, command.args, { stage: 'trim encode' });
     return command;
   } finally {
@@ -97,7 +129,11 @@ function runTrim({
 }
 
 module.exports = {
+  LEGACY_FILTER_SCRIPT_OPTION,
+  MODERN_FILTER_SCRIPT_OPTION,
   buildConcatFilter,
+  detectFilterScriptOption,
+  filterScriptOptionForVersion,
   runTrim,
   trimCommand,
   validateIntervals,
