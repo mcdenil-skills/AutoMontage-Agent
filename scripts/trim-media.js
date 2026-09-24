@@ -83,9 +83,13 @@ function buildSegmentsConcatFilter(segments, {
   list.forEach(({ input, start, end }, index) => {
     const startText = time(start, precision);
     const endText = time(end, precision);
-    filter += `[${input}:v]trim=${startText}:${endText},setpts=PTS-STARTPTS`;
-    if (fps !== null) filter += `,fps=${fps}`;
-    filter += `[v${index}];`;
+    if (fps !== null) {
+      // fps до trim ставит кадры с плавающими таймстемпами на сетку, и кусок получает ровно (end - start) * fps кадров.
+      // Повторный fps после setpts нужен FFmpeg 7: без него пакеты видео пишутся без длительности.
+      filter += `[${input}:v]fps=${fps},trim=${startText}:${endText},setpts=PTS-STARTPTS,fps=${fps}[v${index}];`;
+    } else {
+      filter += `[${input}:v]trim=${startText}:${endText},setpts=PTS-STARTPTS[v${index}];`;
+    }
     filter += `[${input}:a]atrim=${startText}:${endText},asetpts=PTS-STARTPTS`;
     if (audioFormat !== null) {
       filter += `,aformat=sample_rates=${audioFormat.sampleRate}:channel_layouts=${audioFormat.channelLayout}`;

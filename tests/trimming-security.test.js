@@ -191,10 +191,10 @@ test('multi-input filter normalizes FPS and audio format per segment', () => {
       fps: '25/1',
       audioFormat: { sampleRate: 48000, channelLayout: 'stereo' },
     }),
-    '[1:v]trim=0.500000:2.500000,setpts=PTS-STARTPTS,fps=25/1[v0];'
+    '[1:v]fps=25/1,trim=0.500000:2.500000,setpts=PTS-STARTPTS,fps=25/1[v0];'
       + '[1:a]atrim=0.500000:2.500000,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo,'
       + 'afade=t=in:st=0:d=0.04,afade=t=out:st=1.960000:d=0.04[a0];'
-      + '[0:v]trim=1.000000:3.000000,setpts=PTS-STARTPTS,fps=25/1[v1];'
+      + '[0:v]fps=25/1,trim=1.000000:3.000000,setpts=PTS-STARTPTS,fps=25/1[v1];'
       + '[0:a]atrim=1.000000:3.000000,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo,'
       + 'afade=t=in:st=0:d=0.04,afade=t=out:st=1.960000:d=0.04[a1];'
       + '[v0][v1]concat=n=2:v=1:a=0[vout];[a0][a1]concat=n=2:v=0:a=1[aout]',
