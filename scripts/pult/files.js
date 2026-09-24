@@ -1,0 +1,47 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
+
+// undefined — файла нет; битый JSON — ошибка с понятным именем файла.
+function readJsonIfExists(filePath, label) {
+  let text;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return undefined;
+    throw new Error(`${label} не читается`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    throw new Error(`${label}: неверный JSON`);
+  }
+}
+
+function ensureDirectory(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+  const stat = fs.lstatSync(dirPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`${path.basename(dirPath)}: небезопасная папка`);
+  }
+}
+
+// Запись через временный файл и rename: оборванная запись не оставит полупустой JSON.
+function writeJsonAtomic(filePath, value, { mode = 0o644 } = {}) {
+  ensureDirectory(path.dirname(filePath));
+  const temporary = `${filePath}.tmp-${randomUUID()}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode, flag: 'wx' });
+  try {
+    fs.renameSync(temporary, filePath);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+  if (process.platform !== 'win32') fs.chmodSync(filePath, mode);
+}
+
+function hashFile(filePath) {
+  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+module.exports = { ensureDirectory, hashFile, readJsonIfExists, writeJsonAtomic };
