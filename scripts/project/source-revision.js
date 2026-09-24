@@ -165,6 +165,7 @@ function publishSourceRevision({
   let transcriptStageIdentity = null;
   let sourceCommittedIdentity = null;
   let transcriptCommittedIdentity = null;
+  let manifestCommitted = false;
   try {
     return withProjectMutation(workspace, (transaction) => {
       const active = normalizeSourceMetadata(transaction.manifest.source);
@@ -205,6 +206,7 @@ function publishSourceRevision({
       nextManifest.currentPreview = null;
       nextManifest.updatedAt = now().toISOString();
       workspace.manifest = transaction.commitManifest(nextManifest, { purpose: 'master-manifest' });
+      manifestCommitted = true;
       return {
         revision: nextRevision,
         sourcePath: destination,
@@ -212,12 +214,23 @@ function publishSourceRevision({
       };
     }, { fileSystem, temporaryId });
   } catch (error) {
-    if (transcriptCommittedIdentity) removeOwned(fileSystem, transcriptDestination, transcriptCommittedIdentity);
-    if (sourceCommittedIdentity) removeOwned(fileSystem, destination, sourceCommittedIdentity);
+    if (!manifestCommitted) {
+      if (transcriptCommittedIdentity) removeOwned(fileSystem, transcriptDestination, transcriptCommittedIdentity);
+      if (sourceCommittedIdentity) removeOwned(fileSystem, destination, sourceCommittedIdentity);
+    }
     throw error;
   } finally {
-    if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);
-    if (sourceStageIdentity) removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+    if (manifestCommitted) {
+      try {
+        if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);
+        if (sourceStageIdentity) removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+      } catch (_) {
+        // The manifest commit point is already durable.
+      }
+    } else {
+      if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);
+      if (sourceStageIdentity) removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+    }
   }
 }
 
