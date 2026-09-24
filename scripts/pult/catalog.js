@@ -36,10 +36,12 @@ function listFolders(projectsDir) {
   // Dirent отражает сам симлинк, поэтому ссылки на чужие папки сюда не попадают.
   // isSafeName дополнительно отсеивает имена с управляющими символами и другими
   // байтами, которые нельзя безопасно адресовать ключом карточки.
+  // numeric: true — чтобы «hook-2» шла перед «hook-10», а не после (обычный
+  // лексикографический порядок ставит '1' раньше '2', то есть 'hook-10' раньше 'hook-2').
   return dirents
     .filter((dirent) => dirent.isDirectory() && !dirent.name.startsWith('.') && isSafeName(dirent.name))
     .map((dirent) => dirent.name)
-    .sort((left, right) => left.localeCompare(right));
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
 }
 
 function projectFile(projectDir, relative) {

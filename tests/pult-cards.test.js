@@ -32,6 +32,8 @@ test('variants of one group become one card with the most urgent status', () => 
   assert.equal(card.title, 'Самая ценная вещь');
   assert.equal(card.nextStep, 'Хук 2: Посмотрите preview и утвердите');
   assert.deepEqual(card.variants.map((variant) => variant.variantLabel), ['Хук 1', 'Хук 2']);
+  assert.equal(card.leadKey, 'hook-2');
+  assert.equal(card.variants[0].key, 'hook-1');
   assert.deepEqual(sections.ready.map((item) => item.id), ['folder:solo']);
 });
 

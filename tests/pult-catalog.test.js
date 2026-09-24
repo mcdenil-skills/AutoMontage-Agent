@@ -284,3 +284,12 @@ test('a legacy card without a title falls back to the NFC-normalized folder name
   assert.equal(entry.title, 'Ролик Ё'.normalize('NFC'));
   assert.notEqual(entry.title, folder);
 });
+
+test('folders sort numerically so hook-2 comes before hook-10', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'hook-10' });
+  addDraftProject(projectsDir, { folder: 'hook-1' });
+  addDraftProject(projectsDir, { folder: 'hook-2' });
+  const scan = scanProjects({ projectsDir });
+  assert.deepEqual(scan.entries.map((entry) => entry.folder), ['hook-1', 'hook-2', 'hook-10']);
+});

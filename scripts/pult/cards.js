@@ -27,6 +27,9 @@ function buildCards(scan, { archived = [] } = {}) {
       title: variants[0].group ? variants[0].group.title : variants[0].title,
       status,
       nextStep: variants.length > 1 ? `${lead.variantLabel}: ${lead.nextStep}` : lead.nextStep,
+      // Ключ самого срочного варианта — по нему UI (Task 15) открывает вкладку и берёт
+      // факты для лица карточки. Порядок variants при этом не трогаем — это порядок вкладок.
+      leadKey: lead.key,
       updatedAt: variants.map((variant) => variant.updatedAt).sort().at(-1),
       archived: archivedIds.has(id),
       variants,
