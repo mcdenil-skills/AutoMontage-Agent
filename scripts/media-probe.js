@@ -337,8 +337,8 @@ function displayDimensions({ width, height, rotation = 0 }) {
     : { width, height };
 }
 
-// FLV и часть MKV/WebM пишут длительность только контейнера. probeVideo для master такие файлы
-// принимал, поэтому недостающая длительность потока берётся из контейнера.
+// Только для master: ему нужны размер и поворот, а не длины потоков. Дубли берут длительность
+// по самому короткому потоку и должны видеть отказ.
 function fillContainerOnlyStreamDurations(stdout) {
   let data;
   try {
@@ -362,6 +362,7 @@ function probeMediaPath(filePath, {
   stage = 'media probe',
   fileSystem = fs,
   captureToolImpl = captureTool,
+  containerDurationFallback = false,
 } = {}) {
   const resolved = hostPath(filePath);
   const stat = fileSystem.lstatSync(resolved);
@@ -376,7 +377,9 @@ function probeMediaPath(filePath, {
     '-of', 'json',
     resolved,
   ], { stage, maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES });
-  return parseMediaProbeJson(fillContainerOnlyStreamDurations(stdout));
+  return parseMediaProbeJson(
+    containerDurationFallback ? fillContainerOnlyStreamDurations(stdout) : stdout,
+  );
 }
 
 module.exports = {

@@ -221,11 +221,16 @@ function publishSourceRevision({
     throw error;
   } finally {
     if (manifestCommitted) {
+      // The manifest commit point is already durable: neither stage cleanup may skip the other.
       try {
         if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);
+      } catch (_) {
+        // ignored
+      }
+      try {
         if (sourceStageIdentity) removeOwned(fileSystem, sourceStage, sourceStageIdentity);
       } catch (_) {
-        // The manifest commit point is already durable.
+        // ignored
       }
     } else {
       if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);

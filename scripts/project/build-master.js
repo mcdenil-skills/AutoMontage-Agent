@@ -100,7 +100,10 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
   const remapped = remapTranscriptWords(words, normalizedEdit.keep, normalizedEdit.fps);
   const duration = normalizedEdit.keep.reduce((sum, range) => sum + range.end - range.start, 0);
   // FFmpeg поворачивает кадр до фильтров, поэтому результат хранится в отображаемом размере.
-  const sourceMedia = probeMediaPathImpl(sourcePath, { stage: 'master source media probe' });
+  const sourceMedia = probeMediaPathImpl(sourcePath, {
+    stage: 'master source media probe',
+    containerDurationFallback: true,
+  });
   const result = publishSourceRevision({
     workspace,
     source,

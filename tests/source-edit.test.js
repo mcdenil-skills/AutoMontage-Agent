@@ -273,6 +273,7 @@ test('master accepts an auto-rotated portrait source whose output is stored upri
   assert.equal(probeMediaPathCalls.length, 1);
   assert.equal(probeMediaPathCalls[0].filename, path.join(fixture.workspace.dir, 'input', 'source.mp4'));
   assert.equal(probeMediaPathCalls[0].options.stage, 'master source media probe');
+  assert.equal(probeMediaPathCalls[0].options.containerDurationFallback, true);
 });
 
 test('master rejects an output stored in the encoded size of a rotated source', (t) => {

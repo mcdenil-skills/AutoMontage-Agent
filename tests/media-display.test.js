@@ -83,6 +83,7 @@ test('probeMediaPath fills missing stream durations from the container', (t) => 
     },
   ];
   const media = probeMediaPath(file, {
+    containerDurationFallback: true,
     captureToolImpl: () => JSON.stringify({
       streams: streamsWithoutDuration,
       format: { format_name: 'flv', duration: '3.000000' },
@@ -93,9 +94,22 @@ test('probeMediaPath fills missing stream durations from the container', (t) => 
 
   assert.throws(
     () => probeMediaPath(file, {
+      containerDurationFallback: true,
       captureToolImpl: () => JSON.stringify({
         streams: streamsWithoutDuration,
         format: { format_name: 'flv' },
+      }),
+    }),
+    /video stream duration/,
+  );
+
+  // The fallback is opt-in: without it, the same container-only JSON must still fail closed
+  // (master needs geometry/rotation only; take duplication needs the true, shortest stream length).
+  assert.throws(
+    () => probeMediaPath(file, {
+      captureToolImpl: () => JSON.stringify({
+        streams: streamsWithoutDuration,
+        format: { format_name: 'flv', duration: '3.000000' },
       }),
     }),
     /video stream duration/,
@@ -120,7 +134,14 @@ test('real probe by path accepts FLV whose streams carry no duration', { timeout
   ], { encoding: 'utf8' });
   assert.equal(encode.status, 0, encode.stderr);
 
-  const media = probeMediaPath(clipFlv, { stage: 'flv probe' });
+  // Without the opt-in fallback, this fixture must fail closed: proves it genuinely carries
+  // no per-stream duration, not just that the fallback happens to produce a plausible number.
+  assert.throws(
+    () => probeMediaPath(clipFlv, { stage: 'flv probe' }),
+    /video stream duration/,
+  );
+
+  const media = probeMediaPath(clipFlv, { stage: 'flv probe', containerDurationFallback: true });
   assert.ok(
     Math.abs(media.videoDurationSec - 3) < 0.1,
     `expected videoDurationSec near 3, got ${media.videoDurationSec}`,
