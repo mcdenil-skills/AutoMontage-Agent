@@ -310,6 +310,9 @@ async function startPultServer({
         } catch (_) {
           throw new PultRequestError(409, 'REVIEW_FAILED', 'Проверку монтажа открыть не удалось');
         }
+        // Работа в окне Review — тоже активность пульта: иначе человек, закрывший окно
+        // пульта и правящий монтаж в Review, через 30 минут потерял бы Review вместе с ним.
+        review.server.on('request', () => { lastActivity = now(); });
         reviewSessions.set(projectDir, review);
       }
       await openWindowImpl(review.url);
@@ -432,23 +435,44 @@ async function startPultServer({
 
   let idleTimer = null;
   let closed = null;
+
+  // Закрывает сервер и сразу обрывает его соединения: иначе незаконченная отдача видео
+  // (или keep-alive окна) держала бы close() сколько угодно долго.
+  function closeServerNow(target) {
+    return new Promise((resolve) => {
+      if (!target || !target.listening) {
+        resolve();
+        return;
+      }
+      try {
+        target.close(() => resolve());
+      } catch (_) {
+        resolve();
+        return;
+      }
+      if (typeof target.closeAllConnections === 'function') target.closeAllConnections();
+    });
+  }
+
+  // Review гасится так же, как это делает его CLI по Ctrl+C (scripts/review/cli.js):
+  // оборвать активный импорт → закрыть сервер → дождаться, пока импорты приберут за собой.
+  async function closeReview(review) {
+    try { review.abortActiveImports?.(); } catch (_) { /* закрыть сервер всё равно нужно */ }
+    const serverClosed = closeServerNow(review.server);
+    try { await review.waitForActiveImports?.(); } catch (_) { /* итог уборки уже достигнут */ }
+    await serverClosed;
+  }
+
   // Закрывает и открытые из пульта окна Review: они живут только вместе с ним.
   async function close() {
     if (closed) return closed;
     closed = (async () => {
       if (idleTimer) clearInterval(idleTimer);
       for (const review of reviewSessions.values()) {
-        if (review.server && review.server.listening) {
-          await new Promise((resolve) => review.server.close(() => resolve()));
-        }
+        await closeReview(review);
       }
       reviewSessions.clear();
-      if (server.listening) {
-        await new Promise((resolve) => {
-          server.close(() => resolve());
-          if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
-        });
-      }
+      await closeServerNow(server);
     })();
     return closed;
   }

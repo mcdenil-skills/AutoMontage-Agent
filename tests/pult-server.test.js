@@ -23,7 +23,7 @@ function fakeCapture(command, args) {
 }
 
 async function startTest(t, projectsDir, overrides = {}) {
-  const calls = { reveal: [], windows: [], reviews: [] };
+  const calls = { reveal: [], windows: [], reviews: [], shutdown: [] };
   const session = await startPultServer({
     projectsDir,
     idleMs: 0,
@@ -34,7 +34,13 @@ async function startTest(t, projectsDir, overrides = {}) {
       calls.reviews.push(options);
       const server = http.createServer((incoming, outgoing) => outgoing.end('review'));
       await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-      return { server, url: `http://127.0.0.1:${server.address().port}/#token=review` };
+      return {
+        server,
+        url: `http://127.0.0.1:${server.address().port}/#token=review`,
+        // Запоминаем, слушал ли Review в момент вызова: так видно порядок abort → close → wait.
+        abortActiveImports() { calls.shutdown.push(['abort', server.listening]); },
+        async waitForActiveImports() { calls.shutdown.push(['wait', server.listening]); },
+      };
     },
     ...overrides,
   });
@@ -274,8 +280,90 @@ test('review opens once per project and closes with the pult', async (t) => {
   assert.equal(calls.reviews[0].open, false);
   assert.equal(calls.reviews[0].editable, true);
   assert.equal(calls.windows.length, 2);
+  const [review] = session.reviewSessions.values();
   await session.close();
   assert.equal(session.reviewSessions.size, 0);
+  assert.equal(review.server.listening, false);
+});
+
+test('closing the pult shuts review down like the review cli: abort, close, wait', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session, calls } = await startTest(t, projectsDir);
+  assert.equal((await post(session, '/api/review', { key: 'waiting-clip' })).status, 200);
+  const [review] = session.reviewSessions.values();
+  await session.close();
+  assert.deepEqual(calls.shutdown, [['abort', true], ['wait', false]]);
+  assert.equal(review.server.listening, false);
+  assert.equal(session.server.listening, false);
+});
+
+function reviewGet(review) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: review.server.address().port, path: '/' }, (response) => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    }).on('error', reject);
+  });
+}
+
+test('work in the review window keeps the pult alive', async (t) => {
+  const projectsDir = await standardRoot(t);
+  let clock = 0;
+  let idle;
+  const idleReached = new Promise((resolve) => { idle = resolve; });
+  const { session } = await startTest(t, projectsDir, {
+    now: () => clock, idleMs: 1000, idleCheckMs: 5, onIdle: idle,
+  });
+  assert.equal((await post(session, '/api/review', { key: 'waiting-clip' })).status, 200);
+  const [review] = session.reviewSessions.values();
+  clock = 900;
+  assert.equal(await reviewGet(review), 200);
+  // 1800 после последнего запроса к пульту, но только 900 после запроса к Review.
+  clock = 1800;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(session.server.listening, true);
+  assert.equal(review.server.listening, true);
+  clock = 1901;
+  await idleReached;
+  assert.equal(session.server.listening, false);
+  assert.equal(review.server.listening, false);
+});
+
+test('an open streaming review connection does not block closing the pult', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const sockets = [];
+  const { session } = await startTest(t, projectsDir, {
+    startReviewServerImpl: async () => {
+      // Review-видео, которое никогда не дописывается: ответ открыт, пока его не оборвут.
+      const server = http.createServer((incoming, outgoing) => {
+        outgoing.writeHead(200, { 'content-type': 'video/mp4' });
+        outgoing.write('chunk');
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return { server, url: `http://127.0.0.1:${server.address().port}/#token=review` };
+    },
+  });
+  assert.equal((await post(session, '/api/review', { key: 'waiting-clip' })).status, 200);
+  const [review] = session.reviewSessions.values();
+  await new Promise((resolve, reject) => {
+    const outgoing = http.get({ host: '127.0.0.1', port: review.server.address().port, path: '/' }, (response) => {
+      response.once('data', () => resolve());
+      response.on('error', () => {});
+    });
+    outgoing.on('error', () => {});
+    outgoing.on('socket', (socket) => sockets.push(socket));
+    outgoing.once('error', reject);
+  });
+  let timer;
+  const outcome = await Promise.race([
+    session.close().then(() => 'closed'),
+    new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), 1000); }),
+  ]);
+  clearTimeout(timer);
+  // Даже при провале теста обрываем соединение сами, чтобы зависший close() не держал процесс.
+  sockets.forEach((socket) => socket.destroy());
+  assert.equal(outcome, 'closed');
+  assert.equal(review.server.listening, false);
 });
 
 test('request bodies must be small JSON', async (t) => {
