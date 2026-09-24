@@ -48,7 +48,8 @@ function fakeRequest(headers, chunks) {
 }
 
 test('readJsonBody rejects invalid UTF-8 bytes with 400', async () => {
-  const request = fakeRequest({ 'content-type': 'application/json' }, [Buffer.from([0xff, 0xfe, 0xfd])]);
+  // Строка JSON с одним недопустимым байтом: без fatal-декодера она молча становилась «�».
+  const request = fakeRequest({ 'content-type': 'application/json' }, [Buffer.from([0x22, 0xff, 0x22])]);
   await assert.rejects(readJsonBody(request), (error) => {
     assert.equal(error.status, 400);
     assert.equal(error.code, 'INVALID_JSON');
