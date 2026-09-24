@@ -1,24 +1,30 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { pipeline } = require('node:stream');
 const { timingSafeEqual } = require('node:crypto');
 
 const { openReadOnlyFlags } = require('../media-probe');
 const { parseRange } = require('../review/server');
 
 const BODY_LIMIT = 64 * 1024;
+const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
 const STATIC_FILES = new Map([
   ['/', 'index.html'],
   ['/index.html', 'index.html'],
   ['/app.js', 'app.js'],
   ['/styles.css', 'styles.css'],
 ]);
+// Только для serveStatic (страница пульта) и JSON-ответов — не для медиа.
 const CONTENT_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
-  ['.jpeg', 'image/jpeg'],
-  ['.jpg', 'image/jpeg'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
+]);
+// Только для serveFile: пульт никогда не отдаёт через него html/js/json, только медиа.
+const MEDIA_CONTENT_TYPES = new Map([
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
   ['.m4v', 'video/x-m4v'],
   ['.mov', 'video/quicktime'],
   ['.mp4', 'video/mp4'],
@@ -75,7 +81,7 @@ function requestToken(request, url) {
 }
 
 function hasUnsafePath(requestTarget) {
-  const rawPath = String(requestTarget || '').split('?', 1)[0];
+  const rawPath = String(requestTarget || '').split(/[?#]/, 1)[0];
   let decoded;
   try {
     decoded = decodeURIComponent(rawPath);
@@ -90,9 +96,13 @@ function contentType(filePath) {
   return CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
 }
 
+function mediaContentType(filePath) {
+  return MEDIA_CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
+}
+
 function readJsonBody(request, limit = BODY_LIMIT) {
   const type = String(request.headers['content-type'] || '');
-  if (!/^application\/json(\s*;|$)/i.test(type)) {
+  if (!JSON_CONTENT_TYPE.test(type)) {
     request.resume();
     return Promise.reject(new PultRequestError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Ожидался JSON'));
   }
@@ -114,7 +124,9 @@ function readJsonBody(request, limit = BODY_LIMIT) {
     request.on('end', () => {
       if (failed) return;
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        // fatal: true — невалидный UTF-8 должен провалить разбор, а не молча испортить текст.
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+        resolve(JSON.parse(text));
       } catch (_) {
         reject(new PultRequestError(400, 'INVALID_JSON', 'Неверный JSON'));
       }
@@ -163,7 +175,11 @@ function serveFile(request, response, filePath) {
   const range = parseRange(request.headers.range, stat.size);
   if (range === false) {
     fs.closeSync(descriptor);
-    sendError(response, 416, head);
+    // RFC 9110: 416 обязан назвать актуальный размер, чтобы клиент мог пересчитать диапазон.
+    send(response, 416, 'Request rejected', {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Range': `bytes */${stat.size}`,
+    }, head);
     return;
   }
   const start = range ? range.start : 0;
@@ -173,7 +189,7 @@ function serveFile(request, response, filePath) {
     ...SECURITY_HEADERS,
     'Accept-Ranges': 'bytes',
     'Content-Length': length,
-    'Content-Type': contentType(filePath),
+    'Content-Type': mediaContentType(filePath),
     ...(range ? { 'Content-Range': `bytes ${start}-${end}/${stat.size}` } : {}),
   });
   if (head || stat.size === 0) {
@@ -182,8 +198,10 @@ function serveFile(request, response, filePath) {
     return;
   }
   const stream = fs.createReadStream(filePath, { fd: descriptor, autoClose: true, start, end });
-  stream.on('error', () => response.destroy());
-  stream.pipe(response);
+  // pipeline, а не stream.pipe(): при отмене запроса (Chrome шлёт новый Range на каждой
+  // перемотке) response уничтожается раньше конца файла — pipe() не закрывает источник за
+  // собой, и файловый дескриптор остаётся висеть. pipeline() уничтожает оба конца всегда.
+  pipeline(stream, response, () => {});
 }
 
 module.exports = {
