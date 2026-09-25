@@ -323,6 +323,9 @@ node scripts/build.js \
   --version-label browser-review
 ```
 
+После `automontage master` вместо `input/source.mp4` передай активный `source.localPath` из
+`project.json`.
+
 Успешная сборка создаёт версию в `renders/vNN-browser-review/`, а принятый результат - в
 `final/<slug>.mp4`. Проверь начало и конец, каждую изменённую границу, все b-roll-врезки,
 синхрон голоса и режимы звука. Полный технический чек-лист находится в [TESTING.md](../TESTING.md).

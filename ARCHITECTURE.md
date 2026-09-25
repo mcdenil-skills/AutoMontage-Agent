@@ -175,9 +175,11 @@ Brief замораживает исходник, тему, аспект, раз�
 чем начались оба потока дубля: `probeMediaPath()` читает `start_time` по пути файла, а не через
 `pipe:0`, иначе фрагментированный MP4 и MPEG-TS теряют длительность. Дубль, взятый назад во
 времени, открывается отдельным входом FFmpeg, чтобы общий декодер не держал кадры в памяти.
-Звук для Whisper извлекается с `aresample=first_pts=0`, поэтому слова дубля стоят на той же оси,
-что и `trim`. `takes-pack.js` режет фразы по концу предложения или по паузе, потому что Whisper
-прячет паузы внутрь слов.
+Звук для Whisper извлекается с `aresample=async=1:min_hard_comp=0:first_pts=0`: тишина в начале
+восстанавливается, короткие разрывы внутри звука заполняются, поэтому слова дубля стоят на той же
+оси, что и `trim`. При пересчёте слов слово, попавшее в кусок меньше чем на кадр, отбрасывается,
+если его середина вне куска, а слово с `e <= s` после округления удаляется. `takes-pack.js` режет
+фразы по концу предложения или по паузе, потому что Whisper прячет паузы внутрь слов.
 
 Draft имеет отдельную непередаваемую в final возможность: `scripts/preview.js` принимает только
 текущий зарегистрированный draft, выбирает `ReelScenes` или `MotionReel` по `briefs[].kind`
@@ -525,7 +527,8 @@ period — `SIGKILL`. Persistent release error остаётся явным и п
 Save не доверяет browser descriptor. Он повторно сканирует immutable bundle, открывает master
 без следования symlink и передаёт тот же read-only descriptor в bounded ffprobe через `pipe:0`.
 Общий `scripts/media-probe.js` задаёт один argv/timeout/buffer/error contract для Save и approval;
-живой host pathname в probe не передаётся. Затем Save хэширует те же открытые байты и только
+живой host pathname в probe не передаётся (исключение: `probeMediaPath()` для дублей и master,
+см. D-031). Затем Save хэширует те же открытые байты и только
 после повторной identity-проверки материализует канонический `brollMedia` в новый draft.
 Approval повторяет containment, probe, metadata/proxy/hash и clip-duration проверки, удерживает
 descriptors до commit boundary и публикует approved только если все identities сохранились.
@@ -668,7 +671,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Пользовательский CLI | `scripts/cli.js`, `scripts/doctor.js` |
 | Оркестрация и процессы | `scripts/build.js`, `scripts/env.js`, `scripts/process.js`, `scripts/media-probe.js`, `scripts/source-timing.js` |
 | Папки и версии роликов | `scripts/project/workspace.js`, `scripts/project/build-context.js` |
-| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/trim-media.js` |
+| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/trim-media.js` |
 | Транскрипция и субтитры | `scripts/transcribe.py`, `scripts/build-captions.js` |
 | Lesson brief | `scripts/gen-brief.js`, `scripts/lesson/*` |
 | Локальная проверка | `scripts/review/*`, `review/*` |
@@ -700,9 +703,10 @@ symlink; symlink прерывает построение cache key.
 - `project.json` – журнал относительных project-путей, статусов brief и рендеров. Только
   `source.originalPath` и `takes[].originalPath` хранят исторические абсолютные
   пути исходника и дублей.
-- `input/takes/take-NN.<ext>` и `transcript/takes/take-NN.json` – неизменяемые копии дублей и их
-  локальные транскрипты; `edit/vNN-source.json` и `edit/vNN-takes.json` – входы `automontage master`,
-  а `input/source-vNN.mp4` и `transcript/words-vNN.json` – опубликованные source revisions.
+- `input/takes/take-NN.<ext>` (начиная с take-02; take-01 ссылается на оригинальный исходник
+  проекта) и `transcript/takes/take-NN.json` (для всех дублей) – неизменяемые копии дублей и их
+  локальные транскрипты; `edit/vNN-source.json` и `edit/vNN-takes.json` – входы `automontage
+  master`, а `input/source-vNN.mp4` и `transcript/words-vNN.json` – опубликованные source revisions.
 - `assets/broll/images|video/<uuid>/` – immutable normalized master и bounded `asset.json`;
   `previews/broll/<uuid>.webm` – браузерный video proxy. Review показывает их только через
   token-protected opaque routes.

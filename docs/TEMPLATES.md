@@ -259,6 +259,9 @@ node scripts/build.js \
   --version-label first-render
 ```
 
+После `automontage master` вместо `input/source.mp4` передай активный `source.localPath` из
+`project.json`.
+
 На втором этапе LLM-ключ и повторная транскрибация не нужны. Движок проверяет статус,
 тот же исходник, утверждённые тему и аспект, затем передаёт `faceSrc` и `audioSrc` в
 `ReelScenes`. Draft, другой исходник, другая тема или другой аспект блокируются до рендера.

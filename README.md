@@ -283,6 +283,7 @@ automontage preview --project-dir projects/<id> --brief brief/vNN-draft.lesson.j
 npm run qa:preview -- --project-dir projects/<id>
 
 node scripts/project/approve-brief.js projects/<id> brief/vNN-draft.lesson.json
+# после automontage master вместо input/source.mp4 передай активный source.localPath из project.json
 node scripts/build.js projects/<id>/input/source.mp4 --template lesson \
   --project-dir projects/<id> --brief brief/vNN-approved.lesson.json \
   --version-label first-render
@@ -372,8 +373,16 @@ manifest на source revision 2 и сбрасывает только устар�
 
 `automontage master --project-dir <проект> --edit edit/v02-takes.json` собирает куски в новую
 source revision. Границы выравниваются по кадрам автоматически; дубли должны совпадать по FPS и
-размеру кадра и иметь звук. Дальше маршрут не меняется: draft, Review, preview и утверждение
-работают с новой source revision.
+размеру кадра и иметь звук. Дальше маршрут тот же, но draft, Review, preview, утверждение и
+final работают с новой source revision: в `source` draft и во входе `scripts/build.js` указывай
+активный `source.localPath` из `project.json` (например `input/source-v02.mp4`), иначе build
+остановится с ошибкой «нельзя рендерить утверждённый brief с видео другого исходника».
+`sourceRevision` в `edit/vNN-takes.json` равен активной `source.revision`, иначе master
+откажет.
+
+`takes add` принимает `--model <id>` (по умолчанию `large-v3-turbo`) и `--prompt <текст>` для
+Whisper, `takes pack` принимает `--silence <сек>` (от 0.1 до 5, по умолчанию 0.5). Полный
+список: `automontage takes --help`.
 
 После проверки ТЗ утвердить конкретную ревизию и отрендерить её:
 
@@ -382,6 +391,7 @@ node scripts/project/approve-brief.js \
   projects/2026.08.05_ai-agent-lesson \
   brief/v01-draft.lesson.json
 
+# после automontage master вместо input/source.mp4 передай активный source.localPath из project.json
 node scripts/build.js \
   projects/2026.08.05_ai-agent-lesson/input/source.mp4 \
   --template lesson \
