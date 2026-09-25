@@ -36,9 +36,11 @@ npm test
 - Review security: random token на каждом `/api/*` и `/media/*`, same-session Origin для POST,
   read-only `405`, traversal/symlink, oversized body, unknown command, свежий disk state,
   source/asset identity expiry, secure `0600` handoff без token в CLI-логе и его cleanup при
-  `SIGINT`/`SIGTERM` с восстановлением process listeners; реальные subprocess-регрессии прерывают
-  partial upload и actual ffmpeg для прямого CLI, а также import через публичный wrapper, проверяя
-  exit 130/143 только после удаления lease/quarantine и успешный следующий запуск;
+  `SIGINT`/`SIGTERM` с восстановлением process listeners; отменённый Range-запрос к `/media/source`
+  освобождает файловый дескриптор источника вместо утечки до перезапуска сервера; реальные
+  subprocess-регрессии прерывают partial upload и actual ffmpeg для прямого CLI, а также import
+  через публичный wrapper, проверяя exit 130/143 только после удаления lease/quarantine и
+  успешный следующий запуск;
 - Review edit contract: только adjacent boundary и allowlisted image/video b-roll, отсутствие
   global ripple, opaque asset handles, fit/start/audio commands, покадровый clip overrun,
   frame/word timing reasons, межпроцессный project lease, in-memory undo/redo, новая draft-пара
@@ -245,8 +247,7 @@ node scripts/dynamic-gate.js path/to/scenario.json path/to/transcript.json
    половинную геометрию, точный FPS, полный decode, метку «ЧЕРНОВИК» и full/excerpt range.
    Искусственный сбой Remotion/finish/music обязан сохранить прежний `current-preview.mp4`.
 5. В Review проверить отдельные плееры **«ИСХОДНИК»** и **«СМОНТИРОВАННЫЙ ПРЕДПРОСМОТР»**;
-   `/media/current-preview` требует token, поддерживает Range, отклоняет hash/symlink replacement
-   и освобождает файловый дескриптор при отменённом Range-запросе.
+   `/media/current-preview` требует token, поддерживает Range и отклоняет hash/symlink replacement.
 6. Только после явного утверждения создать approved-копию через
    `scripts/project/approve-brief.js`.
 7. Рендерить локальным исходником через `--project-dir`, `--brief` и `--version-label`.

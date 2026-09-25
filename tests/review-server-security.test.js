@@ -1623,7 +1623,10 @@ function cancelRangedMediaRequest(session, pathname, token) {
     const finish = () => {
       if (settled) return;
       settled = true;
-      resolve(response ? response.complete : false);
+      // null, если соединение упало раньше самого ответа – это не «удалось дочитать до
+      // конца» (true) и не «отменили посреди файла» (false), поэтому не должно молча
+      // засчитаться как успешная отмена в проверке ниже.
+      resolve(response ? response.complete : null);
     };
     const outgoing = http.request({
       host: '127.0.0.1',
@@ -1701,9 +1704,10 @@ test(
     // <= а не ===: соседний тест файла мог закрыть свой сокет ровно в этот момент, и счётчик
     // пойдёт вниз – это не утечка. Настоящая утечка добавляет +20.
     assert.ok(after <= before, `утекло ${after - before} дескрипторов`);
-    // Позитивный случай для того же serveFile (206, точные байты, Content-Range) уже
+    // Позитивный случай на 206 (точные байты, Content-Range) для того же serveFile уже
     // проверен тестом «current rendered preview is token-protected, ranged, and
-    // hash-pinned at request time» выше – не дублируем его здесь.
+    // hash-pinned at request time» выше – не дублируем его здесь; полный 200-запрос
+    // выше в этом тесте покрывает позитивный случай без Range.
   },
 );
 
