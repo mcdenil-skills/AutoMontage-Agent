@@ -310,11 +310,13 @@ test('real probe reports the start_time offset of a video stream delayed against
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-start-real-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const late = path.join(dir, 'late.mp4');
+  // FFmpeg 6.x по умолчанию (vsync cfr для MP4) заполняет первые 0.04 с копией первого кадра, и
+  // видео начинается в 0 вместе со звуком; passthrough сохраняет задержку и на 7+ ничего не меняет.
   const encode = spawnSync('ffmpeg', [
     '-y', '-v', 'error',
     '-itsoffset', '0.04', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
     '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-fps_mode', 'passthrough',
     '-c:a', 'aac', '-shortest',
     late,
   ], { encoding: 'utf8' });
