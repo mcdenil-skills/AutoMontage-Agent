@@ -70,6 +70,14 @@ test('ranges snap outward to whole frames and clamp to the take end', () => {
   assert.equal(snapped[0].reason, 'чистая подача');
 });
 
+test('exact frame boundaries are not pushed outward by floating point error', () => {
+  const [range] = snapTakeRanges(
+    [{ take: 'take-01', start: 0.28, end: 1.12, beat: 'X', reason: 'x' }],
+    { fps: 25, takes },
+  );
+  assert.deepEqual([range.startFrame, range.endFrame], [7, 28]);
+});
+
 test('NTSC ranges snap to exact 30000/1001 frame boundaries', () => {
   const [range] = snapTakeRanges(
     [{ take: 'take-01', start: 1, end: 2, beat: 'HOOK', reason: 'x' }],
@@ -94,6 +102,31 @@ test('snapped ranges from one take must not overlap and must keep at least one f
     { take: 'take-02', start: 1, end: 2, beat: 'A', reason: 'x' },
     { take: 'take-01', start: 1, end: 2, beat: 'B', reason: 'y' },
   ], { fps: 25, takes }));
+});
+
+test('ranges of one take that only touch after snapping share the frame with the earlier range', () => {
+  const forward = snapTakeRanges([
+    { take: 'take-01', start: 2, end: 3.41, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 3.41, end: 5, beat: 'B', reason: 'y' },
+  ], { fps: 25, takes });
+  assert.deepEqual(
+    forward.map(({ startFrame, endFrame }) => [startFrame, endFrame]),
+    [[50, 86], [86, 125]],
+  );
+
+  const backward = snapTakeRanges([
+    { take: 'take-01', start: 3.41, end: 5, beat: 'B', reason: 'y' },
+    { take: 'take-01', start: 2, end: 3.41, beat: 'A', reason: 'x' },
+  ], { fps: 25, takes });
+  assert.deepEqual(
+    backward.map(({ startFrame, endFrame }) => [startFrame, endFrame]),
+    [[85, 125], [50, 85]],
+  );
+
+  assert.throws(() => snapTakeRanges([
+    { take: 'take-02', start: 1, end: 2, beat: 'A', reason: 'x' },
+    { take: 'take-02', start: 1.99, end: 3, beat: 'B', reason: 'y' },
+  ], { fps: 25, takes }), /overlaps ranges\[0\]/);
 });
 
 test('words from each take move onto the assembled timeline', () => {
@@ -123,7 +156,23 @@ test('words that round to zero length at a range boundary are dropped', () => {
   for (const word of words) assert.ok(word.e > word.s, `${word.w} must have e > s`);
 });
 
-test('trim plan lists each take once in order of first use', () => {
+test('a sub-frame sliver of a clipped neighbour word is dropped, not carried into captions', () => {
+  const takeWords = [
+    { w: 'хвост', s: 0.5, e: 1.01 },
+    { w: 'слово', s: 1.01, e: 1.5 },
+    { w: 'лишнее', s: 1.99, e: 2.4 },
+  ];
+  const oneTake = new Map([['take-01', { id: 'take-01', filePath: 'take-01.mp4', duration: 8 }]]);
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 1.01, end: 1.99, beat: 'A', reason: 'x' }],
+    { fps: 25, takes: oneTake },
+  );
+  assert.deepEqual([ranges[0].start, ranges[0].end], [1, 2]);
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', takeWords]]), 25);
+  assert.deepEqual(words, [{ w: 'слово', s: 0.01, e: 0.5 }]);
+});
+
+test('trim plan reuses one input for a take used forward in time', () => {
   const ranges = snapTakeRanges([
     ...takesEdit().ranges,
     { take: 'take-02', start: 3, end: 4, beat: 'PROOF', reason: 'z' },
