@@ -94,7 +94,7 @@ function writeSecurityException(root, exception) {
   ].join('\n'));
 }
 
-test('repository dependency exception is reviewed for the 1.8.0 release window', () => {
+test('repository dependency exception is reviewed for the 1.9.0 release window', () => {
   const security = fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8');
   const match = security.match(/```json security-exception\s*([\s\S]*?)```/);
   assert.ok(match, 'SECURITY.md must contain one machine-readable dependency exception');
@@ -106,7 +106,7 @@ test('repository dependency exception is reviewed for the 1.8.0 release window',
     revisitBy: exception.revisitBy,
   }, {
     reviewedAt: '2026-09-25',
-    reviewedFor: '1.8.0',
+    reviewedFor: '1.9.0',
     revisitBy: '2026-10-24',
   });
 });

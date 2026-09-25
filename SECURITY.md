@@ -68,13 +68,14 @@ override, or downgrade to the incompatible 3.x line. Reassess immediately on an 
 node-vibrant/Jimp update, if severity becomes high, if direct untrusted-image input is
 introduced, at the next release, or no later than 2026-10-24.
 
-For release 1.8.0, the GitHub Security Advisory, npm registry metadata, `npm audit`, and the
+For release 1.9.0, the GitHub Security Advisory, npm registry metadata, `npm audit`, and the
 installed transitive dependency chain were reviewed again on 2026-09-25. The advisory is
-unchanged and not withdrawn, `npm audit` still reports the same five moderate findings, and the
-latest upstream `node-vibrant` remains 4.0.4, whose `@vibrant/image-node` still requires the
-Jimp 0.22 line with `file-type@16.5.4`; the `file-type` 16.x line has no backported fix. The
-`--autotheme` code path did not change since 1.7.0, so the installed chain and limited local
-exposure still match the advisory and mitigation recorded below. This review accepts the
+unchanged since 2026-03-10 and not withdrawn, `npm audit` still reports the same five moderate
+findings and no high or critical ones, and the latest upstream `node-vibrant` remains 4.0.4,
+whose `@vibrant/image-node` still requires the Jimp 0.22 line with `file-type@16.5.4`; 16.5.4 is
+still the newest `file-type` 16.x release, and the fix exists only in 21.3.1. The `--autotheme`
+code path did not change since 1.8.0, so the installed chain and limited local exposure still
+match the advisory and mitigation recorded below. This review accepts the
 remaining moderate availability risk until 2026-10-24; it does not claim that the dependency
 is fixed.
 
@@ -108,7 +109,7 @@ after 10:00 UTC, when that date has already begun in UTC+14.
     "next release"
   ],
   "reviewedAt": "2026-09-25",
-  "reviewedFor": "1.8.0",
+  "reviewedFor": "1.9.0",
   "revisitBy": "2026-10-24"
 }
 ```
