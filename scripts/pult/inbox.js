@@ -22,7 +22,7 @@ function readNewComments(projectDir) {
 }
 
 // Собирает входящие по каждой папке ролика: новые правки и утверждения без финала.
-// Битый comments.json нельзя тихо пропускать — правки автора иначе незаметно
+// Битый comments.json нельзя тихо пропускать – правки автора иначе незаметно
 // исчезнут из поля зрения агента, поэтому такая папка тоже попадает в результат
 // с флагом commentsBroken, даже если утверждений в ней нет.
 function buildInbox({ projectsDir }) {
@@ -61,7 +61,7 @@ function buildInbox({ projectsDir }) {
   for (const problem of passportProblems) {
     if (byFolder.has(problem.folder)) continue;
     const { comments, broken } = readNewComments(path.join(projectsDir, problem.folder));
-    // Без новых правок и без битого файла правок нечитаемая папка — забота каталога,
+    // Без новых правок и без битого файла правок нечитаемая папка – забота каталога,
     // а не входящие пульта: не добавлять её, чтобы не шуметь.
     if (!comments.length && !broken) continue;
     byFolder.set(problem.folder, {
@@ -109,7 +109,7 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
   const lines = ['# Входящие пульта', ''];
   for (const item of items) {
     const dir = path.join(projectsDir, item.folder);
-    lines.push(`## ${sanitizeText(item.title)} — \`${display(dir)}\``, '');
+    lines.push(`## ${sanitizeText(item.title)} – \`${display(dir)}\``, '');
     if (item.passportError) {
       lines.push(`- Паспорт ролика не читается: ${sanitizeText(item.passportError)}. Почини паспорт, затем выполни правки.`);
     }

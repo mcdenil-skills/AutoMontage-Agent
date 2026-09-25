@@ -5,17 +5,17 @@ const STATUS_LABELS = { waiting: 'Ждёт меня', working: 'В работе'
 const VIDEO_LABELS = {
   final: 'Финальная версия',
   preview: 'Preview на проверку',
-  'stale-preview': 'Preview устарел — агент готовит новый',
+  'stale-preview': 'Preview устарел – агент готовит новый',
 };
 // Показываем, когда видео есть на диске, но пульт не умеет отдать его браузеру
-// (legacy-форматы вроде .mkv/.avi) — «Показать в папке» при этом остаётся рабочим.
-const VIDEO_UNSUPPORTED_LABEL = 'Этот формат не проигрывается в пульте — откройте в папке';
+// (legacy-форматы вроде .mkv/.avi) – «Показать в папке» при этом остаётся рабочим.
+const VIDEO_UNSUPPORTED_LABEL = 'Этот формат не проигрывается в пульте – откройте в папке';
 const REFRESH_MS = 20000;
 
 const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
 const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null };
 // Снимок /api/cards, по которому список нарисован на экране сейчас (его обновляет сам
-// renderList) — фоновый опрос каждые 20 с не должен пересобирать DOM и сбрасывать
+// renderList) – фоновый опрос каждые 20 с не должен пересобирать DOM и сбрасывать
 // фокус/скролл, если ничего не изменилось на сервере.
 let lastCardsJson = null;
 // Что показано в открытой карточке на момент её полной отрисовки: по этим значениям
@@ -54,7 +54,7 @@ async function api(pathname, { method = 'GET', body } = {}) {
   } catch (_) {
     // Сервер пульта закрылся или недоступен: fetch() отклоняется низкоуровневой сетевой
     // ошибкой браузера («Failed to fetch»), которую человеку показывать нельзя.
-    throw new Error('Пульт не отвечает — откройте его снова значком «Пульт роликов».');
+    throw new Error('Пульт не отвечает – откройте его снова значком «Пульт роликов».');
   }
   const text = await response.text();
   let payload = null;
@@ -65,9 +65,9 @@ async function api(pathname, { method = 'GET', body } = {}) {
   }
   if (!response.ok) {
     // 401 и 503 сервер отдаёт как обычный текст, а не JSON (см. sendError в http.js),
-    // и это не разовая ошибка запроса — токен умер или пульт выключается совсем.
-    if (response.status === 401) throw new Error('Ключ доступа устарел — откройте пульт заново значком.');
-    if (response.status === 503) throw new Error('Пульт закрывается — откройте его снова значком.');
+    // и это не разовая ошибка запроса – токен умер или пульт выключается совсем.
+    if (response.status === 401) throw new Error('Ключ доступа устарел – откройте пульт заново значком.');
+    if (response.status === 503) throw new Error('Пульт закрывается – откройте его снова значком.');
     const error = new Error((payload && payload.message) || 'Запрос не выполнен');
     error.code = payload && payload.code;
     throw error;
@@ -76,7 +76,7 @@ async function api(pathname, { method = 'GET', body } = {}) {
 }
 
 function notify(message, tone = 'info') {
-  // Любое новое уведомление заменяет ошибку опроса — дальше это уже не её строка.
+  // Любое новое уведомление заменяет ошибку опроса – дальше это уже не её строка.
   refreshErrorShown = false;
   const notice = document.querySelector('[data-notice]');
   notice.textContent = message;
@@ -106,9 +106,9 @@ function formatClock(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-// Таймкоды правок — по низу секунды (14.6 → 0:14), как в самом плеере: округление вверх
+// Таймкоды правок – по низу секунды (14.6 → 0:14), как в самом плеере: округление вверх
 // (0:15) обещало бы кадр, которого правка ещё не касалась. Длительность в cardFacts()
-// по-прежнему округляется через formatClock — там это просто «сколько идёт ролик».
+// по-прежнему округляется через formatClock – там это просто «сколько идёт ролик».
 function formatClockFloor(seconds) {
   if (!Number.isFinite(seconds)) return '';
   const total = Math.floor(seconds);
@@ -125,7 +125,7 @@ function formatAspect(meta) {
 
 function formatDate(iso) {
   const date = new Date(iso);
-  // Legacy-вариант без файла на диске получает updatedAt = new Date(0) (см. catalog.js) —
+  // Legacy-вариант без файла на диске получает updatedAt = new Date(0) (см. catalog.js) –
   // это не настоящая дата, а «файл потерян», и показывать «1 янв.» человеку не нужно.
   if (Number.isNaN(date.getTime()) || date.getFullYear() < 2000) return '';
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
@@ -145,7 +145,7 @@ function allCards() {
 }
 
 // NFC + нижний регистр с обеих сторон: имена папок на macOS бывают в NFD (например,
-// «й» как «и» + отдельный значок), а человек печатает в обычной, NFC-раскладке —
+// «й» как «и» + отдельный значок), а человек печатает в обычной, NFC-раскладке –
 // без нормализации визуально одинаковые слова не совпадали бы при поиске.
 function normalizeText(text) {
   return text.normalize('NFC').toLowerCase();
@@ -158,7 +158,7 @@ function matches(card) {
     .some((text) => normalizeText(text).includes(query));
 }
 
-// Самый срочный вариант карточки — по нему рисуем лицо карточки в списке и его же
+// Самый срочный вариант карточки – по нему рисуем лицо карточки в списке и его же
 // открываем первым, а не первый по алфавиту порядку вкладок (card.variants).
 function leadVariant(card) {
   return card.variants.find((variant) => variant.key === card.leadKey) || card.variants[0];
@@ -167,7 +167,7 @@ function leadVariant(card) {
 function cardFacts(card) {
   const lead = leadVariant(card);
   // Срочный вариант мог ещё не обзавестись ffprobe-метаданными (preview только что
-  // опубликован) — ищем факты у любого другого варианта карточки, а не показываем пустоту.
+  // опубликован) – ищем факты у любого другого варианта карточки, а не показываем пустоту.
   const source = lead.meta ? lead : (card.variants.find((variant) => variant.meta) || lead);
   const facts = [formatAspect(source.meta), source.meta ? formatClock(source.meta.durationSec) : '']
     .filter(Boolean)
@@ -193,7 +193,7 @@ function renderCard(card) {
     thumb.append(image);
   }
   const body = el('div', 'card__body');
-  // <button> — фразовый контент: h3/p внутри него не по спецификации (хоть браузеры это
+  // <button> – фразовый контент: h3/p внутри него не по спецификации (хоть браузеры это
   // и прощают). span + display:block в CSS даёт тот же вид, оставаясь валидной разметкой.
   const meta = el('span', 'card__meta');
   meta.append(
@@ -263,7 +263,7 @@ function renderList() {
   } else if (state.tab === 'broken') {
     view.append(
       el('p', 'hint', 'Попросите агента проверить паспорт этой папки.'),
-      renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} — ${item.error}`),
+      renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} – ${item.error}`),
     );
   }
 }
@@ -276,7 +276,7 @@ function updateTabs() {
     const tabButton = document.querySelector(`[data-tab="${key}"]`);
     tabButton.hidden = data[key].length === 0;
     // Открытая вкладка «Без паспорта»/«Не читается» вдруг опустела (агент завёл паспорт,
-    // почистил ошибку) — нельзя оставлять человека смотреть на спрятанную кнопку раздела.
+    // почистил ошибку) – нельзя оставлять человека смотреть на спрятанную кнопку раздела.
     if (state.tab === key && data[key].length === 0) {
       state.tab = 'main';
       document.querySelectorAll('[data-tab]').forEach((other) => {
@@ -314,7 +314,7 @@ function closeCard() {
   renderList();
 }
 
-// Обычные действия с папкой — не имеют отношения к агенту, поэтому больше не живут под
+// Обычные действия с папкой – не имеют отношения к агенту, поэтому больше не живут под
 // заголовком «Передать агенту» (см. agentHandoffBlock).
 function actionsBlock(card, variant) {
   const box = el('div', 'actions');
@@ -328,7 +328,7 @@ function actionsBlock(card, variant) {
   }
   box.append(button(card.archived ? 'Вернуть из архива' : 'В архив', async () => {
     await api('/api/archive', { method: 'POST', body: { cardId: card.id, archived: !card.archived } });
-    // closeCard() сам чистит уведомление — успех показываем уже после него, иначе человек
+    // closeCard() сам чистит уведомление – успех показываем уже после него, иначе человек
     // не успевает прочитать «Папка не тронута» до того, как строка станет пустой.
     await refresh();
     closeCard();
@@ -358,14 +358,14 @@ function agentHandoffBlock(card, variant) {
       copied = true;
     } catch (_) {
       field.select();
-      // execCommand — резервный путь, когда Clipboard API недоступен (нет разрешения,
+      // execCommand – резервный путь, когда Clipboard API недоступен (нет разрешения,
       // страница не в фокусе): он тоже может не сработать, и об этом нужно сказать честно,
       // а не показывать «Скопировано» вслепую.
       copied = document.execCommand('copy');
     }
     copyStatus.textContent = copied
-      ? 'Скопировано — вставьте в чат с агентом'
-      : 'Не удалось скопировать — выделите фразу и нажмите ⌘C / Ctrl+C';
+      ? 'Скопировано – вставьте в чат с агентом'
+      : 'Не удалось скопировать – выделите фразу и нажмите ⌘C / Ctrl+C';
   }, 'primary');
   box.append(field, copy, copyStatus);
   return box;
@@ -373,7 +373,7 @@ function agentHandoffBlock(card, variant) {
 
 function approveBlock(variant) {
   const box = el('div', 'approve');
-  // Билет запоминаем на самой коробке — по нему фоновое обновление узнаёт, что вариант
+  // Билет запоминаем на самой коробке – по нему фоновое обновление узнаёт, что вариант
   // стал (не)утверждаемым или что появился новый preview, не дожидаясь полной перерисовки.
   box.dataset.ticket = variant.approvalTicket || '';
   if (!variant.approvable) {
@@ -390,7 +390,7 @@ function approveBlock(variant) {
   const approve = el('button', 'primary', 'Утверждаю');
   approve.type = 'button';
   approve.disabled = true;
-  // Пока человек смотрит старую версию из Истории, утверждать нельзя — кнопка блокируется
+  // Пока человек смотрит старую версию из Истории, утверждать нельзя – кнопка блокируется
   // независимо от чекбокса (см. box.setHistoryMode, дергает renderDetail).
   let viewingHistory = false;
   checkbox.addEventListener('change', () => { approve.disabled = viewingHistory || !checkbox.checked; });
@@ -401,14 +401,14 @@ function approveBlock(variant) {
         method: 'POST',
         body: { key: variant.key, ticket: variant.approvalTicket, confirmPreviewViewed: true },
       });
-      notify('Утверждено. Скопируйте фразу для агента — он соберёт финал и проверит его.');
+      notify('Утверждено. Скопируйте фразу для агента – он соберёт финал и проверит его.');
       await refresh();
     } catch (error) {
       if (error.code === 'PREVIEW_CHANGED') {
-        // Билет протух не из-за сети, а потому что ролик реально изменился — перечитываем
+        // Билет протух не из-за сети, а потому что ролик реально изменился – перечитываем
         // карточку целиком вместо просьбы «обновите страницу вручную».
         await refresh();
-        notify('Появилась новая версия preview — посмотрите её перед утверждением.', 'error');
+        notify('Появилась новая версия preview – посмотрите её перед утверждением.', 'error');
       } else {
         notify(error.message, 'error');
         approve.disabled = viewingHistory || !checkbox.checked;
@@ -440,7 +440,7 @@ function applyHistoryMode(active) {
 function replaceApproveBlock(box, variant) {
   const fresh = approveBlock(variant);
   box.replaceWith(fresh);
-  // Человек всё ещё смотрит старую версию из Истории — новый блок тоже заблокирован.
+  // Человек всё ещё смотрит старую версию из Истории – новый блок тоже заблокирован.
   if (historyShown()) fresh.setHistoryMode(true);
 }
 
@@ -483,7 +483,7 @@ async function loadComments(variant, list, getVideo) {
   }
 }
 
-// getVideo — не сам <video>, а способ получить текущий плеер карточки в момент действия:
+// getVideo – не сам <video>, а способ получить текущий плеер карточки в момент действия:
 // правка берёт секунду, переход к таймкоду и пауза при вводе всегда обращаются к плееру,
 // который сейчас на экране.
 function commentsBlock(variant, getVideo) {
@@ -491,7 +491,7 @@ function commentsBlock(variant, getVideo) {
   box.append(el('h3', '', 'Правки'));
   if (!variant.video) {
     const hint = variant.videoUnsupported
-      ? 'Этот формат не проигрывается в пульте — правку можно описать словами агенту.'
+      ? 'Этот формат не проигрывается в пульте – правку можно описать словами агенту.'
       : 'Правки можно оставить, когда появится видео.';
     box.append(el('p', 'hint', hint));
     box.setHistoryMode = () => {};
@@ -522,7 +522,7 @@ function commentsBlock(variant, getVideo) {
   });
   const list = el('ul', 'comment-list');
   list.dataset.commentList = '';
-  // secondary — амбер оставлен только двум по-настоящему решающим кнопкам («Утверждаю»,
+  // secondary – амбер оставлен только двум по-настоящему решающим кнопкам («Утверждаю»,
   // «Скопировать для агента»), чтобы взгляд не разбегался между тремя яркими кнопками.
   const save = el('button', 'secondary', 'Добавить правку');
   save.type = 'button';
@@ -589,7 +589,7 @@ function renderDetail() {
   playerColumn.append(playerSlot);
   // Один <video> на всю открытую карточку: правки берут из него секунду, переходы к
   // таймкоду и пауза при вводе обращаются к нему же. История и «Вернуться к текущей»
-  // меняют только src — новый элемент оставил бы блок правок с отсоединённым плеером.
+  // меняют только src – новый элемент оставил бы блок правок с отсоединённым плеером.
   // video остаётся null, пока в слоте заглушка (легаси .mkv или ролик без preview):
   // мёртвый плеер без источника выглядел рабочим, но не проигрывал ничего.
   let video = null;
@@ -622,11 +622,11 @@ function renderDetail() {
 
   let videoLabelText;
   if (variant.video) {
-    // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране — уже
+    // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране – уже
     // утверждённый preview, а не тот, что «ждёт проверки», даже если после утверждения
     // человек оставил новую правку.
     videoLabelText = variant.needsFinal && variant.video.kind === 'preview'
-      ? 'Утверждённый preview — агент собирает финал'
+      ? 'Утверждённый preview – агент собирает финал'
       : VIDEO_LABELS[variant.video.kind];
   } else if (variant.videoUnsupported) {
     videoLabelText = VIDEO_UNSUPPORTED_LABEL;
@@ -659,8 +659,8 @@ function renderDetail() {
       const open = el('button', 'link-button', item.label);
       open.type = 'button';
       open.addEventListener('click', () => {
-        // Рендеры Истории — всегда обычный mp4 (см. renderHistory в catalog.js), поэтому
-        // тут всегда показываем настоящее видео, даже если текущий вариант — плейсхолдер.
+        // Рендеры Истории – всегда обычный mp4 (см. renderHistory в catalog.js), поэтому
+        // тут всегда показываем настоящее видео, даже если текущий вариант – плейсхолдер.
         showVideo(mediaUrl(item.url), item.label);
         // Кадр из Истории уже не текущий: правку по нему добавить нельзя (агент увидит
         // не тот таймкод), а утверждение всегда привязано именно к текущему preview.
@@ -710,12 +710,12 @@ function rerenderDetailKeepingDraft() {
 }
 
 // Фоновое обновление открытой карточки. Перерисовываем целиком только когда человеку
-// действительно нужно заново посмотреть ролик; всё остальное — точечные замены, чтобы
+// действительно нужно заново посмотреть ролик; всё остальное – точечные замены, чтобы
 // не сбрасывать плеер, фокус и недописанную правку каждые 20 секунд.
 function syncDetail(card) {
   const variant = currentVariant(card);
   if (variant.key !== shownDetail.key) {
-    // Открытого варианта больше нет — показываем тот, что остался.
+    // Открытого варианта больше нет – показываем тот, что остался.
     renderDetail();
     return;
   }
@@ -725,7 +725,7 @@ function syncDetail(card) {
     // Агент опубликовал новый файл: старый в плеере утверждать нельзя, его ещё не видели.
     // Если видео, наоборот, пропало, заглушка сама скажет «Видео пока нет».
     rerenderDetailKeepingDraft();
-    if (freshVideoUrl) notify('Появилась новая версия видео — посмотрите её перед утверждением.');
+    if (freshVideoUrl) notify('Появилась новая версия видео – посмотрите её перед утверждением.');
     return;
   }
   const badge = document.querySelector('[data-variant-status]');
@@ -736,7 +736,7 @@ function syncDetail(card) {
   }
   if (next) next.textContent = variant.nextStep;
   // Видео то же, но билет утверждения мог измениться: новая правка убирает возможность
-  // утвердить, удаление правки — возвращает тот же билет для того же preview.
+  // утвердить, удаление правки – возвращает тот же билет для того же preview.
   const approveBox = document.querySelector('[data-view="detail"] .approve');
   if (!approveBox) return;
   const shownTicket = approveBox.dataset.ticket || '';
@@ -745,10 +745,10 @@ function syncDetail(card) {
     replaceApproveBlock(approveBox, variant);
     return;
   }
-  // Билет, которого карточка при отрисовке не видела, — ролик изменился иначе, чем
+  // Билет, которого карточка при отрисовке не видела, – ролик изменился иначе, чем
   // правкой человека. Показываем карточку заново, а не подменяем блок молча.
   rerenderDetailKeepingDraft();
-  notify('Preview теперь можно утвердить — посмотрите его целиком перед утверждением.');
+  notify('Preview теперь можно утвердить – посмотрите его целиком перед утверждением.');
 }
 
 async function refresh({ keepDetail = false } = {}) {
@@ -759,13 +759,13 @@ async function refresh({ keepDetail = false } = {}) {
     refreshErrorShown = true;
     return;
   }
-  // Сервер снова ответил — ошибка, которую поставил прошлый неудачный опрос, больше не
+  // Сервер снова ответил – ошибка, которую поставил прошлый неудачный опрос, больше не
   // актуальна. Ошибки и подсказки действий человека («Напишите, что поправить» и т.п.)
   // остаются на месте: их убирает только следующее действие.
   if (refreshErrorShown) notify('');
   updateTabs();
   if (!state.openCardId) {
-    // lastCardsJson обновляет сам renderList — при каждой настоящей отрисовке списка.
+    // lastCardsJson обновляет сам renderList – при каждой настоящей отрисовке списка.
     if (JSON.stringify(state.data) !== lastCardsJson) renderList();
     return;
   }

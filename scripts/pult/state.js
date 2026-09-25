@@ -9,7 +9,7 @@ function statePath(projectsDir) {
   return path.join(projectsDir, '.pult', 'state.json');
 }
 
-// Это собственные флаги пульта, не пользовательские данные: любая порча файла —
+// Это собственные флаги пульта, не пользовательские данные: любая порча файла –
 // пустой архив, а не отказ всей панели (сервер читает состояние на каждый GET /api/cards).
 function readPultState(projectsDir) {
   let value;
@@ -28,7 +28,7 @@ function readPultState(projectsDir) {
   };
 }
 
-// Архив — только пометка «не показывать» в projects/.pult. Папки роликов не меняются.
+// Архив – только пометка «не показывать» в projects/.pult. Папки роликов не меняются.
 function setArchived(projectsDir, cardId, archived) {
   if (typeof cardId !== 'string' || !CARD_ID.test(cardId)) throw new Error('неверный id карточки');
   const state = readPultState(projectsDir);

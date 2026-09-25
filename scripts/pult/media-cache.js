@@ -36,7 +36,7 @@ function isPlainObject(value) {
 }
 
 // Прочитанный кэш уходит в браузер как meta: подменённый вручную файл не должен
-// протаскивать посторонние поля или неверные типы — читаем только три проверенных
+// протаскивать посторонние поля или неверные типы – читаем только три проверенных
 // числа и возвращаем ровно их.
 function isValidCachedProbe(value) {
   return isPlainObject(value)
@@ -47,7 +47,7 @@ function isValidCachedProbe(value) {
 
 function probeMedia(projectsDir, filePath, { captureImpl = captureToolResult } = {}) {
   try {
-    // Проверка символической ссылки — самым первым шагом, до любого чтения кэша:
+    // Проверка символической ссылки – самым первым шагом, до любого чтения кэша:
     // враждебная .pult, уже указывающая на чужой заполненный кэш с совпадающим по
     // ключу именем файла, не должна быть молча прочитана как «свой» результат.
     ensureCacheDir(projectsDir);
@@ -56,7 +56,7 @@ function probeMedia(projectsDir, filePath, { captureImpl = captureToolResult } =
     try {
       cached = readJsonIfExists(cachePath, 'probe cache');
     } catch (_) {
-      // Битый (непарсящийся) кэш — это промах кэша, а не постоянный отказ:
+      // Битый (непарсящийся) кэш – это промах кэша, а не постоянный отказ:
       // ниже мы просто перепробируем файл заново.
       cached = undefined;
     }
@@ -106,11 +106,11 @@ function extractFrame(videoPath, timeSec, outPath, { captureImpl = captureToolRe
 
 function thumbnailFor(projectsDir, filePath, { captureImpl = captureToolResult } = {}) {
   try {
-    // Проверка символической ссылки — самым первым шагом, до fs.existsSync: та же
+    // Проверка символической ссылки – самым первым шагом, до fs.existsSync: та же
     // причина, что и в probeMedia.
     ensureCacheDir(projectsDir);
     const target = path.join(cacheDir(projectsDir), `${cacheKey(filePath)}.jpg`);
-    // Нулевой байт в кэше — это испорченная обложка, а не валидный результат:
+    // Нулевой байт в кэше – это испорченная обложка, а не валидный результат:
     // считаем это промахом и перерисовываем.
     if (fs.existsSync(target) && fs.statSync(target).size > 0) return target;
     // Рендерим во временный файл рядом с целевым и переименовываем только при успехе,

@@ -20,7 +20,7 @@ function project(t) {
 }
 
 // project(t) always returns <base>/projects/clip, so two levels up is the tmp root
-// that makePultRoot(t) will clean up — a safe place to plant "outside the project" fixtures.
+// that makePultRoot(t) will clean up – a safe place to plant "outside the project" fixtures.
 function outsideBase(dir) {
   return path.dirname(path.dirname(dir));
 }
@@ -134,7 +134,7 @@ test('deleteComment never touches files outside the frame cache, even with a tam
 });
 
 // C1: even when the recorded frame path is well-formed, deleteComment must resolve it
-// through the engine's symlink-aware guard rather than a raw path.join — a symlinked
+// through the engine's symlink-aware guard rather than a raw path.join – a symlinked
 // pult/frames must not let deletion reach outside the project.
 test('deleteComment does not follow a symlinked frame cache to delete outside files', { skip: process.platform === 'win32' }, (t) => {
   const dir = project(t);

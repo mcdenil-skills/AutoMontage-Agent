@@ -68,7 +68,7 @@ test('history lists complete renders newest first without raw files', (t) => {
   const { projectsDir } = makePultRoot(t);
   addDraftProject(projectsDir, { folder: 'ready-clip', approve: true, final: true });
   const entry = scanProjects({ projectsDir }).entries[0];
-  assert.deepEqual(entry.history, [{ label: 'Рендер v01 — final', path: 'renders/v01-final/final.mp4' }]);
+  assert.deepEqual(entry.history, [{ label: 'Рендер v01 – final', path: 'renders/v01-final/final.mp4' }]);
 });
 
 test('pending comments move a waiting video back to the agent', (t) => {
@@ -113,7 +113,7 @@ test('symlinked folders are ignored and a missing projects dir is empty', { skip
 });
 
 // Реальные legacy-папки на macOS часто хранят имя в NFD (й/ё разложены на буква + акцент)
-// и содержат скобки/плюс — символьный allow-list их отклонял бы, а deny-list SAFE_NAME
+// и содержат скобки/плюс – символьный allow-list их отклонял бы, а deny-list SAFE_NAME
 // пропускает. Ключ карточки обязан пройти ENTRY_KEY, иначе ролик нельзя будет ни открыть,
 // ни прокомментировать через API.
 test('legacy folder names with NFD Cyrillic and punctuation stay addressable', (t) => {
@@ -138,7 +138,7 @@ test('legacy folder names with NFD Cyrillic and punctuation stay addressable', (
 
 // Сервер вызывает scanProjects на каждый запрос: одна нечитаемая папка не должна ронять
 // весь каталог. chmod 000 на brief делает чтение brief внутри standardEntry непредсказуемо
-// падающим — именно такой сбой должен превращаться в «Папка ролика не читается», а не
+// падающим – именно такой сбой должен превращаться в «Папка ролика не читается», а не
 // в необработанное исключение.
 test('scanProjects keeps other folders when one folder throws while building its entry', {
   skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
@@ -151,7 +151,7 @@ test('scanProjects keeps other folders when one folder throws while building its
     try {
       fs.chmodSync(draft.jsonPath, 0o644);
     } catch (_) {
-      // временная папка теста уже могла быть удалена — это не ошибка.
+      // временная папка теста уже могла быть удалена – это не ошибка.
     }
   });
 
@@ -184,7 +184,7 @@ test('scanFolder ignores a symlinked folder', { skip: process.platform === 'win3
 });
 
 // APFS/NTFS по умолчанию не различают регистр и нормализацию Unicode при поиске файла,
-// но ключ приходит от браузера — разное написание одной и той же папки не должно находить
+// но ключ приходит от браузера – разное написание одной и той же папки не должно находить
 // её и выдавать один и тот же результат под разными ключами.
 test('scanFolder requires the exact on-disk spelling, not a case-insensitive match', (t) => {
   const { projectsDir } = makePultRoot(t);
@@ -234,7 +234,7 @@ test('a folder name containing # is reported as broken instead of scanned', (t) 
   assert.deepEqual(scan.entries, []);
   assert.deepEqual(scan.broken, [{
     folder: 'series#0',
-    error: 'Символ # в имени папки не поддерживается — переименуйте папку',
+    error: 'Символ # в имени папки не поддерживается – переименуйте папку',
   }]);
 });
 
@@ -255,9 +255,9 @@ test('render history orders files with final first, excludes raw suffixes, and l
 
   const entry = scanProjects({ projectsDir }).entries[0];
   assert.deepEqual(entry.history, [
-    { label: 'Рендер v02 — final (final.mp4)', path: 'renders/v02-final/final.mp4' },
-    { label: 'Рендер v02 — final (alt.mp4)', path: 'renders/v02-final/alt.mp4' },
-    { label: 'Рендер v01 — final', path: 'renders/v01-final/final.mp4' },
+    { label: 'Рендер v02 – final (final.mp4)', path: 'renders/v02-final/final.mp4' },
+    { label: 'Рендер v02 – final (alt.mp4)', path: 'renders/v02-final/alt.mp4' },
+    { label: 'Рендер v01 – final', path: 'renders/v01-final/final.mp4' },
   ]);
 });
 
@@ -283,7 +283,7 @@ test('a legacy variant with a missing video file reports a clear next step', (t)
   const entry = scanProjects({ projectsDir }).entries[0];
   assert.equal(entry.video, null);
   assert.equal(entry.status, 'ready');
-  assert.equal(entry.nextStep, 'Видео не найдено — проверьте pult-card.json');
+  assert.equal(entry.nextStep, 'Видео не найдено – проверьте pult-card.json');
 });
 
 test('a legacy card without a title falls back to the NFC-normalized folder name', (t) => {

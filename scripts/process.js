@@ -55,7 +55,7 @@ function invoke(command, args, options, stdioOptions) {
     throw new Error(`${stage}: timeout должен быть положительным целым`);
   }
   // Зависший ffprobe/ffmpeg (например файл ещё копируется по сети) не должен вешать
-  // однопоточный сервер пульта навечно — timeout настраивается только по явному
+  // однопоточный сервер пульта навечно – timeout настраивается только по явному
   // запросу вызывающего кода, старые вызовы без него ведут себя как прежде.
   const timeoutOptions = timeout === undefined ? {} : { timeout, killSignal: 'SIGKILL' };
   const result = spawnSyncImpl(command, args, {

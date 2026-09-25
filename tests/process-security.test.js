@@ -135,7 +135,7 @@ test('an invalid timeout is rejected before spawning anything', () => {
 });
 
 // Свой timeout у spawnSync убивает дочерний процесс и сообщает об этом через
-// result.error/result.signal — assertProcessResult обязан превратить это в обычную
+// result.error/result.signal – assertProcessResult обязан превратить это в обычную
 // ошибку, а не в тихое зависание.
 test('a timed-out spawnSync result surfaces as a thrown error', () => {
   assert.throws(

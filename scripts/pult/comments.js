@@ -142,7 +142,7 @@ function addComment(projectDir, input, {
     status: 'new',
   };
   // Повторное чтение перед записью: захват кадра мог занять секунды, за которые
-  // другой процесс (например `inbox --accept` от агента) мог изменить файл —
+  // другой процесс (например `inbox --accept` от агента) мог изменить файл –
   // писать поверх устаревшего списка нельзя.
   const latest = readComments(projectDir);
   if (latest.some((existing) => existing.id === commentId)) {
@@ -158,8 +158,8 @@ function deleteComment(projectDir, commentId) {
   if (!target) return false;
   if (target.status !== 'new') throw new Error('правка уже принята агентом');
   writeComments(projectDir, comments.filter((comment) => comment.id !== commentId));
-  // Кадр — только кэш: удаляем его лишь если путь в точности совпадает с каноническим
-  // именем для этого id (readComments уже это гарантирует, проверка здесь — вторая
+  // Кадр – только кэш: удаляем его лишь если путь в точности совпадает с каноническим
+  // именем для этого id (readComments уже это гарантирует, проверка здесь – вторая
   // линия защиты) и только через движковый guard с проверкой символических ссылок.
   // Запись правки уже удалена, поэтому ошибку удаления кадра можно игнорировать.
   if (target.frame === framePathFor(target.id)) {

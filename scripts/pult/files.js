@@ -4,7 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 
 const { openReadOnlyFlags } = require('../filesystem-capabilities');
 
-// undefined — файла нет; битый JSON — ошибка с понятным именем файла.
+// undefined – файла нет; битый JSON – ошибка с понятным именем файла.
 // Открывается без прохода по симлинку: подменённый файл не должен читаться незаметно.
 function readJsonIfExists(filePath, label) {
   let descriptor;

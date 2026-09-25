@@ -134,7 +134,7 @@ function previewFileOf(projectsDir, folder) {
   return path.join(projectsDir, folder, ...manifest.currentPreview.filePath.split('/'));
 }
 
-// Новый полный preview того же черновика — как это делает агент после правки.
+// Новый полный preview того же черновика – как это делает агент после правки.
 function republishFullPreview(projectsDir, folder, bytes) {
   const projectDir = path.join(projectsDir, folder);
   const workspace = createOrOpenProject({ projectDir });
@@ -220,7 +220,7 @@ test('media urls carry a version that changes only when the video file changes',
   const v1 = versionOf(first.video.url);
   assert.match(v1, /^[A-Za-z0-9_-]{16}$/);
   assert.equal(versionOf(first.thumbUrl), v1);
-  // Файл не менялся — метка та же, иначе фоновое обновление перерисовывало бы плеер зря.
+  // Файл не менялся – метка та же, иначе фоновое обновление перерисовывало бы плеер зря.
   assert.equal(versionOf((await variantOf(session, 'waiting-clip')).video.url), v1);
   // Маршрут медиа выбирает файл только по ключу: метку он не проверяет.
   const served = await request(session, first.video.url, { token: session.token, queryToken: true });
@@ -234,7 +234,7 @@ test('media urls carry a version that changes only when the video file changes',
   assert.notEqual(v2, v1);
   assert.equal(versionOf(republished.thumbUrl), v2);
 
-  // У финала в паспорте нет SHA-256 — версию даёт сам файл (размер и время изменения).
+  // У финала в паспорте нет SHA-256 – версию даёт сам файл (размер и время изменения).
   const readyBefore = versionOf((await variantOf(session, 'ready-clip')).video.url);
   assert.equal(versionOf((await variantOf(session, 'ready-clip')).video.url), readyBefore);
   const manifest = readProjectManifest(path.join(projectsDir, 'ready-clip'));
@@ -246,7 +246,7 @@ test('media urls carry a version that changes only when the video file changes',
   assert.ok(!text.includes(projectsDir));
 });
 
-// Подпись «Утверждённый preview — агент собирает финал» опирается на флаг сервера, а не
+// Подпись «Утверждённый preview – агент собирает финал» опирается на флаг сервера, а не
 // на разбор текста следующего шага.
 test('cards say whether a variant still waits for its final', async (t) => {
   const projectsDir = await standardRoot(t);
@@ -279,7 +279,7 @@ test('media rejects unknown keys and traversal attempts', async (t) => {
   const projectsDir = await standardRoot(t);
   const { session } = await startTest(t, projectsDir);
   // '#' в ключе кодируется как %23: сырой '#' начал бы фрагмент URL и отрезал бы токен.
-  // 'Ready-Clip' — другое написание папки: на APFS/NTFS оно не должно найти ролик.
+  // 'Ready-Clip' – другое написание папки: на APFS/NTFS оно не должно найти ролик.
   for (const key of ['../ready-clip', '..%2Fready-clip', 'missing', 'ready-clip%23999', 'Ready-Clip', '']) {
     const response = await request(session, `/media/video?key=${key}`, { token: session.token, queryToken: true });
     assert.equal(response.status, 404, key);
@@ -336,7 +336,7 @@ test('adding a comment to a broken comments file is refused as broken, not as in
   assert.equal(refused.status, 409);
   assert.deepEqual(refused.json, {
     code: 'COMMENTS_BROKEN',
-    message: 'Файл правок повреждён — попросите агента проверить pult/comments.json',
+    message: 'Файл правок повреждён – попросите агента проверить pult/comments.json',
   });
   assert.equal(fs.readFileSync(path.join(projectsDir, 'waiting-clip', 'pult', 'comments.json'), 'utf8'), '{broken');
 });
@@ -345,7 +345,7 @@ test('an unexpected comment failure is an internal error without details', { ski
   const projectsDir = await standardRoot(t);
   const outside = path.join(path.dirname(projectsDir), 'outside-pult');
   fs.mkdirSync(outside);
-  // pult — ссылка наружу: сохранять правку туда нельзя, и это не «битый файл правок».
+  // pult – ссылка наружу: сохранять правку туда нельзя, и это не «битый файл правок».
   fs.symlinkSync(outside, path.join(projectsDir, 'waiting-clip', 'pult'));
   const { session, calls } = await startTest(t, projectsDir);
   const failed = await post(session, '/api/comments', { key: 'waiting-clip', timeSec: 1, text: 'Сдвинуть титр' });
@@ -403,7 +403,7 @@ test('approve requires confirmation and the exact previewed video', async (t) =>
   assert.equal(approved.status, 201);
   const cards = (await get(session, '/api/cards')).json;
   const variant = cards.working.flatMap((card) => card.variants).find((item) => item.key === 'waiting-clip');
-  assert.equal(variant.nextStep, 'Утверждено — агент собирает финал');
+  assert.equal(variant.nextStep, 'Утверждено – агент собирает финал');
   const briefs = fs.readdirSync(path.join(projectsDir, 'waiting-clip', 'brief'));
   assert.ok(briefs.some((name) => /-approved\.lesson\.json$/.test(name)));
   assert.equal((await post(session, '/api/approve', { key: 'waiting-clip', ticket, confirmPreviewViewed: true })).status, 409);
@@ -475,7 +475,7 @@ test('an engine lock conflict on a current ticket asks to retry later', async (t
   const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
   const busy = await approve(session, 'waiting-clip', ticket);
   assert.equal(busy.status, 409);
-  assert.deepEqual(busy.json, { code: 'PROJECT_BUSY', message: 'Агент сейчас меняет этот ролик — попробуйте через минуту' });
+  assert.deepEqual(busy.json, { code: 'PROJECT_BUSY', message: 'Агент сейчас меняет этот ролик – попробуйте через минуту' });
   assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
 });
 
@@ -488,19 +488,19 @@ test('approval checks the preview bytes the page was shown', async (t) => {
   fs.chmodSync(previewFile, 0o644);
 
   // Билет актуален, но файл не тот, что в паспорте: обновление страницы не поможет,
-  // нужен новый preview от агента — поэтому другой код, чем у устаревшего билета.
+  // нужен новый preview от агента – поэтому другой код, чем у устаревшего билета.
   fs.writeFileSync(previewFile, 'bytes the author never saw');
   const swapped = await approve(session, 'waiting-clip', ticket);
   assert.equal(swapped.status, 409);
   assert.deepEqual(swapped.json, {
     code: 'PREVIEW_DAMAGED',
-    message: 'Файл preview не совпадает с паспортом ролика — попросите агента пересобрать preview',
+    message: 'Файл preview не совпадает с паспортом ролика – попросите агента пересобрать preview',
   });
   fs.rmSync(previewFile);
   const missing = await approve(session, 'waiting-clip', ticket);
   assert.equal(missing.status, 409);
   assert.equal(missing.json.code, 'PREVIEW_DAMAGED');
-  // Без файла preview страница не может его показать — и не предлагает утвердить.
+  // Без файла preview страница не может его показать – и не предлагает утвердить.
   const unplayable = await variantOf(session, 'waiting-clip');
   assert.equal(unplayable.video, null);
   assert.equal(unplayable.approvable, false);
@@ -620,7 +620,7 @@ test('closing the pult shuts review down like the review cli: abort, close, wait
   assert.equal(session.server.listening, false);
 });
 
-// По умолчанию — запрос самой страницы Review: с её токеном и её Host.
+// По умолчанию – запрос самой страницы Review: с её токеном и её Host.
 function reviewGet(review, { pathname = '/api/state', headers = { authorization: `Bearer ${review.token}` } } = {}) {
   return new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port: review.server.address().port, path: pathname, headers }, (response) => {
@@ -649,7 +649,7 @@ test('work in the review window keeps the pult alive', async (t) => {
   await delay(50);
   assert.equal(session.server.listening, true);
   assert.equal(review.server.listening, true);
-  // Медиа Review передаёт токен в адресе — это тоже работа человека в окне.
+  // Медиа Review передаёт токен в адресе – это тоже работа человека в окне.
   assert.equal(await reviewGet(review, { pathname: `/media/source?token=${review.token}`, headers: {} }), 200);
   clock = 2700;
   await delay(50);
@@ -728,7 +728,7 @@ test('a review request whose body arrives after closing began starts no review',
     startReviewServerImpl: async (options) => {
       calls.reviews.push(options);
       const review = await fakeReview(calls);
-      // Уборка открытого Review занимает время — в эту паузу и приходит тело запроса.
+      // Уборка открытого Review занимает время – в эту паузу и приходит тело запроса.
       review.waitForActiveImports = () => delay(150);
       reviews.push(review);
       return review;
@@ -741,7 +741,7 @@ test('a review request whose body arrives after closing began starts no review',
   t.after(() => socket.destroy());
   await new Promise((resolve) => { socket.once('connect', resolve); });
   const body = JSON.stringify({ key: 'ready-clip' });
-  // Заголовки приходят до закрытия, тело — уже после: проверка в начале маршрута пройдена.
+  // Заголовки приходят до закрытия, тело – уже после: проверка в начале маршрута пройдена.
   socket.write([
     'POST /api/review HTTP/1.1',
     `Host: 127.0.0.1:${port}`,

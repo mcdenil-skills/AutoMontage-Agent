@@ -29,7 +29,7 @@ const { readPultState, setArchived } = require('./state');
 
 const IDLE_MS = 30 * 60 * 1000;
 const IDLE_CHECK_MS = 60 * 1000;
-const COMMENTS_BROKEN_MESSAGE = 'Файл правок повреждён — попросите агента проверить pult/comments.json';
+const COMMENTS_BROKEN_MESSAGE = 'Файл правок повреждён – попросите агента проверить pult/comments.json';
 const APPROVAL_BLOCKED_MESSAGE = 'Движок не принял утверждение: черновик ещё не готов. '
   + 'Откройте проверку монтажа или передайте ролик агенту.';
 
@@ -39,26 +39,26 @@ const shuttingDown = () => new PultRequestError(503, 'SHUTTING_DOWN', 'Пуль�
 const previewChanged = () => new PultRequestError(
   409,
   'PREVIEW_CHANGED',
-  'Ролик изменился — обновите страницу и посмотрите новую версию',
+  'Ролик изменился – обновите страницу и посмотрите новую версию',
 );
 const previewDamaged = () => new PultRequestError(
   409,
   'PREVIEW_DAMAGED',
-  'Файл preview не совпадает с паспортом ролика — попросите агента пересобрать preview',
+  'Файл preview не совпадает с паспортом ролика – попросите агента пересобрать preview',
 );
-const projectBusy = () => new PultRequestError(409, 'PROJECT_BUSY', 'Агент сейчас меняет этот ролик — попробуйте через минуту');
+const projectBusy = () => new PultRequestError(409, 'PROJECT_BUSY', 'Агент сейчас меняет этот ролик – попробуйте через минуту');
 // Код, которым движок помечает занятый или изменившийся во время записи project.json
 // (scripts/project/workspace.js, manifestConflict). Движок его не экспортирует.
 const ENGINE_MANIFEST_CONFLICT = 'PROJECT_MANIFEST_CONFLICT';
 
-// Для лога — только имя класса ошибки, и то лишь если оно похоже на имя класса:
+// Для лога – только имя класса ошибки, и то лишь если оно похоже на имя класса:
 // сообщение и произвольные поля могут содержать абсолютные пути.
 function errorName(error) {
   const name = error && typeof error.name === 'string' ? error.name : '';
   return /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
 }
 
-// Тело запроса должно содержать ровно эти поля: лишнее поле — признак чужого клиента.
+// Тело запроса должно содержать ровно эти поля: лишнее поле – признак чужого клиента.
 function exactKeys(body, keys) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
   const actual = Object.keys(body);
@@ -106,7 +106,7 @@ async function startPultServer({
 
   // Точечный поиск по ключу: сканируем только одну папку, а не весь каталог. Полное
   // сканирование ~40 реальных папок стоит ~35 мс, а страница с двумя десятками обложек
-  // делала бы его на каждую — однопоточный сервер вставал бы почти на секунду.
+  // делала бы его на каждую – однопоточный сервер вставал бы почти на секунду.
   function findEntry(key) {
     if (typeof key !== 'string' || !ENTRY_KEY.test(key)) return null;
     return scanFolder(resolvedProjectsDir, folderFromKey(key)).entries.find((entry) => entry.key === key) || null;
@@ -144,7 +144,7 @@ async function startPultServer({
 
   // Метка версии видео для URL: адрес `?key=…` одинаков для старого и нового preview, и
   // открытая страница не узнала бы о новом файле. Метка меняется вместе с файлом (SHA-256
-  // из паспорта, а у финала и legacy-видео без хеша — размер и время изменения) и
+  // из паспорта, а у финала и legacy-видео без хеша – размер и время изменения) и
   // остаётся прежней, пока файл тот же. Маршрут медиа её не проверяет: файл по-прежнему
   // выбирается только ключом.
   function mediaVersion(entry, videoFile) {
@@ -163,7 +163,7 @@ async function startPultServer({
       .slice(0, 16);
   }
 
-  // У legacy-папки несколько вариантов делят один comments.json — каждому свои правки.
+  // У legacy-папки несколько вариантов делят один comments.json – каждому свои правки.
   function variantComments(entry) {
     const comments = readComments(projectDirOf(entry));
     return entry.kind === 'legacy'
@@ -183,8 +183,8 @@ async function startPultServer({
     };
   }
 
-  // Вариант для браузера: без путей, brief и SHA-256 — видео адресуется ключом,
-  // утверждение — непрозрачным билетом.
+  // Вариант для браузера: без путей, brief и SHA-256 – видео адресуется ключом,
+  // утверждение – непрозрачным билетом.
   function browserVariant(entry) {
     const query = `key=${encodeURIComponent(entry.key)}`;
     const videoFile = entry.video ? entryFile(entry, entry.video.path) : null;
@@ -204,7 +204,7 @@ async function startPultServer({
       reviewable: entry.reviewable,
       approvable: entry.approvable && playable,
       approvalTicket: playable ? approvalTicket(entry) : null,
-      // Утверждённый brief ещё без финала: на экране — тот самый утверждённый preview.
+      // Утверждённый brief ещё без финала: на экране – тот самый утверждённый preview.
       needsFinal: Boolean(entry.needsFinal),
       video: playable ? { kind: entry.video.kind, url: `/media/video?${versioned}` } : null,
       videoUnsupported: Boolean(videoFile) && !playable,
@@ -243,7 +243,7 @@ async function startPultServer({
     }
   }
 
-  // Работа в окне Review — тоже активность пульта: иначе человек, закрывший окно пульта
+  // Работа в окне Review – тоже активность пульта: иначе человек, закрывший окно пульта
   // и правящий монтаж в Review, через 30 минут потерял бы Review вместе с ним. Считаем
   // только запросы, которые сам Review признал бы своими: его Host и его токен.
   function watchReviewActivity(review) {
@@ -353,13 +353,13 @@ async function startPultServer({
         });
       } catch (error) {
         const message = error && typeof error.message === 'string' ? error.message : '';
-        // Ошибки проверки ввода — фиксированные русские фразы «правка: …», их можно показать.
+        // Ошибки проверки ввода – фиксированные русские фразы «правка: …», их можно показать.
         if (/^правка/.test(message)) throw new PultRequestError(400, 'COMMENT_INVALID', message);
-        // Битый comments.json — не вина ввода: та же подсказка, что при удалении и чтении.
+        // Битый comments.json – не вина ввода: та же подсказка, что при удалении и чтении.
         if (/comments\.json/.test(message)) {
           throw new PultRequestError(409, 'COMMENTS_BROKEN', COMMENTS_BROKEN_MESSAGE);
         }
-        // Остальное — неожиданный сбой: общий обработчик ответит 500 и запишет только имя класса.
+        // Остальное – неожиданный сбой: общий обработчик ответит 500 и запишет только имя класса.
         throw error;
       }
       sendJson(response, 201, { comment: browserComment(entry, comment) });
@@ -373,7 +373,7 @@ async function startPultServer({
       try {
         deleted = deleteComment(projectDirOf(entry), body.id);
       } catch (error) {
-        // Принятую агентом правку удалять нельзя; любая другая ошибка — это битый
+        // Принятую агентом правку удалять нельзя; любая другая ошибка – это битый
         // comments.json, и человеку нужна другая подсказка, чем «уже принята».
         if (/принят/.test(error && error.message)) {
           throw new PultRequestError(409, 'COMMENT_ACCEPTED', 'Правка уже принята агентом');
@@ -405,7 +405,7 @@ async function startPultServer({
       // Движок сверяет expectedPreviewSha256 только там, где preview обязателен (motion,
       // discovery b-roll); для обычного lesson он его пропускает. Поэтому пульт сам
       // проверяет, что байты, которые он отдавал странице, всё ещё те, что в паспорте.
-      // Билет при этом актуален, так что обновление страницы не поможет — нужен новый
+      // Билет при этом актуален, так что обновление страницы не поможет – нужен новый
       // preview от агента, отсюда отдельный код PREVIEW_DAMAGED.
       if (!servedPreviewMatches(entry)) throw previewDamaged();
       try {
@@ -418,9 +418,9 @@ async function startPultServer({
           expectedPreviewSha256: entry.previewSha256,
         });
       } catch (error) {
-        // В лог — только класс ошибки: сообщение движка может содержать абсолютные пути.
+        // В лог – только класс ошибки: сообщение движка может содержать абсолютные пути.
         logger.error(`Пульт: движок не принял утверждение (${errorName(error)})`);
-        // Билет по-прежнему актуален — значит, ролик не менялся и дело в самом черновике.
+        // Билет по-прежнему актуален – значит, ролик не менялся и дело в самом черновике.
         // Иначе за время утверждения агент успел что-то поменять.
         const current = findEntry(body.key);
         const currentTicket = current ? approvalTicket(current) : null;
@@ -575,7 +575,7 @@ async function startPultServer({
         sendProblem(response, error.status, error.code, error.message);
         return;
       }
-      // В лог — только класс ошибки: сообщение может содержать абсолютные пути.
+      // В лог – только класс ошибки: сообщение может содержать абсолютные пути.
       logger.error(`Пульт: внутренняя ошибка (${errorName(error)})`);
       sendProblem(response, 500, 'INTERNAL', 'Внутренняя ошибка пульта');
     });
@@ -626,7 +626,7 @@ async function startPultServer({
     closing = true;
     closed = (async () => {
       if (idleTimer) clearInterval(idleTimer);
-      // Review, который ещё запускается, увидит closing и сам закроет свой сервер —
+      // Review, который ещё запускается, увидит closing и сам закроет свой сервер –
       // дожидаемся этого, чтобы после close() ни один порт Review не остался открытым.
       await Promise.allSettled([...reviewStarts.values()]);
       for (const review of reviewSessions.values()) {

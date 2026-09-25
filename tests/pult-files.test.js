@@ -37,7 +37,7 @@ test('writeJsonAtomic removes its temp file when the write itself fails', (t) =>
 });
 
 // Preview может весить сотни мегабайт: hashFile читает его кусками, а не целиком в память.
-// Размер больше одного куска и не кратен ему — чтобы проверить и склейку, и хвост.
+// Размер больше одного куска и не кратен ему – чтобы проверить и склейку, и хвост.
 test('hashFile hashes a multi-chunk file exactly like its bytes', (t) => {
   const dir = tmpDir(t);
   const bytes = Buffer.alloc(3 * 1024 * 1024 + 12345);

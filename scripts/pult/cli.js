@@ -64,7 +64,7 @@ function serveLogPath(projectsDir) {
   return path.join(projectsDir, '.pult', 'serve.log');
 }
 
-// Сервер жив, а окно не открылось (нет браузера, ошибка запуска) — это не провал команды:
+// Сервер жив, а окно не открылось (нет браузера, ошибка запуска) – это не провал команды:
 // печатаем полный адрес с токеном, это собственный терминал пользователя.
 async function openWindowSafely(openWindowImpl, url, log) {
   try {
@@ -78,7 +78,7 @@ async function openWindowSafely(openWindowImpl, url, log) {
 
 // Журнал фонового сервера: без него падение при запуске со значка не оставило бы следа.
 // O_NOFOLLOW: подложенный симлинк не должен перенаправить запись в чужой файл. Не вышло
-// открыть журнал — запускаем без него, это только диагностика.
+// открыть журнал – запускаем без него, это только диагностика.
 function openServeLog(projectsDir) {
   const { constants } = fs;
   let descriptor = null;
@@ -88,7 +88,7 @@ function openServeLog(projectsDir) {
       constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW || 0),
       0o600,
     );
-    // Права при создании не меняют уже существующий файл — выравниваем явно.
+    // Права при создании не меняют уже существующий файл – выравниваем явно.
     if (process.platform !== 'win32') fs.fchmodSync(descriptor, 0o600);
     return descriptor;
   } catch (_) {
@@ -126,7 +126,7 @@ function acquireStartLock(projectsDir, { now = Date.now, staleMs = START_LOCK_ST
       throw error;
     }
     if (now() - stat.mtimeMs < staleMs) return null;
-    // Замок брошен (запуск убили на середине) — снимаем его и пробуем ещё раз.
+    // Замок брошен (запуск убили на середине) – снимаем его и пробуем ещё раз.
     // rmSync удаляет саму ссылку, а не её цель.
     fs.rmSync(lockPath, { force: true });
   }
@@ -145,7 +145,7 @@ function releaseStartLock(lockPath, identity) {
   if (current.ino === identity.ino && current.dev === identity.dev) fs.rmSync(lockPath, { force: true });
 }
 
-// Пульт в этом процессе. Если он уже запущен — только открываем окно. Родительский
+// Пульт в этом процессе. Если он уже запущен – только открываем окно. Родительский
 // openMode уже подождал занятый пульт, поэтому здесь повторно не ждём (busyWaitMs: 0).
 async function serve(options, {
   openWindowImpl = openPultWindow,
@@ -194,7 +194,7 @@ async function openMode(options, {
   log = console.log,
 } = {}) {
   fs.mkdirSync(options.projectsDir, { recursive: true });
-  // Окно — только удобство: если оно не открылось, команда всё равно успешна, адрес в выводе.
+  // Окно – только удобство: если оно не открылось, команда всё равно успешна, адрес в выводе.
   const reveal = async (running) => {
     const opened = options.open ? await openWindowSafely(openWindowImpl, running.url, log) : true;
     if (opened) log('Пульт открыт.');
@@ -221,10 +221,10 @@ async function openMode(options, {
           windowsHide: true,
         });
       } finally {
-        // Дочерний процесс уже получил свою копию дескриптора — родителю он больше не нужен.
+        // Дочерний процесс уже получил свою копию дескриптора – родителю он больше не нужен.
         if (logDescriptor !== null) fs.closeSync(logDescriptor);
       }
-      // Без обработчика ошибка запуска уронила бы процесс; с ним — понятное сообщение.
+      // Без обработчика ошибка запуска уронила бы процесс; с ним – понятное сообщение.
       child.once('error', (error) => { spawnError = error; });
       child.unref();
     }
@@ -236,7 +236,7 @@ async function openMode(options, {
       const running = await findRunningInstanceImpl(options.projectsDir, { busyWaitMs: 0 });
       if (running) return reveal(running);
     }
-    // Путь журнала — относительно папки роликов: абсолютный путь здесь не нужен.
+    // Путь журнала – относительно папки роликов: абсолютный путь здесь не нужен.
     const logHint = `${path.basename(options.projectsDir)}/.pult/serve.log`;
     throw new Error(`пульт не запустился за 15 секунд. Подробности: ${logHint}. Для диагностики: automontage pult --serve`);
   } finally {

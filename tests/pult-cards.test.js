@@ -12,7 +12,7 @@ function entry(overrides) {
     variantLabel: 'Основной',
     updatedAt: '2026-09-20T10:00:00.000Z',
     status: 'ready',
-    nextStep: 'Готов — можно забирать',
+    nextStep: 'Готов – можно забирать',
     ...overrides,
   };
 }

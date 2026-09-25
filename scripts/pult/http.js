@@ -14,14 +14,14 @@ const STATIC_FILES = new Map([
   ['/app.js', 'app.js'],
   ['/styles.css', 'styles.css'],
 ]);
-// Только для serveStatic (страница пульта) и JSON-ответов — не для медиа.
+// Только для serveStatic (страница пульта) и JSON-ответов – не для медиа.
 const CONTENT_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
 ]);
-// Только для serveFile: пульт отдаёт через него лишь эти медиа, всё остальное — 404.
+// Только для serveFile: пульт отдаёт через него лишь эти медиа, всё остальное – 404.
 const MEDIA_CONTENT_TYPES = new Map([
   ['.jpeg', 'image/jpeg'],
   ['.jpg', 'image/jpeg'],
@@ -125,7 +125,7 @@ function readJsonBody(request, limit = BODY_LIMIT) {
     request.on('end', () => {
       if (failed) return;
       try {
-        // fatal: true — невалидный UTF-8 должен провалить разбор, а не молча испортить текст.
+        // fatal: true – невалидный UTF-8 должен провалить разбор, а не молча испортить текст.
         const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
         resolve(JSON.parse(text));
       } catch (_) {
@@ -163,7 +163,7 @@ function serveStatic(root, pathname, request, response) {
 function serveFile(request, response, filePath) {
   const head = request.method === 'HEAD';
   // Только известные видео и картинки: legacy-карточка может указать «видео» на
-  // notes.txt или .html рядом с роликом — такие файлы браузер не получит вовсе.
+  // notes.txt или .html рядом с роликом – такие файлы браузер не получит вовсе.
   const mediaType = MEDIA_CONTENT_TYPES.get(path.extname(filePath).toLowerCase());
   if (!mediaType) {
     sendError(response, 404, head);
@@ -207,7 +207,7 @@ function serveFile(request, response, filePath) {
   }
   const stream = fs.createReadStream(filePath, { fd: descriptor, autoClose: true, start, end });
   // pipeline, а не stream.pipe(): при отмене запроса (Chrome шлёт новый Range на каждой
-  // перемотке) response уничтожается раньше конца файла — pipe() не закрывает источник за
+  // перемотке) response уничтожается раньше конца файла – pipe() не закрывает источник за
   // собой, и файловый дескриптор остаётся висеть. pipeline() уничтожает оба конца всегда.
   pipeline(stream, response, () => {});
 }

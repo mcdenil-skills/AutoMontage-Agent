@@ -76,7 +76,7 @@ test('no brief yet means the agent prepares a draft', () => {
 test('approved brief without its final waits for the agent render', () => {
   const result = derive({ currentBrief: APPROVED }, { currentBriefStatus: 'approved' });
   assert.equal(result.status, 'working');
-  assert.equal(result.nextStep, 'Утверждено — агент собирает финал');
+  assert.equal(result.nextStep, 'Утверждено – агент собирает финал');
   assert.equal(result.approvable, false);
   assert.equal(result.needsFinal, true);
   assert.equal(result.video.kind, 'preview');
@@ -89,7 +89,7 @@ test('complete render of the approved brief with an existing final is ready', ()
     latestRender: 'renders/v01-final',
   }, { currentBriefStatus: 'approved', finalExists: true });
   assert.equal(result.status, 'ready');
-  assert.equal(result.nextStep, 'Готов — можно забирать');
+  assert.equal(result.nextStep, 'Готов – можно забирать');
   assert.equal(result.needsFinal, false);
   assert.deepEqual(result.video, { kind: 'final', path: 'final/clip.mp4', sha256: null });
 });
@@ -141,7 +141,7 @@ test('a current preview the engine would refuse stays with the author but is not
   assert.equal(commented.status, 'working');
   assert.equal(commented.nextStep, 'Ждёт агента: 1 правка');
   assert.equal(commented.approvable, false);
-  // По умолчанию блокера нет — прежнее поведение.
+  // По умолчанию блокера нет – прежнее поведение.
   assert.equal(derive().approvable, true);
 });
 

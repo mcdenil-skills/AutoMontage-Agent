@@ -87,7 +87,7 @@ test('a busy pult survives an unresponsive health check without losing its regis
     },
     busyWaitMs: 1000,
     retryMs: 500,
-    sleep: async () => {}, // подменяем ожидание — тест не должен реально ждать секунду
+    sleep: async () => {}, // подменяем ожидание – тест не должен реально ждать секунду
   });
   assert.equal(result, null);
   assert.equal(checkCalls.length, 3);
@@ -118,7 +118,7 @@ test('a dead pid never deletes a registration rewritten by another process meanw
   writeInstance(projectsDir, { pid: 5, port: 4100, token: TOKEN });
   const isAlive = (pid) => {
     assert.equal(pid, 5);
-    // Пока мы решали, жив ли старый процесс, новый экземпляр уже переписал файл —
+    // Пока мы решали, жив ли старый процесс, новый экземпляр уже переписал файл –
     // findRunningInstance обязан снимать регистрацию через владельческую проверку,
     // а не сырым rmSync по пути.
     writeInstance(projectsDir, { pid: 9, port: 4200, token: TOKEN });
@@ -160,9 +160,9 @@ test('checkHealth tells the pult (ok) from a foreign JSON server on the same sha
 });
 
 // После перезагрузки pid из instance.json может достаться случайному чужому процессу: порт
-// пульта при этом никто не слушает. Это не «пульт занят» — ждать busyWaitMs на каждом запуске
+// пульта при этом никто не слушает. Это не «пульт занят» – ждать busyWaitMs на каждом запуске
 // значка бессмысленно, регистрацию нужно снять сразу же, как только пришла ECONNREFUSED.
-test('an alive pid whose port refuses connections is absent, not busy — removed fast', async (t) => {
+test('an alive pid whose port refuses connections is absent, not busy – removed fast', async (t) => {
   const { projectsDir } = makePultRoot(t);
   // Открываем порт и сразу закрываем: получаем свободный номер, на котором точно никто не слушает.
   const scratch = http.createServer();
@@ -178,7 +178,7 @@ test('an alive pid whose port refuses connections is absent, not busy — remove
 });
 
 // Пульт, застрявший в синхронном ffprobe/ffmpeg, всё ещё слушает сокет: ядро принимает
-// соединение, ответа просто нет вовремя. Настоящий сервер и настоящие (маленькие) таймауты —
+// соединение, ответа просто нет вовремя. Настоящий сервер и настоящие (маленькие) таймауты –
 // без подмены check/sleep, чтобы проверить именно ветку 'timeout' → 'busy'.
 test('a really busy pult (socket accepted, never answers) is retried and then left alone', async (t) => {
   const { projectsDir } = makePultRoot(t);

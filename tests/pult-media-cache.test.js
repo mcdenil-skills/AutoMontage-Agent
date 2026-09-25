@@ -94,8 +94,8 @@ test('a symlinked .pult must not redirect the cache outside projects/', { skip: 
   assert.deepEqual(fs.readdirSync(outside), []);
 });
 
-// Симлинк .pult должен отклоняться в самом начале функции — до чтения кэша и до
-// fs.existsSync — иначе .pult, указывающая на уже заполненный чужой кэш с тем же
+// Симлинк .pult должен отклоняться в самом начале функции – до чтения кэша и до
+// fs.existsSync – иначе .pult, указывающая на уже заполненный чужой кэш с тем же
 // именем файла (совпадающим по ключу), будет молча прочитана как «свой» кэш.
 test('a symlinked .pult pointing at a pre-populated cache is rejected before any read', { skip: process.platform === 'win32' }, (t) => {
   const { base, projectsDir } = makePultRoot(t);
@@ -197,7 +197,7 @@ test('a corrupt (unparseable) probe cache is treated as a miss, not a permanent 
 });
 
 // Зависший ffprobe/ffmpeg (например файл ещё копируется по сети) не должен вешать
-// однопоточный сервер пульта навечно — оба вызова обязаны нести ограничение по времени.
+// однопоточный сервер пульта навечно – оба вызова обязаны нести ограничение по времени.
 test('ffprobe and ffmpeg calls carry a bounded timeout', (t) => {
   const { projectsDir } = makePultRoot(t);
   const video = path.join(projectsDir, 'clip.mp4');
@@ -225,7 +225,7 @@ test('ffprobe and ffmpeg calls carry a bounded timeout', (t) => {
 });
 
 // Провал ffmpeg (даже после того как он успел записать часть файла) не должен
-// оставлять недорисованный кадр на диске — ни как временный файл, ни как результат.
+// оставлять недорисованный кадр на диске – ни как временный файл, ни как результат.
 test('extractFrame removes a partial output file after failure', (t) => {
   const { projectsDir } = makePultRoot(t);
   const video = path.join(projectsDir, 'clip.mp4');
@@ -260,7 +260,7 @@ test('a crashed thumbnail render leaves no partial cover in the cache', (t) => {
   assert.deepEqual(leftJpgFiles, []);
 });
 
-// Нулевой байт в кэше — это испорченная обложка, а не валидный результат: она должна
+// Нулевой байт в кэше – это испорченная обложка, а не валидный результат: она должна
 // быть перерисована, а не отдаваться браузеру как есть.
 test('a zero-byte cached thumbnail is treated as a miss and re-rendered', (t) => {
   const { projectsDir } = makePultRoot(t);

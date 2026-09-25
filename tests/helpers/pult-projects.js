@@ -16,7 +16,7 @@ const { planPreview, publishCurrentPreview } = require('../../scripts/project/pr
 const ROOT = path.resolve(__dirname, '../..');
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
-// registrar — объект с методом after(fn): node:test `t` или обёртка в Playwright.
+// registrar – объект с методом after(fn): node:test `t` или обёртка в Playwright.
 function makePultRoot(registrar) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-pult-'));
   registrar.after(() => fs.rmSync(base, { recursive: true, force: true }));

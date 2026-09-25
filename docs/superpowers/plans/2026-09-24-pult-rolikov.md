@@ -1,4 +1,4 @@
-# Пульт роликов — план реализации
+# Пульт роликов – план реализации
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -21,18 +21,18 @@ ffmpeg/ffprobe через `scripts/process.js`. Новых npm-зависимо�
 
 ## Правила выполнения
 
-- Работать в ветке `feat/pult-rolikov` от `main`. Push, тег и релиз — только по явной просьбе.
+- Работать в ветке `feat/pult-rolikov` от `main`. Push, тег и релиз – только по явной просьбе.
 - Это задача движка, а не client-delivery: меняются `scripts/`, `schema/`, `tests/`, документы.
-- Коммит после каждой задачи. Pre-commit hook запускает privacy-check и Gitleaks — не обходить
+- Коммит после каждой задачи. Pre-commit hook запускает privacy-check и Gitleaks – не обходить
   через `--no-verify`. В каждый коммит добавлять строку
   `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
-- В тестах и документах не писать настоящие домашние пути (`/Users/…`, `/home/…`, `C:\Users…`):
-  privacy-check заблокирует коммит. Домашняя папка в тестах — `/tmp/home-u`.
+- В тестах и документах не писать настоящие домашние пути пользователей macOS, Linux и Windows:
+  privacy-check заблокирует коммит. Домашняя папка в тестах – `/tmp/home-u`.
 - Браузер никогда не получает абсолютных путей, путей brief и SHA-256 (инвариант Review из
-  `ARCHITECTURE.md`). Видео адресуются ключом варианта, утверждение — непрозрачным билетом.
+  `ARCHITECTURE.md`). Видео адресуются ключом варианта, утверждение – непрозрачным билетом.
 - Пульт ничего не удаляет и не перемещает в папках роликов. Пишет только `projects/.pult/` и
   `projects/<id>/pult/`.
-- Сообщения пользователю — на русском.
+- Сообщения пользователю – на русском.
 
 ## Карта файлов
 
@@ -78,7 +78,7 @@ git checkout main && git pull --ff-only && git checkout -b feat/pult-rolikov
 - [ ] **Step 2: Создать `_progress.md`**
 
 ```markdown
-# Пульт роликов — прогресс
+# Пульт роликов – прогресс
 
 План: docs/superpowers/plans/2026-09-24-pult-rolikov.md
 Ветка: feat/pult-rolikov
@@ -129,7 +129,7 @@ const { planPreview, publishCurrentPreview } = require('../../scripts/project/pr
 const ROOT = path.resolve(__dirname, '../..');
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
-// registrar — объект с методом after(fn): node:test `t` или обёртка в Playwright.
+// registrar – объект с методом after(fn): node:test `t` или обёртка в Playwright.
 function makePultRoot(registrar) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-pult-'));
   registrar.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -292,7 +292,7 @@ test('symlinked pult-card.json is rejected', { skip: process.platform === 'win32
 - [ ] **Step 3: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-card-file.test.js`
-Expected: FAIL — `Cannot find module '../scripts/pult/card-file'`.
+Expected: FAIL – `Cannot find module '../scripts/pult/card-file'`.
 
 - [ ] **Step 4: Создать схему**
 
@@ -416,7 +416,7 @@ module.exports = { CARD_FILE, readPultCard };
 - [ ] **Step 6: Запустить тест**
 
 Run: `node --test tests/pult-card-file.test.js`
-Expected: PASS, 4 теста. Если падает тест symlink — проверить, что `resolveProjectPath`
+Expected: PASS, 4 теста. Если падает тест symlink – проверить, что `resolveProjectPath`
 отклоняет симлинк в последнем сегменте; при необходимости добавить `fs.lstatSync(cardPath)`
 с отказом при `isSymbolicLink()` перед чтением.
 
@@ -516,7 +516,7 @@ test('no brief yet means the agent prepares a draft', () => {
 test('approved brief without its final waits for the agent render', () => {
   const result = derive({ currentBrief: APPROVED }, { currentBriefStatus: 'approved' });
   assert.equal(result.status, 'working');
-  assert.equal(result.nextStep, 'Утверждено — агент собирает финал');
+  assert.equal(result.nextStep, 'Утверждено – агент собирает финал');
   assert.equal(result.approvable, false);
   assert.equal(result.needsFinal, true);
   assert.equal(result.video.kind, 'preview');
@@ -529,7 +529,7 @@ test('complete render of the approved brief with an existing final is ready', ()
     latestRender: 'renders/v01-final',
   }, { currentBriefStatus: 'approved', finalExists: true });
   assert.equal(result.status, 'ready');
-  assert.equal(result.nextStep, 'Готов — можно забирать');
+  assert.equal(result.nextStep, 'Готов – можно забирать');
   assert.equal(result.needsFinal, false);
   assert.deepEqual(result.video, { kind: 'final', path: 'final/clip.mp4', sha256: null });
 });
@@ -574,7 +574,7 @@ test('russian plural forms for edits', () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-status.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -628,10 +628,10 @@ function deriveVariantStatus({
     nextStep = `Ждёт агента: ${pluralEdits(pendingComments)}`;
   } else if (finalIsCurrent) {
     status = 'ready';
-    nextStep = 'Готов — можно забирать';
+    nextStep = 'Готов – можно забирать';
   } else if (currentBriefStatus === 'approved') {
     status = 'working';
-    nextStep = 'Утверждено — агент собирает финал';
+    nextStep = 'Утверждено – агент собирает финал';
   } else if (currentBriefStatus === 'draft' && previewIsCurrent) {
     status = 'waiting';
     nextStep = 'Посмотрите preview и утвердите';
@@ -785,7 +785,7 @@ test('a corrupted comments file is reported, not silently replaced', (t) => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-comments.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать `files.js`**
 
@@ -794,7 +794,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 
-// undefined — файла нет; битый JSON — ошибка с понятным именем файла.
+// undefined – файла нет; битый JSON – ошибка с понятным именем файла.
 function readJsonIfExists(filePath, label) {
   let text;
   try {
@@ -1035,7 +1035,7 @@ test('invalid card ids are rejected', (t) => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-state.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -1062,7 +1062,7 @@ function readPultState(projectsDir) {
   };
 }
 
-// Архив — только пометка «не показывать» в projects/.pult. Папки роликов не меняются.
+// Архив – только пометка «не показывать» в projects/.pult. Папки роликов не меняются.
 function setArchived(projectsDir, cardId, archived) {
   if (typeof cardId !== 'string' || !CARD_ID.test(cardId)) throw new Error('неверный id карточки');
   const state = readPultState(projectsDir);
@@ -1178,7 +1178,7 @@ test('frame extraction passes arguments without a shell and reports failure', (t
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-media-cache.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -1265,7 +1265,7 @@ module.exports = { extractFrame, probeMedia, thumbnailFor };
 - [ ] **Step 4: Запустить тест**
 
 Run: `node --test tests/pult-media-cache.test.js`
-Expected: PASS, 4 теста. Тест с `-ss` ожидает `path.resolve(video) === video` — `video`
+Expected: PASS, 4 теста. Тест с `-ss` ожидает `path.resolve(video) === video` – `video`
 уже абсолютный.
 
 - [ ] **Step 5: Commit**
@@ -1338,7 +1338,7 @@ test('history lists complete renders newest first without raw files', (t) => {
   const { projectsDir } = makePultRoot(t);
   addDraftProject(projectsDir, { folder: 'ready-clip', approve: true, final: true });
   const entry = scanProjects({ projectsDir }).entries[0];
-  assert.deepEqual(entry.history, [{ label: 'Рендер v01 — final', path: 'renders/v01-final/final.mp4' }]);
+  assert.deepEqual(entry.history, [{ label: 'Рендер v01 – final', path: 'renders/v01-final/final.mp4' }]);
 });
 
 test('pending comments move a waiting video back to the agent', (t) => {
@@ -1386,7 +1386,7 @@ test('symlinked folders are ignored and a missing projects dir is empty', { skip
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-catalog.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -1402,7 +1402,7 @@ const { deriveVariantStatus, pluralEdits } = require('./status');
 
 const ENTRY_KEY = /^[\p{L}\p{N}._ -]{1,160}(#\d{1,3})?$/u;
 const LEGACY_STEPS = Object.freeze({
-  ready: 'Готов — можно забирать',
+  ready: 'Готов – можно забирать',
   waiting: 'Посмотрите и напишите правки',
   working: 'Агент работает',
 });
@@ -1446,7 +1446,7 @@ function renderHistory(projectDir, manifest) {
       }
       const version = `v${String(render.version).padStart(2, '0')}`;
       return names.slice(0, 3).map((name) => ({
-        label: `Рендер ${version} — ${render.label}`,
+        label: `Рендер ${version} – ${render.label}`,
         path: `${render.dir}/${name}`,
       }));
     });
@@ -1553,7 +1553,7 @@ module.exports = { ENTRY_KEY, scanProjects };
 
 Run: `node --test tests/pult-catalog.test.js`
 Expected: PASS, 6 тестов. Если `readProjectManifest` на фикстуре `broken` бросает
-не на валидации, а на пути — это тоже «Паспорт ролика не читается», тест остаётся зелёным.
+не на валидации, а на пути – это тоже «Паспорт ролика не читается», тест остаётся зелёным.
 
 - [ ] **Step 5: Commit**
 
@@ -1587,7 +1587,7 @@ function entry(overrides) {
     variantLabel: 'Основной',
     updatedAt: '2026-09-20T10:00:00.000Z',
     status: 'ready',
-    nextStep: 'Готов — можно забирать',
+    nextStep: 'Готов – можно забирать',
     ...overrides,
   };
 }
@@ -1637,7 +1637,7 @@ test('unregistered and broken folders are passed through', () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-cards.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -1741,7 +1741,7 @@ test('tokens come from the bearer header, or from the query only for media', () 
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-http.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -2045,7 +2045,7 @@ test('launches are detached and never use a shell', async () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-launcher.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -2058,7 +2058,7 @@ const { spawn } = require('node:child_process');
 const MAC_APPS = ['Google Chrome.app', 'Microsoft Edge.app', 'Chromium.app'];
 const LINUX_BROWSERS = ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge'];
 
-// Окно без адресной строки: Chrome/Edge в режиме приложения. Нет браузера — обычная вкладка.
+// Окно без адресной строки: Chrome/Edge в режиме приложения. Нет браузера – обычная вкладка.
 function appWindowCommand(url, {
   platform = process.platform,
   env = process.env,
@@ -2145,7 +2145,7 @@ git commit -m "feat: open the pult as an app window without a shell"
 
 **Files:**
 - Create: `scripts/pult/server.js`
-- Create (временно пустой каталог для статики): `pult/index.html` — одна строка `<!doctype html><title>Пульт роликов</title>`; полноценная страница появится в Task 15
+- Create (временно пустой каталог для статики): `pult/index.html` – одна строка `<!doctype html><title>Пульт роликов</title>`; полноценная страница появится в Task 15
 - Test: `tests/pult-server.test.js`
 
 - [ ] **Step 1: Создать временную страницу**
@@ -2370,7 +2370,7 @@ test('approve requires confirmation and the exact previewed video', async (t) =>
   assert.equal(approved.status, 201);
   const cards = (await get(session, '/api/cards')).json;
   const variant = cards.working.flatMap((card) => card.variants).find((item) => item.key === 'waiting-clip');
-  assert.equal(variant.nextStep, 'Утверждено — агент собирает финал');
+  assert.equal(variant.nextStep, 'Утверждено – агент собирает финал');
   const briefs = fs.readdirSync(path.join(projectsDir, 'waiting-clip', 'brief'));
   assert.ok(briefs.some((name) => /-approved\.lesson\.json$/.test(name)));
   assert.equal((await post(session, '/api/approve', { key: 'waiting-clip', ticket, confirmPreviewViewed: true })).status, 409);
@@ -2435,14 +2435,14 @@ test('an idle pult shuts itself down', async (t) => {
 });
 ```
 
-Имя финала `final/gotovyy.mp4` — slug имени проекта «Готовый» (`slugifyProjectName`). Если
+Имя финала `final/gotovyy.mp4` – slug имени проекта «Готовый» (`slugifyProjectName`). Если
 транслитерация даст другое имя, тест покажет его; тогда брать путь из
 `readProjectManifest(dir).final`, а не хардкодить.
 
 - [ ] **Step 3: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-server.test.js`
-Expected: FAIL — `Cannot find module '../scripts/pult/server'`.
+Expected: FAIL – `Cannot find module '../scripts/pult/server'`.
 
 - [ ] **Step 4: Реализовать сервер**
 
@@ -2696,7 +2696,7 @@ async function startPultServer({
       if (!entry) throw notFound();
       const expected = approvalTicket(entry);
       if (!expected || !safeTokenEqual(body.ticket, expected)) {
-        throw new PultRequestError(409, 'PREVIEW_CHANGED', 'Ролик изменился — обновите страницу и посмотрите новую версию');
+        throw new PultRequestError(409, 'PREVIEW_CHANGED', 'Ролик изменился – обновите страницу и посмотрите новую версию');
       }
       try {
         const projectDir = projectDirOf(entry);
@@ -2821,7 +2821,7 @@ async function startPultServer({
       try {
         comments = variantComments(entry);
       } catch (_) {
-        throw new PultRequestError(409, 'COMMENTS_BROKEN', 'Файл правок повреждён — попросите агента проверить pult/comments.json');
+        throw new PultRequestError(409, 'COMMENTS_BROKEN', 'Файл правок повреждён – попросите агента проверить pult/comments.json');
       }
       sendJson(response, 200, { comments: comments.map((comment) => browserComment(entry, comment)) });
       return;
@@ -2904,10 +2904,10 @@ module.exports = { startPultServer };
 
 Run: `node --test tests/pult-server.test.js`
 Expected: PASS, 14 тестов. Частые причины падения и что проверить:
-- `approve ... 201` падает с 409 — вывести `error.message` из `approveBriefImpl` во временном
+- `approve ... 201` падает с 409 – вывести `error.message` из `approveBriefImpl` во временном
   `console.error` и сверить фикстуру с `verifyApprovalPreview`
   (`scripts/project/preview-workspace.js:239`): размеры preview = половина output, `toSec` = длина.
-- путь финала в тесте reveal — взять из `readProjectManifest(...).final`.
+- путь финала в тесте reveal – взять из `readProjectManifest(...).final`.
 
 - [ ] **Step 6: Прогнать весь набор**
 
@@ -3010,7 +3010,7 @@ test('health probe recognizes only the pult', async (t) => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-instance.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -3215,7 +3215,7 @@ test('other systems get a clear message', () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-shortcut.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -3321,7 +3321,7 @@ function installShortcut({
         existing = '';
       }
       if (!existing.includes(BUNDLE_ID)) {
-        throw new Error(`${appDir}: там уже другая программа — переименуйте или удалите её вручную`);
+        throw new Error(`${appDir}: там уже другая программа – переименуйте или удалите её вручную`);
       }
       fileSystem.rmSync(appDir, { recursive: true, force: true });
     }
@@ -3417,10 +3417,10 @@ test('the inbox lists edits with time and frame, and approved videos without a f
   const { projectsDir } = withComment(t);
   addDraftProject(projectsDir, { folder: 'approved', name: 'Утверждённый', approve: true });
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
-  assert.match(text, /## Ролик с правкой — `projects\/waiting`/);
+  assert.match(text, /## Ролик с правкой – `projects\/waiting`/);
   assert.match(text, /- Правка `c-0001` на 0:14: «Текст залезает на лицо»\. Видео: `previews\//);
   assert.match(text, /Кадр: `projects\/waiting\/pult\/frames\/c-0001\.jpg`/);
-  assert.match(text, /## Утверждённый — `projects\/approved`/);
+  assert.match(text, /## Утверждённый – `projects\/approved`/);
   assert.match(text, /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./);
   assert.match(text, /automontage inbox --accept <папка> <id>/);
 });
@@ -3455,7 +3455,7 @@ test('options reject unsafe folders and ids', () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-inbox.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать**
 
@@ -3516,7 +3516,7 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
   const lines = ['# Входящие пульта', ''];
   for (const item of items) {
     const dir = path.join(projectsDir, item.folder);
-    lines.push(`## ${item.title} — \`${display(dir)}\``, '');
+    lines.push(`## ${item.title} – \`${display(dir)}\``, '');
     for (const briefPath of item.approved) {
       lines.push(`- Утверждено: \`${briefPath}\`. Собери финал и проведи полный QA.`);
     }
@@ -3658,7 +3658,7 @@ test('serve mode registers one instance and removes it on SIGTERM', { skip: proc
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-cli.test.js`
-Expected: FAIL — модуль не найден.
+Expected: FAIL – модуль не найден.
 
 - [ ] **Step 3: Реализовать `scripts/pult/cli.js`**
 
@@ -3898,7 +3898,7 @@ function fakeCapture(command, args) {
 
 test.beforeEach(async () => {
   ({ projectsDir } = makePultRoot(registrar));
-  addDraftProject(projectsDir, { folder: 'waiting-clip', name: 'Перфекционизм — тормоз' });
+  addDraftProject(projectsDir, { folder: 'waiting-clip', name: 'Перфекционизм – тормоз' });
   addDraftProject(projectsDir, { folder: 'ready-clip', name: 'Готовый ролик', approve: true, final: true });
   addLegacyFolder(projectsDir, 'hooks-series', {
     files: { 'out/a.mp4': 'a', 'out/b.mp4': 'b' },
@@ -3939,7 +3939,7 @@ async function openCard(page, title) {
 test('sections put what waits for the author first', async ({ page }) => {
   await page.goto(session.url);
   await expect(page.locator('[data-section]').first()).toHaveAttribute('data-section', 'waiting');
-  await expect(page.locator('[data-section="waiting"]')).toContainText('Перфекционизм — тормоз');
+  await expect(page.locator('[data-section="waiting"]')).toContainText('Перфекционизм – тормоз');
   await expect(page.locator('[data-section="waiting"]')).toContainText('Посмотрите preview и утвердите');
   await expect(page.locator('[data-section="waiting"]')).toContainText('9:16 · 1:59');
   await expect(page.locator('[data-section="ready"]')).toContainText('Готовый ролик');
@@ -3980,7 +3980,7 @@ test('approval needs the full-view confirmation', async ({ page }) => {
   await page.check('[data-viewed]');
   await approve.click();
   await expect(page.locator('[data-notice]')).toContainText('Утверждено');
-  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено — агент собирает финал');
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
 });
 
 test('archive hides a card without deleting it', async ({ page }) => {
@@ -3995,7 +3995,7 @@ test('archive hides a card without deleting it', async ({ page }) => {
 test('the agent phrase names the video folder and "Показать в папке" goes through the server', async ({ page }) => {
   await openCard(page, 'Перфекционизм');
   await expect(page.locator('[data-agent-phrase]')).toHaveValue(
-    'Продолжи ролик «Перфекционизм — тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
+    'Продолжи ролик «Перфекционизм – тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
   );
   await page.locator('button', { hasText: 'Показать в папке' }).click();
   await expect.poll(() => calls.reveal.length).toBe(1);
@@ -4017,7 +4017,7 @@ test('no absolute paths or hashes reach the page', async ({ page }) => {
 - [ ] **Step 3: Запустить и увидеть падение**
 
 Run: `npx playwright test tests/pult-ui.spec.js --project=chromium`
-Expected: FAIL — на временной странице нет разделов и карточек.
+Expected: FAIL – на временной странице нет разделов и карточек.
 
 - [ ] **Step 4: Написать `pult/index.html`**
 
@@ -4066,7 +4066,7 @@ const STATUS_LABELS = { waiting: 'Ждёт меня', working: 'В работе'
 const VIDEO_LABELS = {
   final: 'Финальная версия',
   preview: 'Preview на проверку',
-  'stale-preview': 'Preview устарел — агент готовит новый',
+  'stale-preview': 'Preview устарел – агент готовит новый',
 };
 const REFRESH_MS = 20000;
 
@@ -4251,7 +4251,7 @@ function renderList() {
       renderFolderList(data.unregistered, 'unregistered', (item) => `${data.projectsLabel}/${item.folder}`),
     );
   } else if (state.tab === 'broken') {
-    view.append(renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} — ${item.error}`));
+    view.append(renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} – ${item.error}`));
   }
 }
 
@@ -4319,7 +4319,7 @@ function actionsBlock(card, variant) {
       field.select();
       document.execCommand('copy');
     }
-    copyStatus.textContent = 'Скопировано — вставьте в чат с агентом';
+    copyStatus.textContent = 'Скопировано – вставьте в чат с агентом';
   }, 'primary');
   box.append(field, copy, copyStatus);
   return box;
@@ -4348,7 +4348,7 @@ function approveBlock(variant) {
         method: 'POST',
         body: { key: variant.key, ticket: variant.approvalTicket, confirmPreviewViewed: true },
       });
-      notify('Утверждено. Скопируйте фразу для агента — он соберёт финал и проверит его.');
+      notify('Утверждено. Скопируйте фразу для агента – он соберёт финал и проверит его.');
       await refresh();
     } catch (error) {
       notify(error.message, 'error');
@@ -4753,7 +4753,7 @@ test('AGENTS.md starts every session with the pult inbox', () => {
 - [ ] **Step 2: Запустить и увидеть падение**
 
 Run: `node --test tests/pult-agent-rules.test.js`
-Expected: FAIL — строк ещё нет.
+Expected: FAIL – строк ещё нет.
 
 - [ ] **Step 3: Изменить `AGENTS.md`**
 
@@ -4769,7 +4769,7 @@ Expected: FAIL — строк ещё нет.
 ```markdown
 ## Пульт роликов
 
-`automontage pult` — главный экран пользователя со всеми роликами из `projects/`. Пульт только
+`automontage pult` – главный экран пользователя со всеми роликами из `projects/`. Пульт только
 показывает состояние и записывает решения; монтаж, правки и final делает агент.
 
 - Утверждение в пульте вызывает ту же `approveBrief`, что и Review, поэтому равносильно явному
@@ -4782,7 +4782,7 @@ Expected: FAIL — строк ещё нет.
   `pult-card.json` с общим `group`, например
   `{"version":1,"group":{"id":"tema-slug","title":"Тема"},"variantLabel":"Хук 1"}`.
 - Папке без `project.json`, где лежат готовые видео, заводи `pult-card.json` с блоком `legacy`
-  (`status`, `variants[].label`, `variants[].video`). Схема — `schema/pult-card.schema.json`.
+  (`status`, `variants[].label`, `variants[].video`). Схема – `schema/pult-card.schema.json`.
 ```
 
 В разделе «Структура» добавить строки:
@@ -4815,9 +4815,9 @@ automontage inbox                       # правки и утверждения
 ```
 
 Куда вставить:
-- `skills/reel-turnkey/SKILL.md` — перед строкой `## Когда остановиться`;
-- `skills/reel-from-donor/SKILL.md` — перед строкой `## Что нельзя делать`;
-- `skills/motion-reel/SKILL.md` — в конец файла.
+- `skills/reel-turnkey/SKILL.md` – перед строкой `## Когда остановиться`;
+- `skills/reel-from-donor/SKILL.md` – перед строкой `## Что нельзя делать`;
+- `skills/motion-reel/SKILL.md` – в конец файла.
 
 Затем синхронизировать копии motion-reel, которые тест `tests/motion-demo.test.js` требует
 держать идентичными:
@@ -4831,7 +4831,7 @@ cp skills/motion-reel/SKILL.md .codex/skills/motion-reel/SKILL.md
 
 Run: `node --test tests/pult-agent-rules.test.js tests/motion-demo.test.js tests/reel-from-donor-skill.test.js tests/creative-motion-instructions.test.js`
 Expected: PASS. Если `motion-demo` проверяет порядок `motion-reel` до `## Границы навыка` в
-reel-turnkey — вставка перед `## Когда остановиться` его не затрагивает.
+reel-turnkey – вставка перед `## Когда остановиться` его не затрагивает.
 
 - [ ] **Step 6: Commit**
 
@@ -4853,7 +4853,7 @@ git commit -m "docs: teach agents the pult inbox and card rules"
 ~~~markdown
 # Пульт роликов
 
-Пульт — главный экран AutoMontage на русском. В нём видно все ролики из `projects/`: что ждёт
+Пульт – главный экран AutoMontage на русском. В нём видно все ролики из `projects/`: что ждёт
 вашего решения, что в работе и что уже готово. Пульт работает без интернета и только на вашем
 компьютере. Монтирует по-прежнему агент в Claude Code или Codex; пульт показывает состояние и
 передаёт агенту ваши решения.
@@ -4875,21 +4875,21 @@ automontage pult --install-shortcut
 
 ## Что на экране
 
-- **Ждёт меня** — готов preview, его нужно посмотреть и утвердить или оставить правки.
-- **В работе** — агент готовит черновик, preview, финал или выполняет ваши правки.
-- **Готов** — финальный файл собран и проверен.
-- **Архив** — ролики, которые вы убрали с глаз. Папки при этом не трогаются.
-- **Без паспорта** — папки, которые пульт не понимает. Попросите агента завести им паспорт.
+- **Ждёт меня** – готов preview, его нужно посмотреть и утвердить или оставить правки.
+- **В работе** – агент готовит черновик, preview, финал или выполняет ваши правки.
+- **Готов** – финальный файл собран и проверен.
+- **Архив** – ролики, которые вы убрали с глаз. Папки при этом не трогаются.
+- **Без паспорта** – папки, которые пульт не понимает. Попросите агента завести им паспорт.
 
 Поиск сверху ищет по названию ролика и вариантов.
 
 ## Работа с роликом
 
-Нажмите на карточку. Откроется текущая версия: финал, а если его нет — последний preview.
+Нажмите на карточку. Откроется текущая версия: финал, а если его нет – последний preview.
 
 - **Варианты** (оригинал, хуки, ролики серии) переключаются вкладками над плеером.
 - **История** показывает прежние финальные рендеры.
-- **Показать в папке** открывает файл в Finder или Проводнике — удобно, чтобы выложить ролик.
+- **Показать в папке** открывает файл в Finder или Проводнике – удобно, чтобы выложить ролик.
 - **Правки:** поставьте видео на паузу в нужном месте, напишите, что поправить, и нажмите
   «Добавить правку». Пульт запомнит секунду и кадр.
 - **Утверждаю:** доступно, когда preview готов. Отметьте «Я посмотрел preview целиком» и
@@ -4901,7 +4901,7 @@ automontage pult --install-shortcut
 
 Нажмите **«Скопировать для агента»** и вставьте фразу в чат. Агент выполнит
 `automontage inbox`, увидит ваши правки с секундами и кадрами или утверждение, сделает новую
-версию или финал и отметит правки выполненными. Если забудете — агент сам проверяет входящие
+версию или финал и отметит правки выполненными. Если забудете – агент сам проверяет входящие
 в начале каждого нового чата.
 
 ## Если что-то не так
@@ -4910,7 +4910,7 @@ automontage pult --install-shortcut
 |---|---|
 | У карточек нет обложек | Не найден `ffmpeg`. Выполните `automontage doctor`, затем пересоздайте значок: `automontage pult --install-shortcut` |
 | Пульт открылся во вкладке с адресной строкой | Не найден Chrome или Edge. Всё работает, просто в обычной вкладке |
-| «Ролик изменился — обновите страницу» | Агент выпустил новый preview. Обновите окно и посмотрите новую версию |
+| «Ролик изменился – обновите страницу» | Агент выпустил новый preview. Обновите окно и посмотрите новую версию |
 | Значок перестал запускаться после обновления Node | Пересоздайте значок: `automontage pult --install-shortcut` |
 ~~~
 
@@ -4921,19 +4921,19 @@ automontage pult --install-shortcut
 ~~~markdown
 ### Пульт роликов: все ролики в одном окне
 
-Когда роликов много, откройте «Пульт роликов» — русский главный экран со всеми роликами из
-`projects/`. Сверху то, что ждёт вашего решения, ниже — что в работе и что готово.
+Когда роликов много, откройте «Пульт роликов» – русский главный экран со всеми роликами из
+`projects/`. Сверху то, что ждёт вашего решения, ниже – что в работе и что готово.
 
 ```bash
 automontage pult                     # открыть пульт (запустится сам, если нужно)
-automontage pult --install-shortcut  # значок: macOS — «Программы», Windows — рабочий стол
+automontage pult --install-shortcut  # значок: macOS – «Программы», Windows – рабочий стол
 automontage inbox                    # что пульт передал агенту: правки и утверждения
 ```
 
 Пульт работает без интернета и только на вашем компьютере. Он показывает текущую версию
 ролика, открывает файл в Finder или Проводнике, принимает правки с привязкой к секунде и
 утверждение полного preview. Монтаж, правки и финальный рендер делает агент: кнопка
-«Скопировать для агента» даёт готовую фразу для чата. Подробно — в
+«Скопировать для агента» даёт готовую фразу для чата. Подробно – в
 [инструкции пульта](docs/PULT.md).
 ~~~
 
@@ -4948,7 +4948,7 @@ automontage inbox                    # что пульт передал аген
 Перед строкой `## 4. Remotion-слой` вставить:
 
 ~~~markdown
-### 3.4 Пульт роликов — все ролики в одном окне
+### 3.4 Пульт роликов – все ролики в одном окне
 
 Пошаговая работа пользователя описана в [docs/PULT.md](docs/PULT.md).
 
@@ -4965,13 +4965,13 @@ flowchart LR
   A["Агент"] --> X["automontage inbox"] --> M
 ```
 
-- Статус вычисляет чистая функция `scripts/pult/status.js` из `project.json`. «Готов» — только
-  при существующем final и complete-рендере текущего approved brief. «Ждёт меня» — при полном
+- Статус вычисляет чистая функция `scripts/pult/status.js` из `project.json`. «Готов» – только
+  при существующем final и complete-рендере текущего approved brief. «Ждёт меня» – при полном
   preview текущего draft с совпадающим `briefSha256`.
-- Браузер не получает путей и хешей. Видео адресуются ключом варианта, утверждение —
+- Браузер не получает путей и хешей. Видео адресуются ключом варианта, утверждение –
   HMAC-билетом `approvalTicket`, который сервер сверяет с текущими brief и preview перед
   `approveBrief(..., { confirmPreviewViewed: true, expectedPreviewSha256 })`.
-- Сервер слушает только `127.0.0.1`, требует `Bearer`-токен для API (для медиа — `?token=`),
+- Сервер слушает только `127.0.0.1`, требует `Bearer`-токен для API (для медиа – `?token=`),
   проверяет `Host` на всех маршрутах и `Origin` на изменяющих. Файлы открываются по путям из
   манифестов через `resolveProjectPath` и `O_NOFOLLOW`.
 - Пульт ничего не удаляет и не перемещает в папках роликов. Он пишет только `projects/.pult/`
@@ -5002,7 +5002,7 @@ Range-видео, утверждение только того preview, кото
 
 1. `automontage pult --install-shortcut`, запуск значком из Dock (macOS) и с рабочего стола
    (Windows): окно без адресной строки, у карточек есть обложки (значит, `ffmpeg` найден).
-2. Отключить сеть — пульт работает.
+2. Отключить сеть – пульт работает.
 3. Повторный запуск значка открывает тот же пульт, а не второй сервер.
 4. Через 30 минут без открытого окна процесс пульта завершается, `projects/.pult/instance.json` удалён.
 5. Человек без опыта без подсказок находит финал, оставляет правку и копирует фразу для агента.
@@ -5018,7 +5018,7 @@ Range-видео, утверждение только того preview, кото
 **Дата:** 2026-09-24
 **Статус:** принято
 
-Пульт — отдельный локальный сервер `127.0.0.1` с русским интерфейсом в Chrome/Edge в режиме
+Пульт – отдельный локальный сервер `127.0.0.1` с русским интерфейсом в Chrome/Edge в режиме
 приложения. Отдельное приложение (Electron/Tauri) и встроенный чат с агентом отклонены: они
 требуют сборки и подписи под каждую ОС, дают вторую историю разговоров отдельно от VS Code и
 попадают в серую зону правил подписки для учеников. Пульт не монтирует и не рендерит: он
@@ -5034,7 +5034,7 @@ Range-видео, утверждение только того preview, кото
 
 ```markdown
 - «Пульт роликов» (`automontage pult`): русский главный экран со всеми роликами из `projects/`
-  — «Ждёт меня», «В работе», «Готов», архив без удаления папок, текущая версия с историей,
+  – «Ждёт меня», «В работе», «Готов», архив без удаления папок, текущая версия с историей,
   правки на секунде видео с кадром, утверждение полного preview через тот же `approveBrief`,
   что и Review, и кнопка «Скопировать для агента». `automontage inbox` передаёт агенту правки и
   утверждённые ролики без финала. `automontage pult --install-shortcut` создаёт значок для macOS
@@ -5044,7 +5044,7 @@ Range-видео, утверждение только того preview, кото
 - [ ] **Step 7: Проверить приватность и релизные проверки документов**
 
 Run: `npm run check:privacy && node --test tests/release-hygiene.test.js tests/public-privacy.test.js`
-Expected: PASS — в документах нет личных путей.
+Expected: PASS – в документах нет личных путей.
 
 - [ ] **Step 8: Commit**
 
@@ -5060,7 +5060,7 @@ git commit -m "docs: document the pult"
 - [ ] **Step 1: Все автоматические тесты**
 
 Run: `npm test && npm run test:review-ui`
-Expected: PASS целиком. Любое падение — чинить до перехода дальше.
+Expected: PASS целиком. Любое падение – чинить до перехода дальше.
 
 - [ ] **Step 2: Живой запуск на реальных роликах (macOS)**
 
@@ -5075,10 +5075,10 @@ open ~/Applications
 
 - [ ] **Step 3: Повторный запуск и автоостановка**
 
-Кликнуть значок ещё раз — открылось то же окно (в `projects/.pult/instance.json` тот же pid).
+Кликнуть значок ещё раз – открылось то же окно (в `projects/.pult/instance.json` тот же pid).
 Закрыть окно; через 30 минут `ps aux | grep "pult/cli.js --serve"` пуст, `instance.json` удалён.
 Для быстрой проверки допустимо временно запустить с `idleMs` 60 000 через `node -e` и
-`startPultServer` — в коде значение не менять.
+`startPultServer` – в коде значение не менять.
 
 - [ ] **Step 4: Правка и утверждение на копии ролика**
 
@@ -5090,7 +5090,7 @@ open ~/Applications
 - [ ] **Step 5: Windows**
 
 На Windows (или в CI-раннере `windows-latest` через ручной workflow) выполнить
-`node scripts/cli.js pult --install-shortcut` и запуск ярлыка. Если доступа к Windows нет —
+`node scripts/cli.js pult --install-shortcut` и запуск ярлыка. Если доступа к Windows нет –
 записать в отчёт, что ручная проверка Windows не проводилась.
 
 - [ ] **Step 6: Проверка новичком**
@@ -5101,7 +5101,7 @@ open ~/Applications
 - [ ] **Step 7: Удалить `_progress.md` и сообщить итог**
 
 Итог пользователю: что проверено автоматически, что вручную, что не проверено. Push, тег и
-релиз 1.8.0 — только после явной просьбы.
+релиз 1.8.0 – только после явной просьбы.
 
 ---
 
@@ -5123,18 +5123,18 @@ open ~/Applications
 
 По процессу `TESTING.md` → «Release candidate»: перенести `[Unreleased]` в секцию `1.8.0` с
 датой, поднять версию в `package.json`, `package-lock.json` и README, запустить
-`npm run check:release` и `npm run smoke:release`. Push, PR и тег `v1.8.0` — после
+`npm run check:release` и `npm run smoke:release`. Push, PR и тег `v1.8.0` – после
 подтверждения пользователя.
 
 ---
 
 ## Самопроверка плана
 
-- **Покрытие спецификации.** Список и статусы — Task 2, 6, 7. Карточки и варианты — 1, 6, 7.
-  Обложка и длина — 5. Плеер, «Показать в папке», архив, правки, утверждение, фраза для
-  агента — 3, 4, 9, 10, 15. Входящие и `--accept` — 13. Правила агента — 16. Запуск, окно,
-  значок, PATH, автоостановка, один экземпляр — 9, 10, 11, 12, 14. Review из пульта — 10.
-  Безопасность — 8, 10 и браузерный тест 15. Документация и CHANGELOG — 17. Проверка новичком — 18.
+- **Покрытие спецификации.** Список и статусы – Task 2, 6, 7. Карточки и варианты – 1, 6, 7.
+  Обложка и длина – 5. Плеер, «Показать в папке», архив, правки, утверждение, фраза для
+  агента – 3, 4, 9, 10, 15. Входящие и `--accept` – 13. Правила агента – 16. Запуск, окно,
+  значок, PATH, автоостановка, один экземпляр – 9, 10, 11, 12, 14. Review из пульта – 10.
+  Безопасность – 8, 10 и браузерный тест 15. Документация и CHANGELOG – 17. Проверка новичком – 18.
 - **P1 спецификации** (фильтр по формату, горячие клавиши, `--adopt`) сознательно не включены:
   разовую уборку делает агент по разделу «После слияния».
 - **Согласованность имён.** `deriveVariantStatus` возвращает `needsFinal`, его читает `inbox`.

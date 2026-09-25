@@ -8,22 +8,22 @@ const { hashBytes } = require('./files');
 const { SAFE_NAME, isSafeName } = require('./names');
 const { deriveVariantStatus, pluralEdits } = require('./status');
 
-// Ключ карточки — то же самое deny-list правило, что и для имён папок (см. names.js):
+// Ключ карточки – то же самое deny-list правило, что и для имён папок (см. names.js):
 // allow-list из букв/цифр отклонял реальные legacy-папки (NFD й/ё, скобки, плюс), их
 // нельзя было бы ни открыть, ни прокомментировать.
 const ENTRY_KEY = new RegExp(`^${SAFE_NAME}(?:#\\d{1,3})?$`, 'u');
 const LEGACY_STEPS = Object.freeze({
-  ready: 'Готов — можно забирать',
+  ready: 'Готов – можно забирать',
   waiting: 'Посмотрите и напишите правки',
   working: 'Агент работает',
 });
-const FOLDER_HASH_ERROR = 'Символ # в имени папки не поддерживается — переименуйте папку';
+const FOLDER_HASH_ERROR = 'Символ # в имени папки не поддерживается – переименуйте папку';
 const MANIFEST_UNREADABLE_ERROR = 'Паспорт ролика не читается';
 const FOLDER_UNREADABLE_ERROR = 'Папка ролика не читается';
-const MISSING_VIDEO_STEP = 'Видео не найдено — проверьте pult-card.json';
+const MISSING_VIDEO_STEP = 'Видео не найдено – проверьте pult-card.json';
 const BROLL_BLOCKER = 'Выберите B-roll в проверке монтажа';
 // Реальные рендеры кладут промежуточные файлы вроде layout-revision.raw.mp4, не только
-// точное raw.mp4 — суффикс должен отсекать оба варианта, без учёта регистра.
+// точное raw.mp4 – суффикс должен отсекать оба варианта, без учёта регистра.
 const RAW_RENDER_SUFFIX = /(^|\.)raw\.mp4$/i;
 
 function listFolders(projectsDir) {
@@ -37,7 +37,7 @@ function listFolders(projectsDir) {
   // Dirent отражает сам симлинк, поэтому ссылки на чужие папки сюда не попадают.
   // isSafeName дополнительно отсеивает имена с управляющими символами и другими
   // байтами, которые нельзя безопасно адресовать ключом карточки.
-  // numeric: true — чтобы «hook-2» шла перед «hook-10», а не после (обычный
+  // numeric: true – чтобы «hook-2» шла перед «hook-10», а не после (обычный
   // лексикографический порядок ставит '1' раньше '2', то есть 'hook-10' раньше 'hook-2').
   return dirents
     .filter((dirent) => dirent.isDirectory() && !dirent.name.startsWith('.') && isSafeName(dirent.name))
@@ -65,7 +65,7 @@ function renderHistory(projectDir, manifest) {
             && dirent.name.toLowerCase().endsWith('.mp4')
             && !RAW_RENDER_SUFFIX.test(dirent.name))
           .map((dirent) => dirent.name)
-          // final.mp4 всегда первым, дальше по алфавиту — человек должен сразу видеть
+          // final.mp4 всегда первым, дальше по алфавиту – человек должен сразу видеть
           // главный файл рендера, даже если у него несколько экспортов.
           .sort((left, right) => {
             const leftIsFinal = left.toLowerCase() === 'final.mp4';
@@ -79,18 +79,18 @@ function renderHistory(projectDir, manifest) {
       const version = `v${String(render.version).padStart(2, '0')}`;
       const selected = names.slice(0, 3);
       return selected.map((name) => ({
-        // Имя файла в подписи нужно только когда файлов несколько — иначе это шум.
+        // Имя файла в подписи нужно только когда файлов несколько – иначе это шум.
         label: selected.length > 1
-          ? `Рендер ${version} — ${render.label} (${name})`
-          : `Рендер ${version} — ${render.label}`,
+          ? `Рендер ${version} – ${render.label} (${name})`
+          : `Рендер ${version} – ${render.label}`,
         path: `${render.dir}/${name}`,
       }));
     });
 }
 
-// Черновик lesson с b-roll, для которого человек ещё не выбрал материал, — обычное
-// состояние (выбор делается в Review), но approveBrief его отклонит. Условие — ровно то,
-// что проверяет движок (scripts/project/workspace.js, approveBrief). Нечитаемый JSON —
+// Черновик lesson с b-roll, для которого человек ещё не выбрал материал, – обычное
+// состояние (выбор делается в Review), но approveBrief его отклонит. Условие – ровно то,
+// что проверяет движок (scripts/project/workspace.js, approveBrief). Нечитаемый JSON –
 // не наша забота здесь: движок откажет сам, а сервер покажет это как APPROVAL_BLOCKED.
 function lessonApprovalBlocker(briefBytes) {
   let brief;
@@ -149,14 +149,14 @@ function legacyEntries(folder, projectDir, card) {
       try {
         updatedAt = fs.statSync(file).mtime.toISOString();
       } catch (_) {
-        // Файл мог исчезнуть между resolveProjectPath и statSync — остаётся эпоха.
+        // Файл мог исчезнуть между resolveProjectPath и statSync – остаётся эпоха.
       }
     }
     let nextStep;
     if (pendingComments > 0) {
       nextStep = `Ждёт агента: ${pluralEdits(pendingComments)}`;
     } else if (!file) {
-      // Карточка ссылается на видео, которого нет на диске — это ошибка карточки,
+      // Карточка ссылается на видео, которого нет на диске – это ошибка карточки,
       // а не обычный шаг монтажа, и должно быть явно видно человеку.
       nextStep = MISSING_VIDEO_STEP;
     } else {
@@ -187,9 +187,9 @@ function legacyEntries(folder, projectDir, card) {
   });
 }
 
-// Сканирует одну папку и классифицирует её без исключений наружу — сервер вызывает эту
+// Сканирует одну папку и классифицирует её без исключений наружу – сервер вызывает эту
 // функцию и на весь каталог (из scanProjects), и точечно по одному ключу (Task 10), в том
-// числе с именем папки, пришедшим из URL. Поэтому здесь же — полная проверка безопасности
+// числе с именем папки, пришедшим из URL. Поэтому здесь же – полная проверка безопасности
 // имени, а не только та, что уже прошла через listFolders.
 function scanFolder(projectsDir, folder) {
   const empty = () => ({ entries: [], unregistered: [], broken: [] });
@@ -197,11 +197,11 @@ function scanFolder(projectsDir, folder) {
   // APFS и NTFS по умолчанию нечувствительны к регистру и нормализации Unicode:
   // проверка через lstat нашла бы папку «Clip» и по ключу «clip», и по NFC-записи
   // NFD-имени. Сервер обращается сюда по ключу из браузера, поэтому разное написание
-  // одной и той же папки не должно давать один результат — иначе архивные id, кэш и
+  // одной и той же папки не должно давать один результат – иначе архивные id, кэш и
   // билеты утверждения разъедутся между «одинаковыми» на вид ключами. Сверяем точное
   // имя из readdir, а не доверяем тому, что нашла файловая система; заодно это и есть
   // проверка «папка реально существует, это каталог и не симлинк», которую раньше
-  // делал отдельный lstat — listFolders уже её выполняет.
+  // делал отдельный lstat – listFolders уже её выполняет.
   if (!listFolders(projectsDir).includes(folder)) return empty();
 
   const projectDir = path.join(projectsDir, folder);
@@ -227,20 +227,20 @@ function scanFolder(projectsDir, folder) {
     if (manifestReadOk) {
       try {
         const entry = standardEntry(folder, projectDir, manifest, card);
-        // Карточка стандартного проекта необязательна, но если она есть и битая —
+        // Карточка стандартного проекта необязательна, но если она есть и битая –
         // человек должен увидеть это в «Не читается», а не потерять её незаметно.
         const broken = cardResult.ok ? [] : [{ folder, error: cardResult.error }];
         return { entries: [entry], unregistered: [], broken };
       } catch (_) {
         // Паспорт прочитался, но что-то внутри проекта (например, brief) само не
-        // читается — это отдельный класс ошибки от «паспорт не читается».
+        // читается – это отдельный класс ошибки от «паспорт не читается».
         return { entries: [], unregistered: [], broken: [{ folder, error: FOLDER_UNREADABLE_ERROR }] };
       }
     }
     if (!(card && card.legacy)) {
       return { entries: [], unregistered: [], broken: [{ folder, error: MANIFEST_UNREADABLE_ERROR }] };
     }
-    // project.json битый, но рядом легитимная legacy-карточка — читаем как legacy ниже.
+    // project.json битый, но рядом легитимная legacy-карточка – читаем как legacy ниже.
   }
 
   if (!cardResult.ok) {
@@ -252,8 +252,8 @@ function scanFolder(projectsDir, folder) {
   return { entries: [], unregistered: [{ folder }], broken: [] };
 }
 
-// Ключ варианта — `folder` либо `folder#index`; для точечного поиска (Task 10) нужно имя
-// самой папки на диске. Ключ может прийти прямо из запроса браузера, поэтому не строка —
+// Ключ варианта – `folder` либо `folder#index`; для точечного поиска (Task 10) нужно имя
+// самой папки на диске. Ключ может прийти прямо из запроса браузера, поэтому не строка –
 // не паспорт ролика, а просто пустой результат.
 function folderFromKey(key) {
   if (typeof key !== 'string') return '';
@@ -261,7 +261,7 @@ function folderFromKey(key) {
 }
 
 // Только чтение: сканирование никогда не меняет папки роликов. Одна нечитаемая или
-// неожиданно ведущая себя папка не должна ронять весь каталог — сервер зовёт эту функцию
+// неожиданно ведущая себя папка не должна ронять весь каталог – сервер зовёт эту функцию
 // на каждый запрос.
 function scanProjects({ projectsDir }) {
   const entries = [];

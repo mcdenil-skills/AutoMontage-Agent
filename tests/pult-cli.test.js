@@ -178,7 +178,7 @@ test('the polling loop never waits for a busy pult on its own', async (t) => {
   });
   assert.equal(result, 'open');
   assert.deepEqual(urls, ['http://127.0.0.1:1/#token=x']);
-  // Первая проверка до запуска ждёт занятый пульт по умолчанию, цикл — нет.
+  // Первая проверка до запуска ждёт занятый пульт по умолчанию, цикл – нет.
   assert.equal(seen[0] && seen[0].busyWaitMs, undefined);
   assert.ok(seen.length >= 3);
   for (const options of seen.slice(1)) assert.equal(options.busyWaitMs, 0);
@@ -198,7 +198,7 @@ test('a launcher that gives up releases its start lock', async (t) => {
       now: () => { clock += 1000; return clock; },
       log: quiet,
     }),
-    // Путь к журналу — внутри папки роликов, без абсолютного пути.
+    // Путь к журналу – внутри папки роликов, без абсолютного пути.
     /не запустился[\s\S]*Подробности: projects\/\.pult\/serve\.log/,
   );
   assert.equal(fs.existsSync(startLockPath(projectsDir)), false);
@@ -210,7 +210,7 @@ test('the detached server writes its output to a private serve.log', async (t) =
   const stdios = [];
   const spawnImpl = (command, args, options) => {
     stdios.push(options.stdio);
-    // Родитель закроет дескриптор сразу после spawn — пишем в него, пока он открыт.
+    // Родитель закроет дескриптор сразу после spawn – пишем в него, пока он открыт.
     if (Array.isArray(options.stdio)) fs.writeSync(options.stdio[2], 'след сервера\n');
     const child = new EventEmitter();
     child.unref = () => {};
@@ -245,7 +245,7 @@ test('a symlinked serve.log is never followed', { skip: process.platform === 'wi
   assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
 });
 
-// Пульт жив, но браузер не открылся: это не ошибка команды — даём адрес вручную.
+// Пульт жив, но браузер не открылся: это не ошибка команды – даём адрес вручную.
 test('a window that fails to open still leaves a working pult and its address', async (t) => {
   const { projectsDir } = makePultRoot(t);
   const url = 'http://127.0.0.1:3/#token=z';
@@ -287,7 +287,7 @@ test('a freshly served pult tells its address when the window fails', async (t) 
   const { projectsDir } = makePultRoot(t);
   const signals = ['SIGINT', 'SIGTERM'];
   const before = new Map(signals.map((signal) => [signal, process.listeners(signal)]));
-  // serve вешает обработчики сигналов на процесс — снимаем их, чтобы не задеть раннер тестов.
+  // serve вешает обработчики сигналов на процесс – снимаем их, чтобы не задеть раннер тестов.
   t.after(() => {
     for (const signal of signals) {
       for (const listener of process.listeners(signal)) {

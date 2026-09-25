@@ -24,7 +24,7 @@ function macShortcutFiles({ root, nodePath, homeDir, env = process.env }) {
   const lines = ['#!/bin/sh'];
   if (env.PATH) lines.push(`export PATH=${shellQuote(env.PATH)}`);
   if (env.AUTOMONTAGE_FFMPEG_DIR) lines.push(`export AUTOMONTAGE_FFMPEG_DIR=${shellQuote(env.AUTOMONTAGE_FFMPEG_DIR)}`);
-  // `brew upgrade node` меняет версионный путь в Cellar — записанный nodePath может исчезнуть.
+  // `brew upgrade node` меняет версионный путь в Cellar – записанный nodePath может исчезнуть.
   // Тогда ищем node на сохранённом PATH, чтобы значок не переставал работать молча.
   lines.push(`NODE=${shellQuote(nodePath)}`);
   lines.push('[ -x "$NODE" ] || NODE="$(command -v node)"');
@@ -57,7 +57,7 @@ function macShortcutFiles({ root, nodePath, homeDir, env = process.env }) {
 // Значения передаются через переменные окружения: в тексте PowerShell-скрипта нет путей,
 // поэтому кавычки и спецсимволы в пути не могут изменить команду.
 const WINDOWS_SCRIPT = [
-  // PowerShell 5.1 в русской локали пишет перенаправленный stdout не в UTF-8 —
+  // PowerShell 5.1 в русской локали пишет перенаправленный stdout не в UTF-8 –
   // без этого путь к «Пульт роликов.lnk» вернётся кракозябрами.
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
   '$OutputEncoding = [System.Text.Encoding]::UTF8',
@@ -107,7 +107,7 @@ function installShortcut({
         existing = '';
       }
       if (!existing.includes(BUNDLE_ID)) {
-        throw new Error(`${appDir}: там уже другая программа — переименуйте или удалите её вручную`);
+        throw new Error(`${appDir}: там уже другая программа – переименуйте или удалите её вручную`);
       }
       fileSystem.rmSync(appDir, { recursive: true, force: true });
     }

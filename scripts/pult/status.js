@@ -10,7 +10,7 @@ function pluralEdits(count) {
 
 // Чистая функция: статус выводится только из явных данных движка (project.json,
 // хеш текущего brief, наличие файла финала, число новых правок), без угадывания по MP4.
-// approvalBlocker — русская подсказка, если движок заведомо не примет утверждение этого
+// approvalBlocker – русская подсказка, если движок заведомо не примет утверждение этого
 // черновика (например, b-roll ещё не выбран): ход всё ещё за человеком, но не «утвердите».
 function deriveVariantStatus({
   manifest,
@@ -48,10 +48,10 @@ function deriveVariantStatus({
     nextStep = `Ждёт агента: ${pluralEdits(pendingComments)}`;
   } else if (finalIsCurrent) {
     status = 'ready';
-    nextStep = 'Готов — можно забирать';
+    nextStep = 'Готов – можно забирать';
   } else if (currentBriefStatus === 'approved') {
     status = 'working';
-    nextStep = 'Утверждено — агент собирает финал';
+    nextStep = 'Утверждено – агент собирает финал';
   } else if (currentBriefStatus === 'draft' && previewIsCurrent) {
     status = 'waiting';
     nextStep = approvalBlocker || 'Посмотрите preview и утвердите';

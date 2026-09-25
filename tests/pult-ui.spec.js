@@ -16,10 +16,10 @@ const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pu
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 // Публикует ВТОРОЙ черновик и preview поверх уже утверждённого и отрендеренного проекта:
-// ролик возвращается в «Ждёт меня», а рендер v01 остаётся в Истории как прошлая версия —
+// ролик возвращается в «Ждёт меня», а рендер v01 остаётся в Истории как прошлая версия –
 // нужен тесту A4 (просмотр Истории на карточке, которую всё ещё можно утвердить и править).
-// previewBytes — содержимое нового preview: по умолчанию текст, а там, где тесту нужно
-// реально перематывать плеер, — настоящее видео.
+// previewBytes – содержимое нового preview: по умолчанию текст, а там, где тесту нужно
+// реально перематывать плеер, – настоящее видео.
 function addSecondRevision(projectDir, name, previewBytes = 'preview v2') {
   let workspace = ws.createOrOpenProject({ projectDir });
   const brief = {
@@ -87,7 +87,7 @@ function fakeCapture(command, args) {
   return { stdout: '' };
 }
 
-// Запускает свежий пульт поверх новой временной projects/ и заменяет им общий session —
+// Запускает свежий пульт поверх новой временной projects/ и заменяет им общий session –
 // нужен новым тестам (leadKey, NFD-поиск, legacy .mkv), у которых фикстуры отличаются от
 // общего набора beforeEach и не должны на него влиять.
 async function restartWith(fixtures, captureImpl = fakeCapture) {
@@ -106,7 +106,7 @@ async function restartWith(fixtures, captureImpl = fakeCapture) {
 
 test.beforeEach(async () => {
   ({ projectsDir } = makePultRoot(registrar));
-  addDraftProject(projectsDir, { folder: 'waiting-clip', name: 'Перфекционизм — тормоз' });
+  addDraftProject(projectsDir, { folder: 'waiting-clip', name: 'Перфекционизм – тормоз' });
   addDraftProject(projectsDir, { folder: 'ready-clip', name: 'Готовый ролик', approve: true, final: true });
   addLegacyFolder(projectsDir, 'hooks-series', {
     files: { 'out/a.mp4': 'a', 'out/b.mp4': 'b' },
@@ -147,7 +147,7 @@ async function openCard(page, title) {
 test('sections put what waits for the author first', async ({ page }) => {
   await page.goto(session.url);
   await expect(page.locator('[data-section]').first()).toHaveAttribute('data-section', 'waiting');
-  await expect(page.locator('[data-section="waiting"]')).toContainText('Перфекционизм — тормоз');
+  await expect(page.locator('[data-section="waiting"]')).toContainText('Перфекционизм – тормоз');
   await expect(page.locator('[data-section="waiting"]')).toContainText('Посмотрите preview и утвердите');
   await expect(page.locator('[data-section="waiting"]')).toContainText('9:16 · 1:59');
   await expect(page.locator('[data-section="ready"]')).toContainText('Готовый ролик');
@@ -188,7 +188,7 @@ test('approval needs the full-view confirmation', async ({ page }) => {
   await page.check('[data-viewed]');
   await approve.click();
   await expect(page.locator('[data-notice]')).toContainText('Утверждено');
-  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено — агент собирает финал');
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
 });
 
 test('archive hides a card without deleting it', async ({ page }) => {
@@ -203,7 +203,7 @@ test('archive hides a card without deleting it', async ({ page }) => {
 test('the agent phrase names the video folder and "Показать в папке" goes through the server', async ({ page }) => {
   await openCard(page, 'Перфекционизм');
   await expect(page.locator('[data-agent-phrase]')).toHaveValue(
-    'Продолжи ролик «Перфекционизм — тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
+    'Продолжи ролик «Перфекционизм – тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
   );
   await page.locator('button', { hasText: 'Показать в папке' }).click();
   await expect.poll(() => calls.reveal.length).toBe(1);
@@ -214,7 +214,7 @@ test('no absolute paths or hashes reach the page', async ({ page }) => {
   page.on('response', async (response) => {
     if (response.url().includes('/api/')) bodies.push(await response.text());
   });
-  // toBeVisible() смотрит только на разметку — <ul data-comment-list> уже в DOM до того,
+  // toBeVisible() смотрит только на разметку – <ul data-comment-list> уже в DOM до того,
   // как ответ /api/comments придёт, поэтому раньше проверка тела ответов могла случиться
   // до его загрузки. Дожидаемся самого GET-запроса правок, чтобы тело точно попало в bodies.
   const commentsLoaded = page.waitForResponse((response) => response.url().includes('/api/comments')
@@ -234,7 +234,7 @@ test('no absolute paths or hashes reach the page', async ({ page }) => {
 test('a group card shows the most urgent variant\'s facts and opens on it', async ({ page }) => {
   const group = { id: 'street-report', title: 'Отчёт с улицы' };
   await restartWith((dir) => {
-    // Папка готового варианта идёт первой по алфавиту (a-...), а ждущего — второй
+    // Папка готового варианта идёт первой по алфавиту (a-...), а ждущего – второй
     // (b-...): card.variants сохраняет этот порядок, а card.leadKey должен всё равно
     // указывать на вариант, за которым сейчас очередь человека.
     addDraftProject(dir, {
@@ -305,18 +305,18 @@ test('a legacy .mkv variant shows the unsupported-format label', async ({ page }
   await page.goto(session.url);
   await page.locator('.card', { hasText: 'Старый формат' }).click();
   await expect(page.locator('[data-view="detail"]')).toBeVisible();
-  await expect(page.locator('.player__label')).toHaveText('Этот формат не проигрывается в пульте — откройте в папке');
-  // Мёртвый <video> без источника выглядел рабочим плеером, но ничего не проигрывал —
+  await expect(page.locator('.player__label')).toHaveText('Этот формат не проигрывается в пульте – откройте в папке');
+  // Мёртвый <video> без источника выглядел рабочим плеером, но ничего не проигрывал –
   // вместо него теперь пустая заглушка, а не элемент [data-player].
   await expect(page.locator('[data-player]')).toHaveCount(0);
   await expect(page.locator('.player--empty')).toBeVisible();
   // Подпись живёт внутри пустой заглушки, а не висит под чёрным прямоугольником.
   await expect(page.locator('.player--empty .player__label')).toHaveText(
-    'Этот формат не проигрывается в пульте — откройте в папке',
+    'Этот формат не проигрывается в пульте – откройте в папке',
   );
   await expect(page.locator('button', { hasText: 'Показать в папке' })).toBeVisible();
   await expect(page.locator('.comments')).toContainText(
-    'Этот формат не проигрывается в пульте — правку можно описать словами агенту.',
+    'Этот формат не проигрывается в пульте – правку можно описать словами агенту.',
   );
 });
 
@@ -371,7 +371,7 @@ test('a dead server shows a Russian message, never the raw fetch error', async (
   await session.close();
   await page.evaluate(() => refresh());
   await expect(page.locator('[data-notice]')).toHaveText(
-    'Пульт не отвечает — откройте его снова значком «Пульт роликов».',
+    'Пульт не отвечает – откройте его снова значком «Пульт роликов».',
   );
 });
 
@@ -381,10 +381,10 @@ test('copy for agent puts the phrase on the real clipboard', async ({ page, cont
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openCard(page, 'Перфекционизм');
   await page.locator('button', { hasText: 'Скопировать для агента' }).click();
-  await expect(page.locator('[data-copy-status]')).toHaveText('Скопировано — вставьте в чат с агентом');
+  await expect(page.locator('[data-copy-status]')).toHaveText('Скопировано – вставьте в чат с агентом');
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(
-    'Продолжи ролик «Перфекционизм — тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
+    'Продолжи ролик «Перфекционизм – тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
   );
 });
 
@@ -407,7 +407,7 @@ test('archiving keeps the success notice visible after closing the card', async 
 
 // --- Карточка остаётся в синхроне с агентом ---
 
-// Фоновое обновление — ровно тот вызов, который пульт делает по 20-секундному таймеру.
+// Фоновое обновление – ровно тот вызов, который пульт делает по 20-секундному таймеру.
 // page.evaluate дожидается его конца, поэтому проверки «ничего не изменилось» не гадают
 // по времени. Там, где важен сам таймер, тест крутит его через page.clock.
 const backgroundRefresh = (page) => page.evaluate(() => refresh({ keepDetail: true }));
@@ -486,11 +486,11 @@ test('a new preview after the agent takes an edit reloads the player and says so
 
   // Агент принял правку и опубликовал новый preview.
   for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
-  addSecondRevision(projectDir, 'Перфекционизм — тормоз');
+  addSecondRevision(projectDir, 'Перфекционизм – тормоз');
   // Срабатывает настоящий 20-секундный таймер пульта, а не прямой вызов refresh.
   await page.clock.fastForward(20_000);
 
-  await expect(page.locator('[data-notice]')).toHaveText('Появилась новая версия видео — посмотрите её перед утверждением.');
+  await expect(page.locator('[data-notice]')).toHaveText('Появилась новая версия видео – посмотрите её перед утверждением.');
   const freshUrl = await page.evaluate(() => api('/api/cards').then((cards) => [...cards.waiting, ...cards.working]
     .flatMap((card) => card.variants)
     .find((variant) => variant.key === 'waiting-clip').video.url));
@@ -514,11 +514,11 @@ test('a card drawn without an approval ticket announces when one appears', async
   await page.locator('.card', { hasText: 'Перфекционизм' }).click();
   await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
   await expect(page.locator('.approve')).toBeHidden();
-  // Агент принял правку, не пересобирая preview: тот же файл снова можно утвердить —
+  // Агент принял правку, не пересобирая preview: тот же файл снова можно утвердить –
   // но блок не должен появиться молча.
   for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
   await backgroundRefresh(page);
-  await expect(page.locator('[data-notice]')).toHaveText('Preview теперь можно утвердить — посмотрите его целиком перед утверждением.');
+  await expect(page.locator('[data-notice]')).toHaveText('Preview теперь можно утвердить – посмотрите его целиком перед утверждением.');
   await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
   await expect(page.locator('.approve')).toBeVisible();
   await expect(page.locator('[data-viewed]')).not.toBeChecked();
@@ -534,7 +534,7 @@ test('deleting an edit while watching History keeps approval locked', async ({ p
   await expect(page.locator('.history-bar')).toBeVisible();
   await page.locator('[data-comment-list] button', { hasText: 'Удалить' }).click();
   await expect(page.locator('[data-comment-list]')).toContainText('Правок пока нет.');
-  // Блок утверждения вернулся — но человек всё ещё смотрит старую версию.
+  // Блок утверждения вернулся – но человек всё ещё смотрит старую версию.
   await expect(page.locator('.approve')).toBeVisible();
   await page.check('[data-viewed]');
   await expect(page.locator('.history-bar')).toBeVisible();
@@ -554,7 +554,7 @@ test('the list redraws when the server returns to an earlier state', async ({ pa
   const card = page.locator('.card', { hasText: 'Перфекционизм' });
   await expect(card.locator('.card__next')).toHaveText('Ждёт агента: 1 правка');
   // Агент принял правку, не пересобирая preview: данные сервера снова те же, что при
-  // первой отрисовке списка, — но на экране сейчас другой список, и его нужно обновить.
+  // первой отрисовке списка, – но на экране сейчас другой список, и его нужно обновить.
   for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
   await backgroundRefresh(page);
   await expect(card.locator('.card__next')).toHaveText('Посмотрите preview и утвердите');
@@ -565,7 +565,7 @@ test('a background refresh clears only its own error, never the author\'s', asyn
   const notice = page.locator('[data-notice]');
   await page.route('**/api/cards', (route) => route.abort());
   await backgroundRefresh(page);
-  await expect(notice).toHaveText('Пульт не отвечает — откройте его снова значком «Пульт роликов».');
+  await expect(notice).toHaveText('Пульт не отвечает – откройте его снова значком «Пульт роликов».');
   await page.unroute('**/api/cards');
   await backgroundRefresh(page);
   await expect(notice).toBeHidden();
@@ -579,13 +579,13 @@ test('an approved preview keeps its label even while an edit waits for the agent
   await openCard(page, 'Перфекционизм');
   await page.check('[data-viewed]');
   await page.locator('button', { hasText: 'Утверждаю' }).click();
-  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено — агент собирает финал');
-  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview — агент собирает финал');
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
   await addEdit(page, 'Ещё одна мысль после утверждения');
   await page.locator('button', { hasText: '← Все ролики' }).click();
   await page.locator('.card', { hasText: 'Перфекционизм' }).click();
   await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
-  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview — агент собирает финал');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
 });
 
 test('a video that is not there yet is announced inside the empty player', async ({ page }) => {

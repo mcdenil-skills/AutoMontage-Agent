@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const MAC_APPS = ['Google Chrome.app', 'Microsoft Edge.app', 'Chromium.app'];
 const LINUX_BROWSERS = ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge'];
 
-// Окно без адресной строки: Chrome/Edge в режиме приложения. Нет браузера — обычная вкладка.
+// Окно без адресной строки: Chrome/Edge в режиме приложения. Нет браузера – обычная вкладка.
 function appWindowCommand(url, {
   platform = process.platform,
   env = process.env,

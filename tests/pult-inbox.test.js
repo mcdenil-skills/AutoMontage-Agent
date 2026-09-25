@@ -32,10 +32,10 @@ test('the inbox lists edits with time and frame, and approved videos without a f
   const { projectsDir } = withComment(t);
   addDraftProject(projectsDir, { folder: 'approved', name: 'Утверждённый', approve: true });
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
-  assert.match(text, /## Ролик с правкой — `projects\/waiting`/);
+  assert.match(text, /## Ролик с правкой – `projects\/waiting`/);
   assert.match(text, /- Правка `c-0001` на 0:14: «Текст залезает на лицо»\. Видео: `previews\//);
   assert.match(text, /Кадр: `projects\/waiting\/pult\/frames\/c-0001\.jpg`/);
-  assert.match(text, /## Утверждённый — `projects\/approved`/);
+  assert.match(text, /## Утверждённый – `projects\/approved`/);
   assert.match(text, /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./);
   assert.match(text, /automontage inbox --accept <папка> <id>/);
 });
@@ -72,22 +72,22 @@ test('a corrupted comments.json is reported instead of silently dropped', (t) =>
   fs.mkdirSync(path.join(broken.projectDir, 'pult'), { recursive: true });
   fs.writeFileSync(path.join(broken.projectDir, 'pult', 'comments.json'), '{ broken');
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
-  assert.match(text, /## Сломанный — `projects\/broken`/);
+  assert.match(text, /## Сломанный – `projects\/broken`/);
   assert.match(
     text,
     /- Файл правок повреждён: `projects\/broken\/pult\/comments\.json`\. Проверь его и попроси автора повторить правки в пульте\./,
   );
   // Остальная часть входящих не должна пострадать из-за одной сломанной папки.
-  assert.match(text, /## Ролик с правкой — `projects\/waiting`/);
+  assert.match(text, /## Ролик с правкой – `projects\/waiting`/);
   assert.match(text, /- Правка `c-0001` на 0:14/);
 });
 
 test('a folder with an unreadable project.json still shows its pending edits', (t) => {
   const { projectsDir, waiting } = withComment(t);
-  // Паспорт битый, но правка на диске никуда не делась — её нельзя терять из виду.
+  // Паспорт битый, но правка на диске никуда не делась – её нельзя терять из виду.
   fs.writeFileSync(path.join(waiting.projectDir, 'project.json'), '{ not valid json');
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
-  assert.match(text, /## waiting — `projects\/waiting`/);
+  assert.match(text, /## waiting – `projects\/waiting`/);
   assert.match(
     text,
     /- Паспорт ролика не читается: Паспорт ролика не читается\. Почини паспорт, затем выполни правки\./,
@@ -99,7 +99,7 @@ test('a folder without a project.json at all still shows its pending edits', (t)
   const { projectsDir, waiting } = withComment(t);
   fs.rmSync(path.join(waiting.projectDir, 'project.json'));
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
-  assert.match(text, /## waiting — `projects\/waiting`/);
+  assert.match(text, /## waiting – `projects\/waiting`/);
   assert.match(
     text,
     /- Паспорт ролика не читается: У папки нет паспорта ролика \(project\.json\)\. Почини паспорт, затем выполни правки\./,
