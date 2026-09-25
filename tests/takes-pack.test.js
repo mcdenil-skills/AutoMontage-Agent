@@ -111,6 +111,6 @@ test('packTakes prefixes a broken transcript error with its take id', (t) => {
     packTakes({ projectDir: workspace.dir, silence: 0.4 });
     assert.fail('expected packTakes to throw');
   } catch (error) {
-    assert.match(error.message, /^take-0\d: нет слов/);
+    assert.match(error.message, /^take-02: нет слов/);
   }
 });
