@@ -282,3 +282,13 @@ ls -A "$T" | grep -cE '^\.?automontage'   # после: столько же
 git add CHANGELOG.md TESTING.md
 git commit -m "docs: note the test temp directory cleanup"
 ```
+
+## Итог исполнения
+
+Код отличается от плана по итогам ревью: регрессионный тест удаляет все `NODE_TEST_*`,
+использует `--test-reporter=tap`, требует, чтобы вложенный прогон выполнил тесты, и имеет
+таймаут 10 минут; тесты lesson-build на обычных путях проверяют, что их временная папка пуста.
+Финальное ревью нашло ещё две утечки (`tests/load-ext-theme.test.js`,
+`tests/build-security.test.js`) – они закрыты задачей 5 и добавлены в `HYGIENE_FILES`.
+Промежуточные файлы самого `scripts/build.js` (`_reframe.mp4`, `_tight.mp4`, `_audio.wav`)
+остаются в `os.tmpdir()` и в обычной работе – это отдельная задача движка.
