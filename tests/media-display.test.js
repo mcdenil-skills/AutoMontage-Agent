@@ -61,6 +61,49 @@ test('probeMediaPath probes a regular file by path and refuses symbolic links', 
   );
 });
 
+test('probeMediaPath reports the offset between the video and audio start_time', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-start-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'late.mp4');
+  fs.writeFileSync(file, 'MEDIA');
+  const probeJson = JSON.stringify({
+    streams: [
+      {
+        codec_type: 'video',
+        codec_name: 'h264',
+        width: 160,
+        height: 90,
+        avg_frame_rate: '25/1',
+        r_frame_rate: '25/1',
+        duration: '3.000000',
+        start_time: '0.040000',
+      },
+      {
+        codec_type: 'audio',
+        codec_name: 'aac',
+        sample_rate: '48000',
+        channels: 2,
+        duration: '3.000000',
+        start_time: '0.000000',
+      },
+    ],
+    format: {
+      format_name: 'mov,mp4,m4a,3gp,3g2,mj2', duration: '3.000000', start_time: '0.000000',
+    },
+  });
+  let seen = null;
+  const result = probeMediaPath(file, {
+    stage: 'take probe',
+    captureToolImpl(command, args, options) {
+      seen = { command, args, options };
+      return probeJson;
+    },
+  });
+  assert.ok(seen.args.includes('-show_entries'));
+  assert.ok(seen.args.some((arg) => String(arg).includes('start_time')));
+  assert.ok(Math.abs(result.startOffsetSec - 0.04) < 1e-9);
+});
+
 test('probeMediaPath fills missing stream durations from the container', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-flv-unit-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -217,4 +260,29 @@ test('real probe by path reads full durations of fragmented MP4 and MPEG-TS take
       `${path.basename(file)}: expected display dimensions 160x90`,
     );
   }
+});
+
+test('real probe reports the start_time offset of a video stream delayed against audio', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('start_time offset probe requires ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-start-real-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const late = path.join(dir, 'late.mp4');
+  const encode = spawnSync('ffmpeg', [
+    '-y', '-v', 'error',
+    '-itsoffset', '0.04', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-shortest',
+    late,
+  ], { encoding: 'utf8' });
+  assert.equal(encode.status, 0, encode.stderr);
+
+  const media = probeMediaPath(late, { stage: 'start offset probe' });
+  assert.ok(
+    Math.abs(media.startOffsetSec - 0.04) < 0.002,
+    `expected startOffsetSec near 0.04, got ${media.startOffsetSec}`,
+  );
 });

@@ -206,6 +206,19 @@ test('trim plan reuses one input for a take used forward in time', () => {
   });
 });
 
+test('a range does not start before both streams of its take have begun', () => {
+  const lateTakes = new Map([
+    ['take-03', { id: 'take-03', filePath: 'take-03.mp4', duration: 8, usableStart: 0.04 }],
+  ]);
+  const [range] = snapTakeRanges(
+    [{ take: 'take-03', start: 0, end: 1, beat: 'A', reason: 'x' }],
+    { fps: 25, takes: lateTakes },
+  );
+  assert.equal(range.startFrame, 1);
+  assert.equal(range.start, 0.04);
+  assert.equal(range.endFrame, 25);
+});
+
 test('a take reused backwards in time gets its own ffmpeg input', () => {
   const ranges = snapTakeRanges([
     { take: 'take-01', start: 4, end: 6, beat: 'A', reason: 'x' },

@@ -55,7 +55,10 @@ function snapTakeRanges(ranges, { fps, takes }) {
   const snapped = ranges.map((range, index) => {
     const take = takes.get(range.take);
     const lastFrame = snapFrame(take.duration, rate, 'floor');
-    const startFrame = snapFrame(range.start, rate, 'floor');
+    // Без -copyts FFmpeg сдвигает все потоки дубля на начало самого раннего; диапазон не может
+    // начинаться раньше кадра, в котором уже начались оба потока (usableStart, Addition C).
+    const firstFrame = snapFrame(take.usableStart || 0, rate, 'ceil');
+    const startFrame = Math.max(snapFrame(range.start, rate, 'floor'), firstFrame);
     const endFrame = Math.min(snapFrame(range.end, rate, 'ceil'), lastFrame);
     if (endFrame <= startFrame) {
       throw new Error(`ranges[${index}] is shorter than one frame after snapping`);

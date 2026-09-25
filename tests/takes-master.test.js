@@ -132,6 +132,28 @@ test('takes master assembles ranges from several takes into a new immutable sour
   ]);
 });
 
+test('a take range starts where both its streams have begun, not at zero', (t) => {
+  const fixture = setupTakes(t);
+  const editPath = writeEdit(fixture.dir, {
+    ranges: [
+      { take: 'take-02', start: 0, end: 2.51, beat: 'HOOK', reason: 'самый уверенный хук' },
+      { take: 'take-01', start: 4, end: 6, beat: 'CTA', reason: 'единственный полный призыв' },
+    ],
+  });
+  const calls = [];
+  buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
+    probeMediaPathImpl: (file) => (file.includes('take-02') ? media({ startOffsetSec: 0.04 }) : media()),
+    // take-02 [0.04, 2.52] + take-01 [4, 6]: 0.04 shorter on one side than the base fixture's 3.52.
+    probeVideoImpl(filename) {
+      return path.basename(filename).startsWith('.source-v')
+        ? { width: 1920, height: 1080, fps: 25, duration: 4.48 }
+        : { width: 1920, height: 1080, fps: 25, duration: 10 };
+    },
+  }));
+  const [, trim] = calls[0];
+  assert.equal(trim.segments[0].start, 0.04);
+});
+
 test('takes master rejects stale, unknown, unregistered and incompatible selections', (t) => {
   const fixture = setupTakes(t);
   const before = fs.readFileSync(path.join(fixture.dir, 'project.json'));

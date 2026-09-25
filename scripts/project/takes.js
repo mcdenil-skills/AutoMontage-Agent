@@ -41,6 +41,8 @@ function describeTake(id, { filePath, video, media }) {
     audioChannels: media.audioChannels,
     // Кусок не может быть длиннее самого короткого потока, иначе звук и видео разъедутся.
     duration: Math.min(...durations),
+    // Диапазон дубля не может начинаться раньше, чем начались оба потока (см. media-probe.js).
+    usableStart: Number.isFinite(media.startOffsetSec) ? media.startOffsetSec : 0,
   };
 }
 

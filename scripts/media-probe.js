@@ -14,6 +14,16 @@ const OPENED_MEDIA_PROBE_ENTRIES = [
   'stream_side_data=rotation',
   'format=format_name,duration',
 ].join(':');
+// Отдельная от OPENED_MEDIA_PROBE_ENTRIES константа: только probeMediaPath (проба по пути, а не
+// по открытому дескриптору) нужен start_time потоков и контейнера, чтобы вычислить сдвиг между
+// потоками дубля (см. startOffsetSec ниже).
+const MEDIA_PATH_PROBE_ENTRIES = [
+  'stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,duration_ts,time_base,pix_fmt,sample_rate,channels,start_time',
+  'stream_tags=rotate,DURATION',
+  'stream_disposition=attached_pic',
+  'stream_side_data=rotation',
+  'format=format_name,duration,start_time',
+].join(':');
 const OPENED_MEDIA_PROBE_MAX_BYTES = 1024 * 1024;
 
 function sameOpenedFileSnapshot(left, right, platform = process.platform) {
@@ -373,13 +383,29 @@ function probeMediaPath(filePath, {
   // фрагментированный MP4 отдаёт длительность первого фрагмента, а MPEG-TS не отдаёт её вовсе.
   const stdout = captureToolImpl('ffprobe', [
     '-v', 'error',
-    '-show_entries', OPENED_MEDIA_PROBE_ENTRIES,
+    '-show_entries', MEDIA_PATH_PROBE_ENTRIES,
     '-of', 'json',
     resolved,
   ], { stage, maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES });
-  return parseMediaProbeJson(
+  const parsed = parseMediaProbeJson(
     containerDurationFallback ? fillContainerOnlyStreamDurations(stdout) : stdout,
   );
+  // Без -copyts FFmpeg сдвигает каждый поток на start_time самого раннего потока контейнера.
+  // Если у одного потока дубля (часто видео на Android) start_time больше, кусок, начинающийся
+  // внутри этого сдвига, даёт после trim видео короче звука (или наоборот) - тот же сдвиг нужно
+  // знать заранее, чтобы не начинать диапазон дубля раньше, чем начались оба потока.
+  const data = JSON.parse(stdout);
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  const video = streams.find((stream) => stream && stream.codec_type === 'video'
+    && Number(stream.disposition?.attached_pic || 0) !== 1);
+  const audio = streams.find((stream) => stream && stream.codec_type === 'audio');
+  const starts = [video, audio]
+    .map((stream) => Number(stream?.start_time))
+    .filter((value) => Number.isFinite(value));
+  const formatStart = Number(data.format?.start_time);
+  const base = Number.isFinite(formatStart) ? formatStart : (starts.length ? Math.min(...starts) : 0);
+  const startOffsetSec = starts.length ? Math.max(0, Math.max(...starts) - base) : 0;
+  return { ...parsed, startOffsetSec };
 }
 
 module.exports = {
