@@ -216,6 +216,21 @@ test('serveStatic serves a whitelisted file by its real path and rejects a symli
   fs.symlinkSync(path.join(elsewhere, 'Onest.ttf'), path.join(linkedFileRoot, 'public', 'fonts', 'Onest.ttf'));
   const linkedFile = await withServeStaticServer(linkedFileRoot, '/fonts/Onest.ttf');
   assert.equal(linkedFile.status, 404);
+
+  // Негативный случай 3: симлинк не на последнем, а на промежуточном каталоге – самом
+  // public, а не на public/fonts. lstat промежуточного компонента пути следует за ним
+  // прозрачно: lstat('.../public/fonts') через симлинкнутый public честно докладывает
+  // «настоящий каталог», потому что смотрит только на последний компонент – 'fonts'.
+  // Проверка, которая lstat'ит лишь конечный public/fonts (а не каждый сегмент отдельно),
+  // тут ошибочно сочла бы путь безопасным и отдала бы файл из-под симлинка public.
+  const realFontsDir = path.join(dir, 'real-fonts-target');
+  fs.mkdirSync(path.join(realFontsDir, 'fonts'), { recursive: true });
+  fs.writeFileSync(path.join(realFontsDir, 'fonts', 'Onest.ttf'), 'font bytes');
+  const sneakyRoot = path.join(dir, 'sneaky-root');
+  fs.mkdirSync(sneakyRoot, { recursive: true });
+  fs.symlinkSync(realFontsDir, path.join(sneakyRoot, 'public'));
+  const sneaky = await withServeStaticServer(sneakyRoot, '/fonts/Onest.ttf');
+  assert.equal(sneaky.status, 404);
 });
 
 function statusAndType(filePath) {

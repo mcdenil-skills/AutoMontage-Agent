@@ -14,8 +14,8 @@ const STATIC_FILES = new Map([
   ['/index.html', { dir: ['pult'], file: 'index.html' }],
   ['/app.js', { dir: ['pult'], file: 'app.js' }],
   ['/styles.css', { dir: ['pult'], file: 'styles.css' }],
-  // Единственный шрифт страницы: свой Onest вместо недоступного Inter, без ключей CSP –
-  // default-src 'self' уже разрешает файл того же источника.
+  // Единственный шрифт страницы: приезжает с того же локального сервера, работает
+  // офлайн, и как файл того же источника уже разрешён CSP без отдельного font-src.
   ['/fonts/Onest.ttf', { dir: ['public', 'fonts'], file: 'Onest.ttf' }],
 ]);
 // Только для serveStatic (страница пульта) и JSON-ответов – не для медиа.
@@ -149,6 +149,7 @@ function serveStatic(root, pathname, request, response) {
   const entry = STATIC_FILES.get(pathname);
   if (!entry) return false;
   const head = request.method === 'HEAD';
+  let filePath;
   try {
     // Каждый каталог на пути – не только последний – проверяется на симлинк: шрифт
     // лежит на два уровня глубже страницы (public/fonts/…), и подмена любого из них
@@ -159,13 +160,16 @@ function serveStatic(root, pathname, request, response) {
       const directoryStat = fs.lstatSync(directory);
       if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) throw new Error('unsafe static directory');
     }
-    const filePath = path.join(directory, entry.file);
+    filePath = path.join(directory, entry.file);
     const fileStat = fs.lstatSync(filePath);
     if (fileStat.isSymbolicLink() || !fileStat.isFile()) throw new Error('unsafe static file');
-    send(response, 200, fs.readFileSync(filePath), { 'Content-Type': contentType(filePath) }, head);
   } catch (_) {
     sendError(response, 404, head);
+    return true;
   }
+  // Вне try: настоящая ошибка чтения (файл исчез, EACCES) не должна тихо стать 404 –
+  // она уходит в общий catch route() как раньше: 500 странице и класс ошибки в лог.
+  send(response, 200, fs.readFileSync(filePath), { 'Content-Type': contentType(filePath) }, head);
   return true;
 }
 

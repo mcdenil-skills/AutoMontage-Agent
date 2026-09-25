@@ -182,8 +182,13 @@ test('the pult serves its own Onest font without a token, and only that exact pa
   assert.equal(font.headers['x-content-type-options'], 'nosniff');
   assert.ok(font.body.equals(fs.readFileSync(fontPath)));
   // Похожие, но не совпадающие в точности пути не должны отдавать ничего лишнего:
-  // другое имя, обход каталога, другой регистр и конечный слеш.
-  for (const pathname of ['/fonts/Other.ttf', '/fonts/../package.json', '/fonts/onest.ttf', '/fonts/Onest.ttf/']) {
+  // другое имя, обход каталога, другой регистр, конечный слеш и настоящие соседние
+  // файлы public/fonts/ (лицензия и другой шрифт) – белый список пропускает только
+  // ровно один путь, а не всю папку.
+  for (const pathname of [
+    '/fonts/Other.ttf', '/fonts/../package.json', '/fonts/onest.ttf', '/fonts/Onest.ttf/',
+    '/fonts/OFL-Onest.txt', '/fonts/JetBrainsMono.ttf',
+  ]) {
     assert.equal((await request(session, pathname)).status, 404, pathname);
   }
 });
