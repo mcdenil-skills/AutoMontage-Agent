@@ -38,13 +38,15 @@ function percentile(sorted, fraction) {
 }
 
 // Тишина: не громче 15 дБ над шумом дубля (10-й процентиль) или на 35 дБ тише его речи
-// (90-й процентиль), но всегда хотя бы на 20 дБ тише речи и не громче -30 dBFS. Ограничение
-// от речи не даёт порогу подняться в речь на дубле почти без пауз.
+// (90-й процентиль), но всегда хотя бы на 20 дБ тише громкой речи (99-й процентиль) и не громче
+// -30 dBFS. Ограничение не даёт порогу подняться в речь на дубле почти без пауз, а опора на
+// 99-й процентиль сохраняет поиск пауз на дубле, который почти весь из тишины.
 function pauseThresholdDb(levels) {
   const sorted = [...levels].sort((left, right) => left - right);
   const noise = percentile(sorted, 0.1);
   const speech = percentile(sorted, 0.9);
-  return Math.min(-30, speech - 20, Math.max(noise + 15, speech - 35));
+  const loudest = percentile(sorted, 0.99);
+  return Math.min(-30, loudest - 20, Math.max(noise + 15, speech - 35));
 }
 
 function analyzeLevels({ frameSec, levels }) {
@@ -91,7 +93,8 @@ function clamp(value, low, high) {
 // Whisper растягивает конец слова в паузу и начинает слово раньше паузы. Поэтому конец куска
 // предпочитает паузу до себя, начало – после себя; пауза с другой стороны выигрывает, только если
 // она ближе на SIDE_BIAS_SEC. Общий разрез двух соседних кусков одного дубля ('joint') берёт
-// ближайшую паузу и встаёт в её середину. Точка ставится на границу видеокадра внутри паузы.
+// ближайшую паузу и встаёт у её края, ближнего к стыку. Точка ставится на границу видеокадра
+// внутри паузы.
 function findPauseCut(analysis, time, edge, {
   fps,
   searchSec = PAUSE_SEARCH_SEC,
@@ -119,12 +122,10 @@ function findPauseCut(analysis, time, edge, {
   const length = run.end - run.start;
   const margin = Math.min(MIN_MARGIN_SEC, length / 2);
   let target;
+  const lead = Math.min(leadSec, length / 2);
   if (run.distance === 0) target = time;
-  else if (edge === 'joint') target = (run.start + run.end) / 2;
-  else {
-    const lead = Math.min(leadSec, length / 2);
-    target = edge === 'end' ? run.start + lead : run.end - lead;
-  }
+  else if (edge === 'joint') target = run.end <= time ? run.end - lead : run.start + lead;
+  else target = edge === 'end' ? run.start + lead : run.end - lead;
   const innerFirst = Math.ceil((run.start + margin) * frameRate - 1e-6);
   const innerLast = Math.floor((run.end - margin) * frameRate + 1e-6);
   const first = innerFirst <= innerLast ? innerFirst : Math.ceil(run.start * frameRate - 1e-6);
@@ -151,16 +152,19 @@ function assertNoRawOverlap(ranges) {
 function snapRangesToPauses(ranges, { takes, analyses, fps }) {
   assertNoRawOverlap(ranges);
   const frameDuration = 1 / fps;
+  // Стык: конец одного куска и начало другого куска того же дубля в одной точке или с зазором
+  // меньше кадра (такой зазор кадровое выравнивание всё равно отдаёт одному куску).
   const partners = ranges.map(() => []);
+  const jointTime = new Map();
   ranges.forEach((range, index) => ranges.forEach((other, otherIndex) => {
-    if (index !== otherIndex && range.take === other.take && Math.abs(range.end - other.start) <= 1e-9) {
-      partners[index].push(otherIndex);
-      partners[otherIndex].push(index);
-    }
+    const gap = other.start - range.end;
+    if (index === otherIndex || range.take !== other.take || gap < -1e-9 || gap >= frameDuration - 1e-9) return;
+    const time = (range.end + other.start) / 2;
+    partners[index].push(otherIndex);
+    partners[otherIndex].push(index);
+    jointTime.set(`${index}:end`, time);
+    jointTime.set(`${otherIndex}:start`, time);
   }));
-  const isJoint = (index, edge) => ranges.some((other, otherIndex) => otherIndex !== index
-    && other.take === ranges[index].take
-    && Math.abs((edge === 'end' ? other.start : other.end) - ranges[index][edge]) <= 1e-9);
   const notes = [];
   const snapped = ranges.map((range, index) => {
     const analysis = analyses.get(range.take);
@@ -173,7 +177,10 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
         ? from <= (take.usableStart || 0) + frameDuration
         : from >= take.duration - frameDuration;
       if (atFileEdge) continue;
-      const to = findPauseCut(analysis, from, isJoint(index, edge) ? 'joint' : edge, { fps });
+      const joint = jointTime.get(`${index}:${edge}`);
+      const to = joint === undefined
+        ? findPauseCut(analysis, from, edge, { fps })
+        : findPauseCut(analysis, joint, 'joint', { fps });
       if (to === null) {
         notes.push({ index, edge, from, to: from, reason: 'no-pause' });
       } else {
@@ -190,8 +197,12 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
     snapped[index] = { ...ranges[index] };
     for (const partner of partners[index]) revert(partner);
   };
+  // Длину считаем после обрезки по началу потоков и концу дубля, как её увидит кадровое выравнивание.
   snapped.forEach((range, index) => {
-    if (range.end - range.start < frameDuration) revert(index);
+    const take = takes.get(range.take);
+    const start = Math.max(range.start, (take && take.usableStart) || 0);
+    const end = take ? Math.min(range.end, take.duration) : range.end;
+    if (end - start < frameDuration) revert(index);
   });
   const overlaps = (left, right) => left.take === right.take
     && left.start < right.end && right.start < left.end;

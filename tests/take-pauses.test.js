@@ -51,6 +51,8 @@ test('pause threshold follows the take noise and stays at least 20 dB below spee
   // Почти без пауз 10-й процентиль попадает в речь; ограничение от речи не даёт порогу подняться.
   assert.equal(pauseThresholdDb([...new Array(98).fill(-20), -90, -90]), -40);
   assert.equal(pauseThresholdDb([...new Array(98).fill(-44), -90, -90]), -64);
+  // Дубль почти весь из тишины: опора на громкую речь сохраняет поиск пауз.
+  assert.equal(pauseThresholdDb([...new Array(50).fill(-20), ...new Array(950).fill(-70)]), -55);
 });
 
 test('a cut inside speech moves to the nearest pause on the video frame grid', () => {
@@ -81,6 +83,11 @@ test('dips shorter than 50 ms are not pauses and cuts keep a margin from speech'
   assert.equal(findPauseCut(analysis, 1.29, 'start', { fps: 25 }), 1.24);
 });
 
+test('a short pause of the live probe still yields a frame cut inside it', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[3.46, 3.54]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 3.57, 'end', { fps: 25 }), 3.52);
+});
+
 test('a long pause is seen to its real edges', () => {
   const analysis = analyzeLevels(levelsWithPauses([[1, 4]], { duration: 5 }));
   assert.equal(findPauseCut(analysis, 4.1, 'end', { fps: 25 }), 1.12);
@@ -107,11 +114,11 @@ test('ranges move into pauses and report every moved or unmovable edge', () => {
     analyses: new Map([['take-01', analysis], ['take-02', analysis]]),
     fps: 25,
   });
-  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.16], [1.16, 2.6], [0.4, 0.6]]);
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.2], [1.2, 2.6], [0.4, 0.6]]);
   assert.equal(result.ranges[0].beat, 'A');
   assert.deepEqual(result.adjustments, [
-    { index: 0, edge: 'end', from: 1.36, to: 1.16, reason: 'pause' },
-    { index: 1, edge: 'start', from: 1.36, to: 1.16, reason: 'pause' },
+    { index: 0, edge: 'end', from: 1.36, to: 1.2, reason: 'pause' },
+    { index: 1, edge: 'start', from: 1.36, to: 1.2, reason: 'pause' },
     { index: 1, edge: 'end', from: 2.4, to: 2.6, reason: 'pause' },
     { index: 2, edge: 'start', from: 0.4, to: 0.4, reason: 'no-pause' },
     { index: 2, edge: 'end', from: 0.6, to: 0.6, reason: 'no-pause' },
@@ -176,4 +183,47 @@ test('edges at or past the file boundaries stay and takes without levels are unt
   );
   assert.deepEqual(untouched.ranges.map(({ start, end }) => [start, end]), [[0.4, 0.6]]);
   assert.deepEqual(untouched.adjustments, []);
+});
+
+test('pieces of one take less than a frame apart share one cut', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.21, end: 2.9, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.36], [1.36, 2.9]]);
+});
+
+test('a joint cut stays at the near edge of a long pause', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[5.2, 9.2]], { duration: 12 }));
+  const takes = new Map([['take-01', { id: 'take-01', duration: 12, usableStart: 0 }]]);
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 3, end: 5, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 5, end: 10.5, beat: 'B', reason: 'y' },
+  ], { takes, analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[3, 5.32], [5.32, 10.5]]);
+});
+
+test('a collapsing piece reverts its joint partner too, so no speech falls between them', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1]]));
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.2, end: 1.3, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.2], [1.2, 1.3]]);
+  assert.deepEqual(
+    result.adjustments.map(({ index, edge, reason }) => [index, edge, reason]),
+    [[0, 'start', 'kept'], [0, 'end', 'kept'], [1, 'start', 'kept'], [1, 'end', 'kept']],
+  );
+});
+
+test('the collapse check uses the part of a piece that fits the take', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[9.95, 10.15]], { duration: 11 }));
+  const takes = new Map([['take-01', { id: 'take-01', duration: 10, usableStart: 0 }]]);
+  const result = snapRangesToPauses(
+    [{ take: 'take-01', start: 9.8, end: 10.2, beat: 'A', reason: 'x' }],
+    { takes, analyses: new Map([['take-01', analysis]]), fps: 25 },
+  );
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[9.8, 10.2]]);
+  assert.deepEqual(result.adjustments.map(({ edge, reason }) => [edge, reason]), [['start', 'kept'], ['end', 'kept']]);
 });
