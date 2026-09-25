@@ -477,6 +477,10 @@ function validateProjectManifest(manifest, { projectDir, fileSystem = fs } = {})
     ))) {
     throw new Error('manifest.latestRender must match one complete manifest.renders[].dir entry');
   }
+  const takeIds = (migratedManifest.takes || []).map((take) => take.id);
+  if (new Set(takeIds).size !== takeIds.length) {
+    throw new Error('manifest.takes ids must be unique');
+  }
   if (!projectDir) return migratedManifest;
 
   const paths = [
@@ -511,6 +515,12 @@ function validateProjectManifest(manifest, { projectDir, fileSystem = fs } = {})
       [`manifest.source.history[${index}].localPath`, entry.localPath],
       [`manifest.source.history[${index}].editPath`, entry.editPath],
       [`manifest.source.history[${index}].transcriptPath`, entry.transcriptPath],
+    );
+  });
+  (migratedManifest.takes || []).forEach((take, index) => {
+    paths.push(
+      [`manifest.takes[${index}].localPath`, take.localPath],
+      [`manifest.takes[${index}].transcriptPath`, take.transcriptPath],
     );
   });
   for (const [label, storedPath] of paths) {

@@ -1,0 +1,336 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { hostPath, runTool } = require('../process');
+
+const { frameRateFromFps, frameToSeconds } = require('../review/media-time');
+
+// Окно 10 мс видит паузу между словами и не размазывает её соседними словами.
+const LEVEL_FRAME_SEC = 0.01;
+const SILENCE_FLOOR_DB = -120;
+// Паузу ищем не дальше этого расстояния от границы, выбранной агентом.
+const PAUSE_SEARCH_SEC = 0.25;
+// Сколько тишины оставить у края куска, когда граница уходит в паузу рядом.
+const PAUSE_LEAD_SEC = 0.1;
+// Провал короче 50 мс чаще смычка согласного внутри слова, чем пауза между словами.
+const MIN_PAUSE_SEC = 0.05;
+// Разрез не ставим ближе к речи: иначе 40-мс затухание звука на краю куска ляжет на слово.
+const MIN_MARGIN_SEC = 0.04;
+
+function levelsFromPcm(buffer, { sampleRate = 16000, frameSec = LEVEL_FRAME_SEC } = {}) {
+  const samplesPerFrame = Math.max(1, Math.round(sampleRate * frameSec));
+  const frameCount = Math.floor(Math.floor(buffer.length / 2) / samplesPerFrame);
+  const levels = new Array(frameCount);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    let sum = 0;
+    const first = frame * samplesPerFrame;
+    for (let index = 0; index < samplesPerFrame; index += 1) {
+      const sample = buffer.readInt16LE((first + index) * 2) / 32768;
+      sum += sample * sample;
+    }
+    const rms = Math.sqrt(sum / samplesPerFrame);
+    levels[frame] = rms > 0 ? Math.max(SILENCE_FLOOR_DB, 20 * Math.log10(rms)) : SILENCE_FLOOR_DB;
+  }
+  return { frameSec: samplesPerFrame / sampleRate, levels };
+}
+
+function percentile(sorted, fraction) {
+  if (!sorted.length) return SILENCE_FLOOR_DB;
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor(fraction * (sorted.length - 1))));
+  return sorted[index];
+}
+
+// Тишина: не громче 15 дБ над шумом дубля (10-й процентиль) или на 35 дБ тише его речи
+// (90-й процентиль), но всегда хотя бы на 20 дБ тише громкой речи (99-й процентиль) и не громче
+// -30 dBFS. Ограничение не даёт порогу подняться в речь на дубле почти без пауз, а опора на
+// 99-й процентиль сохраняет поиск пауз на дубле, который почти весь из тишины.
+function pauseThresholdDb(levels) {
+  const sorted = [...levels].sort((left, right) => left - right);
+  const noise = percentile(sorted, 0.1);
+  const speech = percentile(sorted, 0.9);
+  const loudest = percentile(sorted, 0.99);
+  return Math.min(-30, loudest - 20, Math.max(noise + 15, speech - 35));
+}
+
+function analyzeLevels({ frameSec, levels }) {
+  return { frameSec, levels, thresholdDb: pauseThresholdDb(levels) };
+}
+
+// Паузу расширяем до её настоящих краёв, даже если она выходит за окно поиска.
+function silentRuns({ levels, frameSec, thresholdDb }, fromSec, toSec) {
+  const silent = (index) => index >= 0 && index < levels.length && levels[index] < thresholdDb;
+  const first = Math.max(0, Math.floor(fromSec / frameSec));
+  const last = Math.min(levels.length - 1, Math.ceil(toSec / frameSec));
+  const runs = [];
+  let index = first;
+  while (index <= last) {
+    if (!silent(index)) {
+      index += 1;
+      continue;
+    }
+    let start = index;
+    while (silent(start - 1)) start -= 1;
+    let end = index;
+    while (silent(end + 1)) end += 1;
+    runs.push({ start: start * frameSec, end: (end + 1) * frameSec });
+    index = end + 1;
+  }
+  return runs;
+}
+
+// Звук вне уровней неизвестен и тишиной не считается.
+function isSilentSpan(analysis, start, end) {
+  const first = Math.max(0, Math.floor(start / analysis.frameSec + 1e-9));
+  const last = Math.max(first, Math.ceil(end / analysis.frameSec - 1e-9) - 1);
+  if (last >= analysis.levels.length) return false;
+  for (let index = first; index <= last; index += 1) {
+    if (analysis.levels[index] >= analysis.thresholdDb) return false;
+  }
+  return true;
+}
+
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
+}
+
+// Разрез не перескакивает через другое слово: между границей и паузой может лежать только звук,
+// который продолжается по другую сторону границы и лежит там большей частью (правило середины,
+// как у слов на стыке): хвост или начало слова, внутрь которого Whisper поставил границу. Граница
+// на краю звука, в провале короче паузы или у края короткого слова уже стоит между словами: пауза
+// за соседним словом для неё недоступна, иначе пропало бы короткое слово или вернулся вырезанный
+// звук. Граница ровно в середине звука не уходит ни в одну сторону.
+function crossesOnlyCutSound(analysis, time, run) {
+  const sound = (index) => index >= 0 && index < analysis.levels.length
+    && analysis.levels[index] >= analysis.thresholdDb;
+  const before = run.end <= time;
+  // По другую сторону границы звучать должно целое окно уровней, даже если граница вне их сетки.
+  const [first, last] = before
+    ? [Math.round(run.end / analysis.frameSec), Math.ceil(time / analysis.frameSec - 1e-9)]
+    : [Math.floor(time / analysis.frameSec + 1e-9) - 1, Math.round(run.start / analysis.frameSec) - 1];
+  for (let index = first; index <= last; index += 1) {
+    if (!sound(index)) return false;
+  }
+  // Правило середины, как у слов на стыке: звук уходит из куска, только если большая его часть
+  // лежит по другую сторону границы. Граница у края короткого слова оставляет слово на месте.
+  // Провал в одно окно уровней внутри звука словом не считается.
+  const crossed = last - first;
+  const step = before ? 1 : -1;
+  let far = 0;
+  for (let index = before ? last : first, gap = 0; far <= crossed && gap < 2; index += step) {
+    if (sound(index)) {
+      far += 1;
+      gap = 0;
+    } else {
+      gap += 1;
+    }
+  }
+  return far > crossed;
+}
+
+// Уровни не видят границу двух слов, склеенных без паузы. Поэтому пройденный разрезом звук не должен
+// содержать середину слова Whisper: это то же правило середины, что у слов на стыке. Иначе короткое
+// слово куска, склеенное с вырезанным соседом, пропало бы («Не работает» → «работает»). Оба края
+// промежутка входят в проверку, а середина слова внутри самой паузы разрез не останавливает.
+function crossesWordMiddle(words, from, to) {
+  return words.some((word) => {
+    const middle = (word.s + word.e) / 2;
+    return middle >= from - 1e-9 && middle <= to + 1e-9;
+  });
+}
+
+// Сторону паузы выбирает сам звук, а не тип края и не привычка Whisper растягивать слова: граница
+// в звуке уходит в паузу через меньшую часть этого звука (crossesOnlyCutSound), граница в паузе
+// остаётся в ней. Конец куска оставляет около PAUSE_LEAD_SEC тишины после своей речи, начало –
+// перед своей, а общий разрез двух соседних кусков одного дубля ('joint') встаёт у края паузы,
+// ближнего к стыку. Без доступной паузы граница остаётся на месте. Точка ставится на границу
+// видеокадра внутри паузы. Слова Whisper дубля (words, время дубля) дополнительно закрывают паузу,
+// путь к которой проходит через середину слова (crossesWordMiddle).
+function findPauseCut(analysis, time, edge, {
+  fps,
+  words = null,
+  searchSec = PAUSE_SEARCH_SEC,
+  leadSec = PAUSE_LEAD_SEC,
+} = {}) {
+  const audioEnd = analysis.levels.length * analysis.frameSec;
+  if (!(time >= 0 && time <= audioEnd)) return null;
+  const rate = frameRateFromFps(fps);
+  const frameRate = rate.numerator / rate.denominator;
+  const minPause = Math.max(MIN_PAUSE_SEC, 1 / frameRate);
+  // Пройденный звук лежит между паузой и границей: от конца паузы до границы или от границы до
+  // начала паузы.
+  const crossesWord = (candidate) => Boolean(words) && (candidate.end <= time
+    ? crossesWordMiddle(words, candidate.end, time)
+    : crossesWordMiddle(words, time, candidate.start));
+  // Доступна не больше чем одна пауза: граница в паузе достаёт только её (путь к другой лежит через
+  // тишину), граница в провале короче паузы – ни одной, а граница в звуке – только паузу со стороны
+  // меньшей части этого звука: правило середины не пускает через большую часть, а путь дальше лежит
+  // через тишину. Поэтому выбирать между паузами не нужно.
+  const run = silentRuns(analysis, time - searchSec, time + searchSec)
+    .filter((candidate) => candidate.end - candidate.start >= minPause - 1e-9)
+    .map((candidate) => ({
+      ...candidate,
+      distance: time < candidate.start ? candidate.start - time : Math.max(0, time - candidate.end),
+    }))
+    .find((candidate) => candidate.distance <= searchSec + 1e-9
+      && (candidate.distance === 0
+        || (crossesOnlyCutSound(analysis, time, candidate) && !crossesWord(candidate))));
+  if (!run) return null;
+  const length = run.end - run.start;
+  const margin = Math.min(MIN_MARGIN_SEC, length / 2);
+  let target;
+  const lead = Math.min(leadSec, length / 2);
+  if (run.distance === 0) target = time;
+  else if (edge === 'joint') target = run.end <= time ? run.end - lead : run.start + lead;
+  else target = edge === 'end' ? run.start + lead : run.end - lead;
+  const innerFirst = Math.ceil((run.start + margin) * frameRate - 1e-6);
+  const innerLast = Math.floor((run.end - margin) * frameRate + 1e-6);
+  let first = innerFirst;
+  let last = innerLast;
+  if (innerFirst > innerLast) {
+    // Короткая пауза не вмещает отступы с обеих сторон: отступ получает речь, которая остаётся в
+    // куске (конец куска встаёт у конца паузы, начало – у её начала), а общий разрез – середина
+    // паузы.
+    if (edge === 'joint') target = (run.start + run.end) / 2;
+    else target = edge === 'end' ? run.end : run.start;
+    first = Math.ceil(run.start * frameRate - 1e-6);
+    last = Math.floor(run.end * frameRate + 1e-6);
+  }
+  if (first > last) return null;
+  return frameToSeconds(clamp(Math.round(target * frameRate), first, last), rate);
+}
+
+function assertNoRawOverlap(ranges) {
+  ranges.forEach((range, index) => {
+    for (let other = 0; other < index; other += 1) {
+      const previous = ranges[other];
+      if (previous.take === range.take && range.start < previous.end && previous.start < range.end) {
+        throw new Error(`ranges[${index}] overlaps ranges[${other}] in ${range.take}`);
+      }
+    }
+  });
+}
+
+// Пересечение, которое сделал агент, остаётся ошибкой, а не превращается в потерю речи.
+// Конец одного куска и начало другого куска того же дубля в одной точке – один разрез.
+// Если сдвиг схлопывает кусок или создаёт новое пересечение, кусок и его соседи по стыку
+// возвращаются к исходным границам.
+function snapRangesToPauses(ranges, { takes, analyses, fps, wordsByTake = null }) {
+  assertNoRawOverlap(ranges);
+  const frameDuration = 1 / fps;
+  // Стык: конец одного куска и начало другого куска того же дубля в одной точке или с зазором
+  // меньше кадра (такой зазор кадровое выравнивание всё равно отдаёт одному куску).
+  const partners = ranges.map(() => []);
+  const jointTime = new Map();
+  ranges.forEach((range, index) => ranges.forEach((other, otherIndex) => {
+    const gap = other.start - range.end;
+    if (index === otherIndex || range.take !== other.take || gap < -1e-9 || gap >= frameDuration - 1e-9) return;
+    const time = (range.end + other.start) / 2;
+    partners[index].push(otherIndex);
+    partners[otherIndex].push(index);
+    jointTime.set(`${index}:end`, time);
+    jointTime.set(`${otherIndex}:start`, time);
+  }));
+  const notes = [];
+  const snapped = ranges.map((range, index) => {
+    const analysis = analyses.get(range.take);
+    if (!analysis) return { ...range };
+    const take = takes.get(range.take);
+    const words = wordsByTake ? wordsByTake.get(range.take) || null : null;
+    const next = { ...range };
+    for (const edge of ['start', 'end']) {
+      const from = range[edge];
+      const atFileEdge = edge === 'start'
+        ? from <= (take.usableStart || 0) + frameDuration
+        : from >= take.duration - frameDuration;
+      if (atFileEdge) continue;
+      const joint = jointTime.get(`${index}:${edge}`);
+      let to = joint === undefined
+        ? findPauseCut(analysis, from, edge, { fps, words })
+        : findPauseCut(analysis, joint, 'joint', { fps, words });
+      // Пауза за пределами кадров дубля не годится: обрезка по краю вернула бы разрез в речь.
+      if (to !== null && (to < (take.usableStart || 0) - 1e-9 || to > take.duration + 1e-9)) to = null;
+      if (to === null) {
+        notes.push({ index, edge, from, to: from, reason: 'no-pause' });
+      } else {
+        next[edge] = to;
+        if (Math.abs(to - from) > 1e-9) notes.push({ index, edge, from, to, reason: 'pause' });
+      }
+    }
+    return next;
+  });
+  const kept = new Set();
+  const revert = (index) => {
+    if (kept.has(index)) return;
+    kept.add(index);
+    snapped[index] = { ...ranges[index] };
+    for (const partner of partners[index]) revert(partner);
+  };
+  // Длину считаем после обрезки по началу потоков и концу дубля, как её увидит кадровое выравнивание.
+  snapped.forEach((range, index) => {
+    const take = takes.get(range.take);
+    const start = Math.max(range.start, (take && take.usableStart) || 0);
+    const end = take ? Math.min(range.end, take.duration) : range.end;
+    if (end - start < frameDuration) revert(index);
+  });
+  const overlaps = (left, right) => left.take === right.take
+    && left.start < right.end && right.start < left.end;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let index = 0; index < snapped.length; index += 1) {
+      for (let other = 0; other < index; other += 1) {
+        if (!overlaps(snapped[index], snapped[other])) continue;
+        const before = kept.size;
+        revert(index);
+        revert(other);
+        if (kept.size !== before) changed = true;
+      }
+    }
+  }
+  // Возвращённый кусок отчитывается только за края, которые пауза действительно сдвигала: край
+  // без паузы остаётся 'no-pause', а край у границы файла или без сдвига в отчёт не попадает.
+  const adjustments = notes.map((item) => (kept.has(item.index) && item.reason === 'pause'
+    ? { index: item.index, edge: item.edge, from: item.from, to: item.from, reason: 'kept' }
+    : item));
+  adjustments.sort((left, right) => left.index - right.index || (left.edge === 'start' ? -1 : 1));
+  return { ranges: snapped, adjustments };
+}
+
+// Та же ось, что у trim и у WAV для Whisper: aresample восстанавливает тишину в начале и
+// короткие разрывы внутри звука. Моно 16 кГц хватает, чтобы увидеть паузы между словами.
+// MPEG-TS без -copyts пересчитывает начало по потокам, которые ffmpeg реально использует: без
+// видео (-vn) начало съезжает на первый звуковой сэмпл и съедает этот же начальный зазор. Второй
+// null-выход держит видео в работе без декодирования кадров. -map 0:a:0 берёт первую звуковую
+// дорожку – ту же, что [N:a] у trim и probeMediaPath, а не выбор ffmpeg по числу каналов.
+function readTakeLevels(filePath, {
+  stage = 'take levels',
+  fileSystem = fs,
+  runToolImpl = runTool,
+  sampleRate = 16000,
+} = {}) {
+  const directory = fileSystem.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-levels-'));
+  try {
+    const pcmPath = path.join(directory, 'audio.raw');
+    runToolImpl('ffmpeg', [
+      '-v', 'error', '-y', '-i', hostPath(filePath), '-map', '0:a:0',
+      '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
+      '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', pcmPath,
+      '-map', '0:v:0?', '-c', 'copy', '-f', 'null', '-',
+    ], { stage });
+    return levelsFromPcm(fileSystem.readFileSync(pcmPath), { sampleRate });
+  } finally {
+    fileSystem.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+module.exports = {
+  PAUSE_SEARCH_SEC,
+  analyzeLevels,
+  findPauseCut,
+  isSilentSpan,
+  levelsFromPcm,
+  pauseThresholdDb,
+  readTakeLevels,
+  snapRangesToPauses,
+};

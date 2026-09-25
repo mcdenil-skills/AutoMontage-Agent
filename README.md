@@ -239,16 +239,18 @@ FPS также наследуется без округления: наприм�
 `projects/YYYY.MM.DD_latin-slug/` и сложит туда копию исходника, транскрипт, все версии ТЗ,
 музыку, превью, рендеры и один канонический финал. Папка `projects/` игнорируется Git.
 
-Пути из `project.json`, кроме `source.originalPath`, не считаются доверенными: движок принимает
-только канонические относительные пути внутри workspace и отклоняет любой уже существующий
-symlink-компонент, включая dangling link. Slug проекта имеет вид `safe-project-01`; legacy
-`--id` допускает только буквы, цифры, `_` и `-`. Финальная копия с `--outdir` независимо
-проверяет через `lstat` каждый существующий компонент каталога и финала, отклоняет обычные
-и dangling symlink, создаёт отсутствующие каталоги по одному и публикует файл через
-непредсказуемый exclusive temp без следования статической ссылке назначения.
-`source.originalPath` намеренно хранит абсолютный путь только как provenance исходника, а не как
-workspace-путь. Эти проверки рассчитаны на manifest и symlink, существующие в момент проверки;
-не давай недоверенным процессам конкурентную запись ни в папку проекта, ни в `--outdir`.
+Пути из `project.json`, кроме `source.originalPath` и `takes[].originalPath`, не считаются
+доверенными: движок принимает только канонические относительные пути внутри workspace и
+отклоняет любой уже существующий symlink-компонент, включая dangling link. Slug проекта
+имеет вид `safe-project-01`; legacy `--id` допускает только буквы, цифры, `_` и `-`.
+Финальная копия с `--outdir` независимо проверяет через `lstat` каждый существующий
+компонент каталога и финала, отклоняет обычные и dangling symlink, создаёт отсутствующие
+каталоги по одному и публикует файл через непредсказуемый exclusive temp без следования
+статической ссылке назначения.
+`source.originalPath` и `takes[].originalPath` намеренно хранят абсолютные пути только как
+provenance исходника и дублей, а не как workspace-пути. Эти проверки рассчитаны на
+manifest и symlink, существующие в момент проверки; не давай недоверенным процессам
+конкурентную запись ни в папку проекта, ни в `--outdir`.
 
 Исходник и локальные media каждого lesson render копируются в owner-only каталог внутри
 `os.tmpdir()`. Remotion получает его абсолютным отдельным аргументом `--public-dir`, а props
@@ -271,11 +273,17 @@ draft Markdown/JSON. Дальше весь проверяемый маршрут
 # Только если до режиссуры нужно удалить паузы или дубли:
 automontage master --project-dir projects/<id> --edit edit/vNN-source.json
 
+# Если прислано несколько дублей одного ролика, до режиссуры:
+automontage takes add --project-dir projects/<id> --file take2.mp4 --file take3.mp4
+automontage takes pack --project-dir projects/<id> > projects/<id>/edit/takes-packed.md
+automontage master --project-dir projects/<id> --edit edit/vNN-takes.json
+
 automontage review --project-dir projects/<id> --edit
 automontage preview --project-dir projects/<id> --brief brief/vNN-draft.lesson.json
 npm run qa:preview -- --project-dir projects/<id>
 
 node scripts/project/approve-brief.js projects/<id> brief/vNN-draft.lesson.json
+# после automontage master вместо input/source.mp4 передай активный source.localPath из project.json
 node scripts/build.js projects/<id>/input/source.mp4 --template lesson \
   --project-dir projects/<id> --brief brief/vNN-approved.lesson.json \
   --version-label first-render
@@ -345,6 +353,42 @@ manifest на source revision 2 и сбрасывает только устар�
 предыдущие source/transcript-ревизии и draft не изменяются. Следующий draft обязан явно ссылаться
 на новую source revision; старый draft нельзя незаметно утвердить или отправить в final.
 
+Если один ролик записан несколькими дублями, агент собирает master из лучших кусков разных дублей.
+Первый файл становится проектом как обычно, остальные добавляет `automontage takes add`: команда
+копирует их в `input/takes/`, локально расшифровывает каждый дубль, включая первый, и регистрирует
+их в `project.json`. `automontage takes pack` печатает фразы всех дублей с таймкодами. По ним агент
+выбирает лучший дубль для каждого смыслового блока и сохраняет `edit/v02-takes.json`:
+
+```json
+{
+  "version": 1,
+  "kind": "takes",
+  "sourceRevision": 1,
+  "ranges": [
+    {"take": "take-03", "start": 0.42, "end": 4.9, "beat": "HOOK", "reason": "самая уверенная подача"},
+    {"take": "take-01", "start": 12.1, "end": 31.6, "beat": "PROBLEM", "reason": "без оговорок"}
+  ]
+}
+```
+
+`automontage master --project-dir <проект> --edit edit/v02-takes.json` собирает куски в новую
+source revision. Master сам ищет паузу в звуке не дальше 0.25 с от каждой границы куска и
+ставит разрез в неё, не перескакивая через другое слово, потому что Whisper прячет паузы внутрь
+слов, и печатает итоговые куски, время стыков и границы без паузы рядом. Тем же маршрутом можно
+собрать один ролик из разных записей по сценарию: каждая запись становится дублем. Границы
+выравниваются по кадрам автоматически; дубли должны совпадать по FPS, размеру кадра и соотношению
+сторон пикселя и иметь звук. Дальше маршрут тот же, но draft, Review, preview, утверждение и final
+работают с новой source revision: в `source` draft указывай абсолютный путь к активному
+`source.localPath` из `project.json` (например `<project-dir>/input/source-v02.mp4`), а во входе
+`scripts/build.js` тот же файл (`projects/<id>/input/source-v02.mp4`), иначе build остановится с
+ошибкой «нельзя рендерить утверждённый brief с видео другого исходника».
+`sourceRevision` в `edit/vNN-takes.json` равен активной `source.revision`, иначе master
+откажет.
+
+`takes add` принимает `--model <id>` (по умолчанию `large-v3-turbo`) и `--prompt <текст>` для
+Whisper, `takes pack` принимает `--silence <сек>` (от 0.1 до 5, по умолчанию 0.5). Полный
+список: `automontage takes --help`.
+
 После проверки ТЗ утвердить конкретную ревизию и отрендерить её:
 
 ```bash
@@ -352,6 +396,7 @@ node scripts/project/approve-brief.js \
   projects/2026.08.05_ai-agent-lesson \
   brief/v01-draft.lesson.json
 
+# после automontage master вместо input/source.mp4 передай активный source.localPath из project.json
 node scripts/build.js \
   projects/2026.08.05_ai-agent-lesson/input/source.mp4 \
   --template lesson \

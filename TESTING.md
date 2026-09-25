@@ -168,8 +168,10 @@ SIGTERM, `/dev/fd`) пропускаются сами через `process.platfo
 `scripts/check-release.js` (правило `motion-ci`) отдельно требует, чтобы каждый шаг с
 `node --test` на Windows был одной строкой без `;`, `&`, `|` и обратных кавычек, иначе
 PowerShell может скрыть код выхода нативной команды за пайпом. Браузерный `pult-ui.spec.js`
-в этот шаг не входит и остаётся в `review-ui`. Локально проверяются команды и YAML; hosted
-Windows run остаётся обязательным pre-merge gate.
+в этот шаг не входит и остаётся в `review-ui`. Ещё один шаг запускает настоящие тесты склейки
+дублей (`tests/trim-media-real.test.js`, `tests/takes-master-media.test.js`,
+`tests/take-pauses.test.js`, `tests/project-takes.test.js`) после проверки кодера `libx264`.
+Локально проверяются команды и YAML; hosted Windows run остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
 `--frames`, `--max`, `--beatSec`, `--brandLock` и `--reframe` проверяются до ffprobe.
@@ -177,6 +179,24 @@ Windows run остаётся обязательным pre-merge gate.
 FPS, bitrate и resolution имеют конечные диапазоны, а пути остаются отдельными argv.
 `tighten.js` и `cut-pauses.js` дополнительно валидируют word/keep intervals; временный
 ffmpeg filter script удаляется через `finally` и при успешном, и при аварийном завершении.
+`trim-media.js` выбирает форму filter script по версии FFmpeg: `-/filter_complex` для 7+ и
+неизвестных git-сборок, `-filter_complex_script` для 6.x.
+`tests/trim-media-real.test.js` и `tests/takes-master-media.test.js` запускают настоящий FFmpeg
+на сгенерированных роликах и пропускаются без `ffmpeg`, `ffprobe` или `libx264`; настоящие
+проверки уровней в `tests/take-pauses.test.js` пропускаются без `ffmpeg` или `libx264`. Перед
+изменением склейки прогони их с FFmpeg 7 и FFmpeg 9 в `PATH`; Linux CI добавляет FFmpeg 6.x, а
+Windows CI прогоняет их вместе с `tests/project-takes.test.js` на FFmpeg 7.1 и падает, если у
+FFmpeg нет `libx264`, чтобы тесты не пропустились молча. Контракт дублей закрывают
+`tests/takes-edit.test.js`, `tests/take-pauses.test.js`, `tests/takes-master.test.js`,
+`tests/project-takes.test.js` и `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
+`tests/take-pauses.test.js` закрывает уровни, порог паузы, выбор точки разреза, запрет перехода
+через другое слово, общие стыки и чтение звука на оси `trim` (в том числе MPEG-TS с поздним звуком);
+`tests/takes-master-media.test.js` проверяет на настоящем FFmpeg, что граница внутри звучания
+уходит в паузу и окно стыка тихое.
+`tests/trim-media-real.test.js` также проверяет дубль с неровными таймстемпами (целое число
+кадров после склейки), а `tests/takes-master-media.test.js` проверяет дубль, у которого видео
+начинается позже звука, и дубль, взятый назад во времени; оба файла проверены на FFmpeg 6.1,
+7.1 и 9.0.
 Chunk-render проверяет positive integer `totalFrames/--chunk`, рендерит part во временный
 соседний MP4 и публикует его rename только после успешного Remotion exit.
 Resume cache v2 адресуется SHA-256 от composition, канонизированных props, source/audio

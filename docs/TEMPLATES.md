@@ -109,6 +109,12 @@ automontage master --project-dir projects/YYYY.MM.DD_<slug> \
 Whisper. Старый draft остаётся историей и не подходит для нового master; следующий draft должен
 ссылаться на активную source revision.
 
+Если ролик записан несколькими дублями, вместо `edit/vNN-source.json` используй
+`edit/vNN-takes.json`: сначала `automontage takes add --project-dir <проект> --file <дубль>` и
+`automontage takes pack --project-dir <проект>`, затем тот же `automontage master`. Master
+собирает лучшие куски разных дублей в новую source revision; формат описан в README и
+`schema/takes-edit.schema.json`.
+
 При необходимости draft можно проверить локально до утверждения:
 
 Полная пользовательская последовательность по самому окну, включая границы, импорт,
@@ -252,6 +258,9 @@ node scripts/build.js \
   --brief brief/v01-approved.lesson.json \
   --version-label first-render
 ```
+
+После `automontage master` вместо `input/source.mp4` передай активный `source.localPath` из
+`project.json`.
 
 На втором этапе LLM-ключ и повторная транскрибация не нужны. Движок проверяет статус,
 тот же исходник, утверждённые тему и аспект, затем передаёт `faceSrc` и `audioSrc` в

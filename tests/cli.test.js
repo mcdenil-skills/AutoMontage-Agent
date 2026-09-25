@@ -13,3 +13,17 @@ test('public CLI advertises motion and routes it ahead of legacy build', () => {
   assert.match(motion.stdout, /separate paid API/);
   assert.doesNotMatch(motion.stderr, /ENOENT|build\.js/);
 });
+
+test('public CLI advertises multi-take commands and routes takes to its own script', () => {
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /automontage takes add --project-dir/);
+  assert.match(help.stdout, /automontage takes pack --project-dir/);
+  assert.match(help.stdout, /edit\/v02-takes\.json/);
+  const usage = spawnSync(process.execPath, [cli, 'takes'], { encoding: 'utf8' });
+  assert.equal(usage.status, 1);
+  assert.match(usage.stderr, /usage: automontage takes add\|pack/);
+  assert.doesNotMatch(usage.stderr, /build\.js|ENOENT/);
+  const takesHelp = spawnSync(process.execPath, [cli, 'takes', '--help'], { encoding: 'utf8' });
+  assert.equal(takesHelp.status, 0, takesHelp.stderr);
+  assert.match(takesHelp.stdout, /usage: automontage takes add\|pack/);
+});

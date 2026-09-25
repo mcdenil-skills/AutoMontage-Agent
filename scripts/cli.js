@@ -34,8 +34,14 @@ function help() {
   automontage inbox                   правки и утверждения из пульта для агента
   automontage preview --project-dir . --brief brief/v01-draft.lesson.json
                                       собрать настоящий Remotion-предпросмотр draft
+  automontage takes add --project-dir . --file take2.mp4 [--file take3.mp4]
+                                      добавить дубли одного ролика и локально расшифровать каждый
+  automontage takes pack --project-dir .
+                                      сводка фраз всех дублей для выбора лучших кусков
   automontage master --project-dir . --edit edit/v02-source.json
                                       собрать новую source-ревизию без повторного Whisper
+  automontage master --project-dir . --edit edit/v02-takes.json
+                                      собрать ролик из лучших кусков разных дублей
   automontage --help                  эта справка
 
 Частые опции:
@@ -115,6 +121,16 @@ if (argv[0] === 'preview') {
 if (argv[0] === 'master') {
   try {
     execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'build-master.js'), ...argv.slice(1)], {
+      stdio: 'inherit', cwd: process.cwd(), shell: false,
+    });
+  } catch (e) { process.exit(e.status || 1); }
+  process.exit(0);
+}
+
+// дубли одного ролика: импорт, локальная расшифровка и сводка фраз для выбора
+if (argv[0] === 'takes') {
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'takes-cli.js'), ...argv.slice(1)], {
       stdio: 'inherit', cwd: process.cwd(), shell: false,
     });
   } catch (e) { process.exit(e.status || 1); }

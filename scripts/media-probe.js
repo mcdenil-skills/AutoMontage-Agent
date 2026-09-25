@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
 const { assertProcessResult, captureTool, hostPath } = require('./process');
@@ -12,6 +13,16 @@ const OPENED_MEDIA_PROBE_ENTRIES = [
   'stream_disposition=attached_pic',
   'stream_side_data=rotation',
   'format=format_name,duration',
+].join(':');
+// Отдельная от OPENED_MEDIA_PROBE_ENTRIES константа: только probeMediaPath (проба по пути, а не
+// по открытому дескриптору) нужен start_time потоков и контейнера, чтобы вычислить сдвиг между
+// потоками дубля (см. startOffsetSec ниже).
+const MEDIA_PATH_PROBE_ENTRIES = [
+  'stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,duration_ts,time_base,pix_fmt,sample_rate,channels,start_time,sample_aspect_ratio',
+  'stream_tags=rotate,DURATION',
+  'stream_disposition=attached_pic',
+  'stream_side_data=rotation',
+  'format=format_name,duration,start_time',
 ].join(':');
 const OPENED_MEDIA_PROBE_MAX_BYTES = 1024 * 1024;
 
@@ -149,6 +160,30 @@ function parseStreamDuration(stream) {
 function parseContainerDuration(format) {
   const duration = Number(format?.duration);
   return Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
+function gcd(a, b) {
+  let left = Math.abs(a);
+  let right = Math.abs(b);
+  while (right) {
+    [left, right] = [right, left % right];
+  }
+  return left;
+}
+
+// ffprobe отдаёт '0:1' для потока без SAR и опускает поле вовсе для некоторых контейнеров.
+// Оба случая равнозначны квадратному пикселю, поэтому нормализуем их в одну и ту же '1:1'.
+function parseSampleAspectRatio(value) {
+  const match = /^(\d+):(\d+)$/.exec(String(value ?? ''));
+  if (!match) return '1:1';
+  const numerator = Number(match[1]);
+  const denominator = Number(match[2]);
+  if (!Number.isInteger(numerator) || !Number.isInteger(denominator)
+    || numerator <= 0 || denominator <= 0) {
+    return '1:1';
+  }
+  const divisor = gcd(numerator, denominator);
+  return `${numerator / divisor}:${denominator / divisor}`;
 }
 
 function parseAudioProbeJson(raw, stage = 'audio probe') {
@@ -330,13 +365,83 @@ function probeVideo(file, options = {}) {
   return parseVideoProbe(stdout, stage);
 }
 
+function displayDimensions({ width, height, rotation = 0 }) {
+  return rotation === 90 || rotation === 270
+    ? { width: height, height: width }
+    : { width, height };
+}
+
+// Только для master: ему нужны размер и поворот, а не длины потоков. Дубли берут длительность
+// по самому короткому потоку и должны видеть отказ.
+function fillContainerOnlyStreamDurations(stdout) {
+  let data;
+  try {
+    data = JSON.parse(stdout);
+  } catch (_) {
+    return stdout;
+  }
+  const containerDuration = parseContainerDuration(data?.format);
+  if (containerDuration === null) return stdout;
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  for (const stream of streams) {
+    if (stream && (stream.codec_type === 'video' || stream.codec_type === 'audio')
+      && parseStreamDuration(stream) === null) {
+      stream.duration = String(containerDuration);
+    }
+  }
+  return JSON.stringify(data);
+}
+
+function probeMediaPath(filePath, {
+  stage = 'media probe',
+  fileSystem = fs,
+  captureToolImpl = captureTool,
+  containerDurationFallback = false,
+} = {}) {
+  const resolved = hostPath(filePath);
+  const stat = fileSystem.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`${stage}: media must be a regular file, not a symbolic link`);
+  }
+  // ffprobe читает файл по пути, а не через pipe:0: по трубе нельзя перематывать, поэтому
+  // фрагментированный MP4 отдаёт длительность первого фрагмента, а MPEG-TS не отдаёт её вовсе.
+  const stdout = captureToolImpl('ffprobe', [
+    '-v', 'error',
+    '-show_entries', MEDIA_PATH_PROBE_ENTRIES,
+    '-of', 'json',
+    resolved,
+  ], { stage, maxBuffer: OPENED_MEDIA_PROBE_MAX_BYTES });
+  const parsed = parseMediaProbeJson(
+    containerDurationFallback ? fillContainerOnlyStreamDurations(stdout) : stdout,
+  );
+  // Без -copyts FFmpeg сдвигает каждый поток на start_time самого раннего потока контейнера.
+  // Если у одного потока дубля (часто видео на Android) start_time больше, кусок, начинающийся
+  // внутри этого сдвига, даёт после trim видео короче звука (или наоборот) - тот же сдвиг нужно
+  // знать заранее, чтобы не начинать диапазон дубля раньше, чем начались оба потока.
+  const data = JSON.parse(stdout);
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  const video = streams.find((stream) => stream && stream.codec_type === 'video'
+    && Number(stream.disposition?.attached_pic || 0) !== 1);
+  const audio = streams.find((stream) => stream && stream.codec_type === 'audio');
+  const starts = [video, audio]
+    .map((stream) => Number(stream?.start_time))
+    .filter((value) => Number.isFinite(value));
+  const formatStart = Number(data.format?.start_time);
+  const base = Number.isFinite(formatStart) ? formatStart : (starts.length ? Math.min(...starts) : 0);
+  const startOffsetSec = starts.length ? Math.max(0, Math.max(...starts) - base) : 0;
+  const sampleAspectRatio = parseSampleAspectRatio(video?.sample_aspect_ratio);
+  return { ...parsed, startOffsetSec, sampleAspectRatio };
+}
+
 module.exports = {
+  displayDimensions,
   fileSystemCapabilities,
   openReadOnlyFlags,
   parseAudioProbeJson,
   parseMediaProbeJson,
   parseRate,
   parseVideoProbe,
+  probeMediaPath,
   probeOpenedAudio,
   probeOpenedMedia,
   probeVideo,
