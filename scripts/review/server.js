@@ -610,6 +610,13 @@ function serveFile(request, response, file) {
     response.end();
     return;
   }
+  if (response.destroyed) {
+    // response мог быть уничтожен уже здесь (клиент успел отменить запрос между writeHead и
+    // этой строкой). pipeline() в этом случае бросает синхронно, не успев подписаться на
+    // события потока, и дескриптор остаётся открытым – закрываем его вручную.
+    fs.closeSync(descriptor);
+    return;
+  }
   const stream = fs.createReadStream(expected.filePath, {
     fd: descriptor,
     autoClose: true,

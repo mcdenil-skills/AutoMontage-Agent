@@ -245,7 +245,8 @@ node scripts/dynamic-gate.js path/to/scenario.json path/to/transcript.json
    половинную геометрию, точный FPS, полный decode, метку «ЧЕРНОВИК» и full/excerpt range.
    Искусственный сбой Remotion/finish/music обязан сохранить прежний `current-preview.mp4`.
 5. В Review проверить отдельные плееры **«ИСХОДНИК»** и **«СМОНТИРОВАННЫЙ ПРЕДПРОСМОТР»**;
-   `/media/current-preview` требует token, поддерживает Range и отклоняет hash/symlink replacement.
+   `/media/current-preview` требует token, поддерживает Range, отклоняет hash/symlink replacement
+   и освобождает файловый дескриптор при отменённом Range-запросе.
 6. Только после явного утверждения создать approved-копию через
    `scripts/project/approve-brief.js`.
 7. Рендерить локальным исходником через `--project-dir`, `--brief` и `--version-label`.
