@@ -238,6 +238,10 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
 
 // Та же ось, что у trim и у WAV для Whisper: aresample восстанавливает тишину в начале и
 // короткие разрывы внутри звука. Моно 16 кГц хватает, чтобы увидеть паузы между словами.
+// MPEG-TS без -copyts пересчитывает начало по потокам, которые ffmpeg реально использует: без
+// видео (-vn) начало съезжает на первый звуковой сэмпл и съедает этот же начальный зазор. Второй
+// null-выход держит видео в работе без декодирования кадров. -map 0:a:0 берёт первую звуковую
+// дорожку – ту же, что [N:a] у trim и probeMediaPath, а не выбор ffmpeg по числу каналов.
 function readTakeLevels(filePath, {
   stage = 'take levels',
   fileSystem = fs,
@@ -248,9 +252,10 @@ function readTakeLevels(filePath, {
   try {
     const pcmPath = path.join(directory, 'audio.raw');
     runToolImpl('ffmpeg', [
-      '-v', 'error', '-y', '-i', hostPath(filePath), '-vn',
+      '-v', 'error', '-y', '-i', hostPath(filePath), '-map', '0:a:0',
       '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
       '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', pcmPath,
+      '-map', '0:v:0?', '-c', 'copy', '-f', 'null', '-',
     ], { stage });
     return levelsFromPcm(fileSystem.readFileSync(pcmPath), { sampleRate });
   } finally {

@@ -240,16 +240,24 @@ test('readTakeLevels decodes mono 16 kHz PCM on the trim axis and removes its te
   const levels = readTakeLevels('clip.mp4', {
     runToolImpl(command, args, options) {
       calls.push({ command, args, options });
-      tempDir = path.dirname(args.at(-1));
-      fs.writeFileSync(args.at(-1), Buffer.alloc(320 * 2));
+      const pcmPath = args[args.indexOf('s16le') + 1];
+      tempDir = path.dirname(pcmPath);
+      fs.writeFileSync(pcmPath, Buffer.alloc(320 * 2));
     },
   });
+  const { args } = calls[0];
+  const pcmPath = args[args.indexOf('s16le') + 1];
   assert.equal(calls[0].command, 'ffmpeg');
-  assert.deepEqual(calls[0].args.slice(-9), [
+  // -map 0:a:0 pins the first audio track right after the input, exactly like trim's [N:a].
+  assert.deepEqual(args.slice(0, 7), ['-v', 'error', '-y', '-i', path.resolve('clip.mp4'), '-map', '0:a:0']);
+  assert.deepEqual(args.slice(7, 15), [
     '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
-    '-ac', '1', '-ar', '16000', '-f', 's16le', calls[0].args.at(-1),
+    '-ac', '1', '-ar', '16000', '-f', 's16le',
   ]);
-  assert.equal(calls[0].args.includes(path.resolve('clip.mp4')), true);
+  assert.equal(args[15], pcmPath);
+  // The second null output keeps the video stream in use so MPEG-TS does not recompute the
+  // start time from audio alone, without spending time decoding frames we do not need.
+  assert.deepEqual(args.slice(-7), ['-map', '0:v:0?', '-c', 'copy', '-f', 'null', '-']);
   assert.equal(calls[0].options.stage, 'take levels');
   assert.deepEqual(levels, { frameSec: 0.01, levels: [-120, -120] });
   assert.equal(fs.existsSync(tempDir), false);
@@ -274,4 +282,30 @@ test('real levels show the pause of a generated take', { timeout: 60_000 }, (t) 
   assert.equal(isSilentSpan(analysis, 0.2, 0.8), false);
   const cut = findPauseCut(analysis, 1.36, 'end', { fps: 25 });
   assert.ok(cut >= 1 && cut <= 1.3, String(cut));
+});
+
+test('real levels keep the leading gap of a late-audio take on the trim axis', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('real levels require ffmpeg and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-levels-late-audio-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Video runs 0-4 s. The audio input is delayed 0.5 s by -itsoffset, so its own pattern
+  // (tone 0-1 s, pause 1.0-1.3 s, tone 1.3-3 s) lands on the container/trim axis shifted by
+  // 0.5 s: tone 0.5-1.5 s, pause 1.5-1.8 s, tone 1.8-3.5 s. Without -copyts, MPEG-TS recomputes
+  // the start time from the streams ffmpeg actually decodes: dropping the video (-vn) used to
+  // move the start to the first audio sample at 0.5 s and erase this leading gap.
+  for (const extension of ['ts', 'mp4']) {
+    const take = path.join(dir, `late-audio.${extension}`);
+    runFixture('ffmpeg', [
+      '-y', '-v', 'error',
+      '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=4',
+      '-itsoffset', '0.5', '-f', 'lavfi', '-i', "aevalsrc='if(lt(t,1)+between(t,1.3,3),0.3*sin(2*PI*440*t),0)':s=48000:d=3",
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ac', '2', take,
+    ], dir);
+    const analysis = analyzeLevels(readTakeLevels(take));
+    assert.equal(isSilentSpan(analysis, 1.55, 1.75), true, extension);
+    assert.equal(isSilentSpan(analysis, 1.05, 1.25), false, extension);
+  }
 });
