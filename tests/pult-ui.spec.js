@@ -10,7 +10,7 @@ const { startPultServer } = require('../scripts/pult/server');
 // addSecondRevision публикует второй черновик и preview поверх утверждённого и
 // отрендеренного проекта: рендер v01 остаётся в Истории как прошлая версия.
 const {
-  addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot,
+  addDraftProject, addLegacyFolder, addSecondRevision, approveDraft, makePultRoot,
 } = require('./helpers/pult-projects');
 
 let session;
@@ -489,6 +489,68 @@ test('a card drawn without an approval ticket announces when one appears', async
   await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
   await expect(page.locator('.approve')).toBeVisible();
   await expect(page.locator('[data-viewed]')).not.toBeChecked();
+});
+
+// A3: ролик утвердили вне пульта (агент через CLI, движком approveBrief), пока карточка
+// открыта, – подпись под плеером должна догнать статус без полной перерисовки.
+test('the player label follows an approval made outside the pult, without resetting the player', async ({ page }) => {
+  let built;
+  await restartWith((dir) => {
+    built = addDraftProject(dir, {
+      folder: 'approve-outside',
+      name: 'Утверждаем в фоне',
+      previewBytes: playableVideoBytes,
+    });
+  });
+  await openCard(page, 'Утверждаем в фоне');
+  await expect(page.locator('.player__label')).toHaveText('Preview на проверку');
+  const player = page.locator('[data-player]');
+  await waitForPlayerMetadata(page);
+  await seekPlayer(page, 1);
+  await player.evaluate((video) => { video.pultMarker = 'kept'; });
+
+  // Утверждаем той же функцией, что фикстура addDraftProject({ approve: true }) – но
+  // напрямую, минуя пульт: агент утверждает ролики и через CLI.
+  approveDraft(built.projectDir, built.draft.jsonPath);
+  await backgroundRefresh(page);
+
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
+  // Плеер остался тем же элементом (маркер не потерялся), и позицию не сбросило.
+  await expect(player).toHaveCount(1);
+  expect(await player.evaluate((video) => video.pultMarker)).toBe('kept');
+  const currentTime = await player.evaluate((video) => video.currentTime);
+  expect(currentTime).toBeCloseTo(1, 0);
+});
+
+// A3, второй сценарий: пока человек смотрит старую версию из Истории, подпись под плеером
+// описывает именно её – фоновое обновление не должно её подменить свежей. Вернувшись к
+// текущей версии, человек должен увидеть уже свежую подпись, а не ту, что была при открытии.
+test('a background approval does not change the label while watching History, but the fresh one shows after returning', async ({ page }) => {
+  let secondDraft;
+  await restartWith((dir) => {
+    const built = addDraftProject(dir, {
+      folder: 'history-then-approve', name: 'Утверждаем поверх Истории', approve: true, final: true,
+    });
+    ({ draft: secondDraft } = addSecondRevision(built.projectDir, 'Утверждаем поверх Истории'));
+  });
+  await openCard(page, 'Утверждаем поверх Истории');
+  await page.locator('button', { hasText: 'История' }).click();
+  const historyButton = page.locator('.history button').first();
+  const historyLabel = await historyButton.textContent();
+  await historyButton.click();
+  await expect(page.locator('.history-bar')).toBeVisible();
+  await expect(page.locator('.player__label')).toHaveText(historyLabel);
+
+  const projectDir = path.join(projectsDir, 'history-then-approve');
+  approveDraft(projectDir, secondDraft.jsonPath);
+  await backgroundRefresh(page);
+  // Всё ещё смотрим старую версию – фон не тронул её подпись.
+  await expect(page.locator('.player__label')).toHaveText(historyLabel);
+
+  await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
+  await expect(page.locator('.history-bar')).toBeHidden();
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
 });
 
 test('deleting an edit while watching History keeps approval locked', async ({ page }) => {

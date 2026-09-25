@@ -34,6 +34,10 @@ function addDraftProject(projectsDir, {
   name = folder,
   preview = true,
   previewKind = 'full',
+  // По умолчанию – текстовая заглушка (её достаточно большинству тестов, которые не
+  // перематывают плеер). Тесту, которому нужен настоящий плеер (перемотка, метаданные),
+  // передать сюда реальные байты видео – как playableVideoBytes в pult-ui.spec.js.
+  previewBytes = null,
   approve = false,
   final = false,
   card = null,
@@ -67,7 +71,7 @@ function addDraftProject(projectsDir, {
       range: { kind: previewKind, fromSec: 0, toSec: previewKind === 'full' ? 4 : 2 },
     });
     const staged = path.join(workspace.dir, 'previews', 'stage.mp4');
-    fs.writeFileSync(staged, `preview ${folder}`);
+    fs.writeFileSync(staged, previewBytes || `preview ${folder}`);
     previewResult = publishCurrentPreview(workspace, plan, staged, {
       width: 160,
       height: 90,
@@ -149,6 +153,15 @@ function unresolvedBrollScenes() {
   ];
 }
 
+// Утверждает уже опубликованный черновик прямо через движок – той же функцией approveBrief,
+// что и фикстура addDraftProject({ approve: true }), но для проекта, который тест уже открыл
+// в пульте (карточку в браузере). workspace всегда перечитываем заново: approveBrief сверяет
+// его manifest с тем, что реально лежит на диске, а объект, который вернул addDraftProject,
+// к этому моменту устарел.
+function approveDraft(projectDir, draftJsonPath) {
+  return approveBrief(reopen(projectDir), draftJsonPath, { confirmPreviewViewed: true });
+}
+
 function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) {
   const dir = path.join(projectsDir, folder);
   fs.mkdirSync(dir, { recursive: true });
@@ -162,5 +175,12 @@ function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) 
 }
 
 module.exports = {
-  ROOT, addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
+  ROOT,
+  addDraftProject,
+  addLegacyFolder,
+  addSecondRevision,
+  approveDraft,
+  makePultRoot,
+  sha256,
+  unresolvedBrollScenes,
 };

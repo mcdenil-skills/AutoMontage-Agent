@@ -437,6 +437,22 @@ function applyHistoryMode(active) {
   });
 }
 
+// Текст подписи под плеером – по статусу текущего варианта, а не по тому, что уже нарисовано:
+// и полная отрисовка (renderDetail), и фоновое обновление (syncDetail) считают её этой же
+// функцией, чтобы утверждение ролика вне пульта (агент через CLI) сразу поменяло подпись.
+function videoLabelFor(variant) {
+  if (variant.video) {
+    // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране – уже
+    // утверждённый preview, а не тот, что «ждёт проверки», даже если после утверждения
+    // человек оставил новую правку.
+    return variant.needsFinal && variant.video.kind === 'preview'
+      ? 'Утверждённый preview – агент собирает финал'
+      : VIDEO_LABELS[variant.video.kind];
+  }
+  if (variant.videoUnsupported) return VIDEO_UNSUPPORTED_LABEL;
+  return 'Видео пока нет';
+}
+
 function replaceApproveBlock(box, variant) {
   const fresh = approveBlock(variant);
   box.replaceWith(fresh);
@@ -620,22 +636,14 @@ function renderDetail() {
     playerSlot.replaceChildren(placeholder);
   }
 
-  let videoLabelText;
-  if (variant.video) {
-    // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране – уже
-    // утверждённый preview, а не тот, что «ждёт проверки», даже если после утверждения
-    // человек оставил новую правку.
-    videoLabelText = variant.needsFinal && variant.video.kind === 'preview'
-      ? 'Утверждённый preview – агент собирает финал'
-      : VIDEO_LABELS[variant.video.kind];
-  } else if (variant.videoUnsupported) {
-    videoLabelText = VIDEO_UNSUPPORTED_LABEL;
-  } else {
-    videoLabelText = 'Видео пока нет';
-  }
+  // Подпись «текущей» версии живёт на самом элементе, а не в переменной этого закрытия:
+  // фоновый syncDetail() обновляет её по свежим данным сервера, и «Вернуться к текущей»
+  // должна показать именно свежее значение, а не то, что было на момент отрисовки карточки.
+  videoLabel.dataset.currentLabel = videoLabelFor(variant);
   function showCurrent() {
-    if (variant.video) showVideo(mediaUrl(variant.video.url), videoLabelText);
-    else showPlaceholder(videoLabelText);
+    const label = videoLabel.dataset.currentLabel;
+    if (variant.video) showVideo(mediaUrl(variant.video.url), label);
+    else showPlaceholder(label);
   }
   showCurrent();
 
@@ -727,6 +735,17 @@ function syncDetail(card) {
     rerenderDetailKeepingDraft();
     if (freshVideoUrl) notify('Появилась новая версия видео – посмотрите её перед утверждением.');
     return;
+  }
+  // Файл видео тот же, но статус вокруг него мог поменяться без участия пульта (например,
+  // ролик утвердили через агента в CLI) – пересчитываем подпись под плеером той же функцией,
+  // что при полной отрисовке. Пока человек смотрит старую версию из Истории, на экране –
+  // подпись именно её: обновляем только сохранённое значение «текущей», не сам текст,
+  // чтобы «Вернуться к текущей» показала уже свежую подпись без лишней перерисовки.
+  const videoLabel = document.querySelector('[data-view="detail"] .player__label');
+  if (videoLabel) {
+    const freshLabel = videoLabelFor(variant);
+    videoLabel.dataset.currentLabel = freshLabel;
+    if (!historyShown()) videoLabel.textContent = freshLabel;
   }
   const badge = document.querySelector('[data-variant-status]');
   const next = document.querySelector('[data-variant-next]');
