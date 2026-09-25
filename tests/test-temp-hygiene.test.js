@@ -14,6 +14,8 @@ const HYGIENE_FILES = [
   'tests/release-hygiene.test.js',
   'tests/review-media-import.test.js',
   'tests/lesson-build.test.js',
+  'tests/build-security.test.js',
+  'tests/load-ext-theme.test.js',
 ];
 
 test('affected test files leave nothing behind in their temporary directory', (t) => {

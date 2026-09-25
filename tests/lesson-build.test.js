@@ -444,6 +444,7 @@ test('project lesson planning removes its exact generated temporary pair after s
       ));
       assert.ok(generated);
       const jsonPath = generated.args[2];
+      assert.equal(path.dirname(jsonPath), temporary);
       const markdownPath = generated.args[generated.args.indexOf('--markdown') + 1];
       assert.equal(fs.existsSync(jsonPath), false);
       assert.equal(fs.existsSync(markdownPath), false);
@@ -454,7 +455,7 @@ test('project lesson planning removes its exact generated temporary pair after s
 
 test('project lesson planning preserves a foreign replacement of its generated temp file and fails closed', (t) => {
   const workspace = makePlanProject(t);
-  const { result, invocations } = runLessonBuildWithIntercept(t, [
+  const { result, invocations, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--no-transcribe',
@@ -466,6 +467,7 @@ test('project lesson planning preserves a foreign replacement of its generated t
   ));
   assert.ok(generated, result.stderr);
   const jsonPath = generated.args[2];
+  assert.equal(path.dirname(jsonPath), temporary);
   const markdownPath = generated.args[generated.args.indexOf('--markdown') + 1];
   assert.ok(findRegularFileWithBytes(path.dirname(jsonPath), 'foreign replacement'));
   assert.equal(fs.existsSync(markdownPath), false);
@@ -473,7 +475,7 @@ test('project lesson planning preserves a foreign replacement of its generated t
 
 test('project lesson cleanup preserves foreign bytes swapped at the final removal syscall', (t) => {
   const workspace = makePlanProject(t);
-  const { result, invocations } = runLessonBuildWithIntercept(t, [
+  const { result, invocations, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--no-transcribe',
@@ -482,6 +484,9 @@ test('project lesson cleanup preserves foreign bytes swapped at the final remova
   assert.equal(result.status, 1);
   const race = invocations.find((entry) => entry.raceTarget);
   assert.ok(race, result.stderr);
+  // Цель тонбстоуна лежит на уровень глубже temporary (папка удаления/claimed),
+  // поэтому проверяем принадлежность приватной папке, а не точный dirname.
+  assert.ok(race.raceTarget.startsWith(`${temporary}${path.sep}`), race.raceTarget);
   assert.equal(fs.readFileSync(race.raceTarget, 'utf8'), 'foreign-plan-at-removal');
 });
 
