@@ -153,11 +153,15 @@ function legacyEntries(folder, projectDir, card) {
       }
     }
     let nextStep;
+    let status = legacy.status;
     if (pendingComments > 0) {
+      status = 'working';
       nextStep = `Ждёт агента: ${pluralEdits(pendingComments)}`;
     } else if (!file) {
       // Карточка ссылается на видео, которого нет на диске – это ошибка карточки,
-      // а не обычный шаг монтажа, и должно быть явно видно человеку.
+      // а не обычный шаг монтажа: чинить её агенту, поэтому ролик «В работе», а не
+      // в заявленном карточкой «Готов» или «Ждёт меня».
+      status = 'working';
       nextStep = MISSING_VIDEO_STEP;
     } else {
       nextStep = legacy.nextStep || LEGACY_STEPS[legacy.status];
@@ -176,7 +180,7 @@ function legacyEntries(folder, projectDir, card) {
       pendingComments,
       reviewable: false,
       history: [],
-      status: pendingComments > 0 ? 'working' : legacy.status,
+      status,
       nextStep,
       video: file ? { kind: variant.final ? 'final' : 'preview', path: variant.video, sha256: null } : null,
       approvable: false,

@@ -5,46 +5,13 @@ const { execFileSync } = require('node:child_process');
 
 const { test, expect } = require('playwright/test');
 
-const { createHash } = require('node:crypto');
-
 const { acceptComment, readComments } = require('../scripts/pult/comments');
 const { startPultServer } = require('../scripts/pult/server');
-const ws = require('../scripts/project/workspace');
-const pw = require('../scripts/project/preview-workspace');
-const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
-
-const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-
-// Публикует ВТОРОЙ черновик и preview поверх уже утверждённого и отрендеренного проекта:
-// ролик возвращается в «Ждёт меня», а рендер v01 остаётся в Истории как прошлая версия –
-// нужен тесту A4 (просмотр Истории на карточке, которую всё ещё можно утвердить и править).
-// previewBytes – содержимое нового preview: по умолчанию текст, а там, где тесту нужно
-// реально перематывать плеер, – настоящее видео.
-function addSecondRevision(projectDir, name, previewBytes = 'preview v2') {
-  let workspace = ws.createOrOpenProject({ projectDir });
-  const brief = {
-    version: 1,
-    status: 'draft',
-    source: workspace.sourcePath,
-    theme: 'lesson-neutral',
-    title: name,
-    output: { aspect: 'horizontal', width: 320, height: 180, fps: 25, durationInFrames: 100 },
-    corrections: [],
-    scenes: [{ scene: 'fullscreen', start: 0, end: 4, caption: 'СНОВА' }],
-  };
-  const draft = ws.publishBriefRevision(workspace, { brief, markdown: `# ${name} v2` });
-  workspace = ws.createOrOpenProject({ projectDir });
-  const plan = pw.planPreview(workspace, {
-    briefPath: draft.jsonPath,
-    briefSha256: sha256(fs.readFileSync(draft.jsonPath)),
-    range: { kind: 'full', fromSec: 0, toSec: 4 },
-  });
-  const staged = path.join(workspace.dir, 'previews', 'stage-v2.mp4');
-  fs.writeFileSync(staged, previewBytes);
-  pw.publishCurrentPreview(workspace, plan, staged, {
-    width: 160, height: 90, fps: 25, generatedAt: '2026-09-21T10:05:00.000Z',
-  });
-}
+// addSecondRevision публикует второй черновик и preview поверх утверждённого и
+// отрендеренного проекта: рендер v01 остаётся в Истории как прошлая версия.
+const {
+  addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot,
+} = require('./helpers/pult-projects');
 
 let session;
 let calls;
@@ -585,6 +552,20 @@ test('an approved preview keeps its label even while an edit waits for the agent
   await page.locator('button', { hasText: '← Все ролики' }).click();
   await page.locator('.card', { hasText: 'Перфекционизм' }).click();
   await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
+});
+
+// Второй круг: финал v1 на диске, утверждён v2. На экране – утверждённый preview v2 с
+// честной подписью, а не прежний финал под видом «Финальная версия».
+test('after a second approval the approved preview is shown instead of the previous final', async ({ page }) => {
+  await restartWith((dir) => {
+    const built = addDraftProject(dir, { folder: 'second-round', name: 'Второй круг', approve: true, final: true });
+    addSecondRevision(built.projectDir, 'Второй круг');
+  });
+  await openCard(page, 'Второй круг');
+  await page.check('[data-viewed]');
+  await page.locator('button', { hasText: 'Утверждаю' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
   await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
 });
 

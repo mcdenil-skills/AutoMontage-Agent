@@ -271,19 +271,34 @@ test('a standard project with an invalid pult-card.json keeps its entry and is a
   assert.deepEqual(scan.broken, [{ folder: 'clip', error: 'pult-card.json: неверный JSON' }]);
 });
 
-test('a legacy variant with a missing video file reports a clear next step', (t) => {
+// Карточка ссылается на несуществующий файл – это работа агента (починить pult-card.json),
+// а не «Готов» или «Ждёт меня» с заявленным в карточке статусом.
+test('a legacy variant with a missing video file goes to the agent with a clear next step', (t) => {
   const { projectsDir } = makePultRoot(t);
-  addLegacyFolder(projectsDir, 'missing-video', {
-    files: {},
-    card: {
-      version: 1,
-      legacy: { status: 'ready', variants: [{ label: 'Ролик', video: 'out/missing.mp4', final: true }] },
-    },
-  });
-  const entry = scanProjects({ projectsDir }).entries[0];
-  assert.equal(entry.video, null);
-  assert.equal(entry.status, 'ready');
-  assert.equal(entry.nextStep, 'Видео не найдено – проверьте pult-card.json');
+  for (const status of ['ready', 'waiting', 'working']) {
+    addLegacyFolder(projectsDir, `missing-${status}`, {
+      files: { 'out/present.mp4': 'есть' },
+      card: {
+        version: 1,
+        legacy: {
+          status,
+          variants: [
+            { label: 'Нет файла', video: 'out/missing.mp4', final: true },
+            { label: 'Есть файл', video: 'out/present.mp4', final: true },
+          ],
+        },
+      },
+    });
+  }
+  const byKey = Object.fromEntries(scanProjects({ projectsDir }).entries.map((entry) => [entry.key, entry]));
+  for (const status of ['ready', 'waiting', 'working']) {
+    const missing = byKey[`missing-${status}#0`];
+    assert.equal(missing.video, null, status);
+    assert.equal(missing.status, 'working', status);
+    assert.equal(missing.nextStep, 'Видео не найдено – проверьте pult-card.json', status);
+    // Вариант с настоящим файлом сохраняет статус из карточки.
+    assert.equal(byKey[`missing-${status}#1`].status, status);
+  }
 });
 
 test('a legacy card without a title falls back to the NFC-normalized folder name', (t) => {

@@ -64,12 +64,15 @@ function deriveVariantStatus({
   }
 
   const showPreview = status === 'waiting' || (pendingComments > 0 && previewIsCurrent);
+  const needsFinal = currentBriefStatus === 'approved' && !finalIsCurrent;
+  // Пока агент собирает финал утверждённой версии, финал на диске (если он есть) относится
+  // к прежней версии: показываем утверждённый preview, чтобы новые правки цеплялись к нему.
   return {
     status,
     nextStep,
-    video: showPreview ? previewVideo : (finalVideo || previewVideo),
+    video: (showPreview || (needsFinal && previewVideo)) ? previewVideo : (finalVideo || previewVideo),
     approvable: status === 'waiting' && !approvalBlocker,
-    needsFinal: currentBriefStatus === 'approved' && !finalIsCurrent,
+    needsFinal,
     briefPath: manifest.currentBrief,
     previewSha256: preview ? preview.sha256 || null : null,
   };

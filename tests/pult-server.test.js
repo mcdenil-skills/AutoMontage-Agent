@@ -7,10 +7,10 @@ const path = require('node:path');
 
 const { planPreview, publishCurrentPreview } = require('../scripts/project/preview-workspace');
 const { createOrOpenProject, readProjectManifest } = require('../scripts/project/workspace');
-const { acceptComment } = require('../scripts/pult/comments');
+const { acceptComment, readComments } = require('../scripts/pult/comments');
 const { startPultServer } = require('../scripts/pult/server');
 const {
-  addDraftProject, addLegacyFolder, makePultRoot, sha256, unresolvedBrollScenes,
+  addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
 } = require('./helpers/pult-projects');
 
 function fakeCapture(command, args) {
@@ -255,6 +255,32 @@ test('cards say whether a variant still waits for its final', async (t) => {
   assert.equal((await variantOf(session, 'approved-clip')).needsFinal, true);
   assert.equal((await variantOf(session, 'waiting-clip')).needsFinal, false);
   assert.equal((await variantOf(session, 'ready-clip')).needsFinal, false);
+});
+
+// Второй круг: v1 утверждён и собран в финал, агент выпустил v2, человек утвердил v2.
+// Финал v1 – уже не утверждённая версия: пока агент собирает новый финал, пульт показывает
+// утверждённый preview v2, и правка после утверждения цепляется к нему, а не к старому финалу.
+test('after a second approval the pult shows the approved preview, not the previous final', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const built = addDraftProject(projectsDir, { folder: 'clip', name: 'Второй круг', approve: true, final: true });
+  addSecondRevision(built.projectDir, 'Второй круг');
+  const { session } = await startTest(t, projectsDir);
+  const waiting = await variantOf(session, 'clip');
+  assert.equal(waiting.status, 'waiting');
+  assert.equal((await approve(session, 'clip', waiting.approvalTicket)).status, 201);
+
+  const approved = await variantOf(session, 'clip');
+  assert.equal(approved.status, 'working');
+  assert.equal(approved.nextStep, 'Утверждено – агент собирает финал');
+  assert.equal(approved.needsFinal, true);
+  assert.equal(approved.video.kind, 'preview');
+  const served = await request(session, approved.video.url, { token: session.token, queryToken: true });
+  assert.equal(served.body.toString('utf8'), 'preview v2');
+
+  assert.equal((await post(session, '/api/comments', { key: 'clip', timeSec: 1, text: 'После утверждения' })).status, 201);
+  const [comment] = readComments(built.projectDir);
+  assert.equal(comment.video.kind, 'preview');
+  assert.equal(comment.video.path, readProjectManifest(built.projectDir).currentPreview.filePath);
 });
 
 test('media streams the current video with byte ranges', async (t) => {

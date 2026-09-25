@@ -101,6 +101,37 @@ function addDraftProject(projectsDir, {
   return { projectDir: workspace.dir, workspace, draft, preview: previewResult, approved };
 }
 
+// Публикует ВТОРОЙ черновик и полный preview поверх уже утверждённого и отрендеренного
+// проекта: ролик возвращается в «Ждёт меня», а рендер v01 и его финал остаются на диске.
+// previewBytes – содержимое нового preview: по умолчанию текст, а там, где тесту нужно
+// реально перематывать плеер, – настоящее видео.
+function addSecondRevision(projectDir, name, previewBytes = 'preview v2') {
+  let workspace = reopen(projectDir);
+  const brief = {
+    version: 1,
+    status: 'draft',
+    source: workspace.sourcePath,
+    theme: 'lesson-neutral',
+    title: name,
+    output: { aspect: 'horizontal', width: 320, height: 180, fps: 25, durationInFrames: 100 },
+    corrections: [],
+    scenes: [{ scene: 'fullscreen', start: 0, end: 4, caption: 'СНОВА' }],
+  };
+  const draft = publishBriefRevision(workspace, { brief, markdown: `# ${name} v2` });
+  workspace = reopen(projectDir);
+  const plan = planPreview(workspace, {
+    briefPath: draft.jsonPath,
+    briefSha256: sha256(fs.readFileSync(draft.jsonPath)),
+    range: { kind: 'full', fromSec: 0, toSec: 4 },
+  });
+  const staged = path.join(workspace.dir, 'previews', 'stage-v2.mp4');
+  fs.writeFileSync(staged, previewBytes);
+  publishCurrentPreview(workspace, plan, staged, {
+    width: 160, height: 90, fps: 25, generatedAt: '2026-09-21T10:05:00.000Z',
+  });
+  return { draft };
+}
+
 // Черновик с b-roll, для которого человек ещё не выбрал материал: обычное состояние
 // (выбор делается в Review), но движок такой brief утвердить не даст.
 function unresolvedBrollScenes() {
@@ -130,4 +161,6 @@ function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) 
   return dir;
 }
 
-module.exports = { ROOT, addDraftProject, addLegacyFolder, makePultRoot, sha256, unresolvedBrollScenes };
+module.exports = {
+  ROOT, addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
+};

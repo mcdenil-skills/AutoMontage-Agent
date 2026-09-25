@@ -94,15 +94,24 @@ test('complete render of the approved brief with an existing final is ready', ()
   assert.deepEqual(result.video, { kind: 'final', path: 'final/clip.mp4', sha256: null });
 });
 
-test('final of an older brief is not ready for the new approval', () => {
-  const result = derive({
+// Финал прежней версии – уже не то, что человек утвердил: пока агент собирает новый
+// финал, на экране утверждённый preview, и новые правки цепляются к нему, а не к старому финалу.
+test('final of an older brief is not ready for the new approval and the approved preview is shown', () => {
+  const older = {
     currentBrief: APPROVED,
     renders: [{ version: 1, label: 'old', dir: 'renders/v01-old', briefPath: 'brief/v01-approved.lesson.json', status: 'complete' }],
     latestRender: 'renders/v01-old',
-  }, { currentBriefStatus: 'approved', finalExists: true });
+  };
+  const result = derive(older, { currentBriefStatus: 'approved', finalExists: true });
   assert.equal(result.status, 'working');
   assert.equal(result.needsFinal, true);
-  assert.equal(result.video.kind, 'final');
+  assert.deepEqual(result.video, { kind: 'preview', path: 'previews/v02-draft-full.mp4', sha256: PREVIEW_SHA });
+  // И с новой правкой после утверждения на экране остаётся тот же preview.
+  assert.equal(derive(older, { currentBriefStatus: 'approved', finalExists: true, pendingComments: 1 }).video.kind, 'preview');
+  // Без preview показывать больше нечего – остаётся прежний финал.
+  const noPreview = derive({ ...older, currentPreview: null }, { currentBriefStatus: 'approved', finalExists: true });
+  assert.equal(noPreview.needsFinal, true);
+  assert.equal(noPreview.video.kind, 'final');
 });
 
 test('scenario-only projects with a complete render are ready', () => {
