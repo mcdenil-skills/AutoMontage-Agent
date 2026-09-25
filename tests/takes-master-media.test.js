@@ -87,3 +87,93 @@ test('real takes master joins two generated takes with matching audio and video 
     ['take-02', 1, 1.2],
   ]);
 });
+
+test('real takes master stays in sync with a late-video take and a take reused backwards', {
+  timeout: 180_000,
+}, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('real takes master requires ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-takes-late-video-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = path.join(root, 'take1.mp4');
+  const second = path.join(root, 'take2.mp4');
+  runFixture('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
+    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', first,
+  ], root);
+  runFixture('ffmpeg', [
+    '-y', '-v', 'error',
+    '-itsoffset', '0.04', '-f', 'lavfi', '-i', 'smptebars=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:d=3',
+    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', second,
+  ], root);
+
+  // Документируем форму фикстуры: -itsoffset на видео-входе должен дать видео с более поздним
+  // start_time, чем у звука. Если конкретная сборка ffmpeg собрала файл иначе, пропускаем тест,
+  // а не проверяем числа, которые эта фикстура не гарантирует.
+  const secondStreams = streams(second);
+  const secondVideo = secondStreams.find((stream) => stream.codec_type === 'video');
+  const secondAudio = secondStreams.find((stream) => stream.codec_type === 'audio');
+  const secondProbe = spawnSync('ffprobe', [
+    '-v', 'error',
+    '-show_entries', 'stream=codec_type,start_time',
+    '-of', 'json', second,
+  ], { encoding: 'utf8' });
+  assert.equal(secondProbe.status, 0, secondProbe.stderr);
+  const secondStartTimes = JSON.parse(secondProbe.stdout).streams;
+  const secondVideoStart = Number(secondStartTimes.find((stream) => stream.codec_type === 'video').start_time);
+  const secondAudioStart = Number(secondStartTimes.find((stream) => stream.codec_type === 'audio').start_time);
+  if (Math.abs(secondVideoStart - 0.04) > 0.005 || Math.abs(secondAudioStart) > 0.005) {
+    t.skip(`take2 fixture does not have the expected leading video gap (video start ${secondVideoStart}, audio start ${secondAudioStart})`);
+    return;
+  }
+  assert.ok(secondVideo && secondAudio, 'take2 must have both a video and an audio stream');
+
+  const workspace = createOrOpenProject({
+    projectDir: path.join(root, 'project'), name: 'Real takes late video', sourcePath: first,
+  });
+  addTakes({ projectDir: workspace.dir, files: [second] }, {
+    transcribeImpl: ({ videoPath }) => [{
+      start: 0,
+      end: 3,
+      text: path.basename(videoPath),
+      words: [{ w: path.basename(videoPath, path.extname(videoPath)), s: 0.6, e: 1.2 }],
+    }],
+  });
+  fs.writeFileSync(path.join(workspace.dir, 'edit', 'v02-takes.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'takes',
+    sourceRevision: 1,
+    ranges: [
+      // Начинается внутри ведущего видео-зазора take-02 - должен быть прижат к 0.04.
+      { take: 'take-02', start: 0, end: 1, beat: 'HOOK', reason: 'проверка зажима зазора' },
+      { take: 'take-01', start: 2, end: 3, beat: 'B', reason: 'первое использование take-01' },
+      // take-01 уже использован дальше по времени (2-3) - этот кусок раньше требует новый вход.
+      { take: 'take-01', start: 0, end: 1, beat: 'C', reason: 'повторное использование назад во времени' },
+    ],
+  }, null, 2)}\n`);
+
+  const result = buildMaster({ projectDir: workspace.dir, editPath: 'edit/v02-takes.json' });
+
+  const frameCount = spawnSync('ffprobe', [
+    '-v', 'error', '-count_frames',
+    '-show_entries', 'stream=codec_type,duration,r_frame_rate,nb_read_frames',
+    '-of', 'json', result.sourcePath,
+  ], { encoding: 'utf8' });
+  assert.equal(frameCount.status, 0, frameCount.stderr);
+  const outputStreams = JSON.parse(frameCount.stdout).streams;
+  const video = outputStreams.find((stream) => stream.codec_type === 'video');
+  const audio = outputStreams.find((stream) => stream.codec_type === 'audio');
+  assert.equal(Number(video.nb_read_frames), 74, video.nb_read_frames);
+  assert.equal(video.r_frame_rate, '25/1');
+  assert.ok(
+    Math.abs(Number(audio.duration) - Number(video.duration)) < 0.02,
+    `${audio.duration} vs ${video.duration}`,
+  );
+  assert.ok(Math.abs(Number(video.duration) - 2.96) < 0.02, video.duration);
+  assert.equal(result.ranges[0].start, 0.04);
+});
