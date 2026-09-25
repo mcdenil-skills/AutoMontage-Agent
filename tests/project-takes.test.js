@@ -260,12 +260,18 @@ test('transcribeTakeFile clamps zero-length whisper words and removes its tempor
   assert.notEqual(capturedDir, null);
   assert.equal(fs.existsSync(capturedDir), false);
   assert.notEqual(ffmpegArgs, null);
-  // -af aresample=async=1:min_hard_comp=0:first_pts=0 must sit right before the WAV output path, so a take's
-  // audio that starts after the container start keeps its leading silence instead of shifting
-  // every Whisper word earlier than the trim axis.
-  assert.equal(ffmpegArgs.at(-3), '-af');
-  assert.equal(ffmpegArgs.at(-2), 'aresample=async=1:min_hard_comp=0:first_pts=0');
-  assert.ok(ffmpegArgs.at(-1).endsWith('audio.wav'));
+  // -map 0:a:0 pins the first audio track (like trim's [N:a]) right after the input, and
+  // aresample=async=1:min_hard_comp=0:first_pts=0 must sit right before the WAV output path, so a
+  // take's audio that starts after the container start keeps its leading silence instead of
+  // shifting every Whisper word earlier than the trim axis. The WAV path is no longer the last
+  // argument: a second null output keeps the video stream in use (without decoding it) so MPEG-TS
+  // does not recompute the start time from audio alone.
+  assert.deepEqual(ffmpegArgs.slice(0, 5), ['-y', '-i', '/tmp/source.mp4', '-map', '0:a:0']);
+  assert.deepEqual(ffmpegArgs.slice(5, 11), [
+    '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0', '-ar', '16000', '-ac', '1',
+  ]);
+  assert.ok(ffmpegArgs[11].endsWith('audio.wav'));
+  assert.deepEqual(ffmpegArgs.slice(-7), ['-map', '0:v:0?', '-c', 'copy', '-f', 'null', '-']);
 });
 
 test('real transcribeTakeFile keeps the leading silence of audio starting after the video', { timeout: 60_000 }, (t) => {
@@ -307,6 +313,49 @@ test('real transcribeTakeFile keeps the leading silence of audio starting after 
   });
   // Without the leading-gap fix, extracting only the audio stream drops the 0.3 s gap and the
   // WAV measures near 3.0 s; with the fix it keeps the container's full ~3.3 s.
+  assert.ok(measuredDuration > 3.2, `expected WAV duration > 3.2, got ${measuredDuration}`);
+});
+
+test('real transcribeTakeFile keeps the leading silence of an MPEG-TS take whose audio starts after the video', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('leading audio gap probe requires ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-late-audio-ts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const late = path.join(dir, 'late.ts');
+  const encode = spawnSync('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-itsoffset', '0.3', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-t', '3.3',
+    late,
+  ], { encoding: 'utf8' });
+  assert.equal(encode.status, 0, encode.stderr);
+
+  let measuredDuration = null;
+  transcribeTakeFile({ videoPath: late }, {
+    pythonCommand: 'python3',
+    runToolImpl(command, args, options) {
+      if (command === 'ffmpeg') {
+        runTool(command, args, options);
+        return;
+      }
+      const wavPath = args[1];
+      const wordsPath = args[2];
+      const probe = spawnSync('ffprobe', [
+        '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', wavPath,
+      ], { encoding: 'utf8' });
+      measuredDuration = Number(JSON.parse(probe.stdout).format.duration);
+      fs.writeFileSync(wordsPath, JSON.stringify([
+        { start: 0, end: 1, text: 'x', words: [{ w: 'x', s: 0.1, e: 0.5 }] },
+      ]));
+    },
+  });
+  // Same leading-gap fixture as the MP4 test above, but MPEG-TS: without -copyts, ffmpeg
+  // recomputes the start time from the streams it actually uses, so dropping the video used to
+  // move the start to the first audio sample and erase the 0.3 s gap.
   assert.ok(measuredDuration > 3.2, `expected WAV duration > 3.2, got ${measuredDuration}`);
 });
 
