@@ -3,8 +3,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { scanProjects } = require('./catalog');
+const { cardIdFor } = require('./cards');
 const { COMMENT_ID, acceptComment, readComments } = require('./comments');
 const { isSafeName } = require('./names');
+const { readPultState } = require('./state');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -25,7 +27,12 @@ function readNewComments(projectDir) {
 // Битый comments.json нельзя тихо пропускать – правки автора иначе незаметно
 // исчезнут из поля зрения агента, поэтому такая папка тоже попадает в результат
 // с флагом commentsBroken, даже если утверждений в ней нет.
+//
+// Утверждение архивной карточки (Task A1) остаётся во входящих, но с пометкой «в архиве»:
+// пользователь спрятал ролик осознанно, агент не должен сам браться за финал без просьбы.
+// Новые правки того же ролика архив не трогает – это явная новая работа автора.
 function buildInbox({ projectsDir }) {
+  const archivedIds = new Set(readPultState(projectsDir).archived);
   const byFolder = new Map();
   const scan = scanProjects({ projectsDir });
   for (const entry of scan.entries) {
@@ -43,7 +50,9 @@ function buildInbox({ projectsDir }) {
       };
       byFolder.set(entry.folder, item);
     }
-    if (entry.needsFinal) item.approved.push(entry.briefPath);
+    if (entry.needsFinal) {
+      item.approved.push({ briefPath: entry.briefPath, archived: archivedIds.has(cardIdFor(entry)) });
+    }
     if (entry.video) item.currentVideos.add(`${entry.video.path}\0${entry.video.sha256}`);
   }
 
@@ -123,8 +132,9 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
     if (item.commentsBroken) {
       lines.push(`- Файл правок повреждён: \`${display(path.join(dir, 'pult', 'comments.json'))}\`. Проверь его и попроси автора повторить правки в пульте.`);
     }
-    for (const briefPath of item.approved) {
-      lines.push(`- Утверждено: \`${stripControls(briefPath)}\`. Собери финал и проведи полный QA.`);
+    for (const approval of item.approved) {
+      const marker = approval.archived ? ' (в архиве – не начинай без просьбы пользователя)' : '';
+      lines.push(`- Утверждено${marker}: \`${stripControls(approval.briefPath)}\`. Собери финал и проведи полный QA.`);
     }
     for (const comment of item.comments) {
       const outdated = comment.outdated ? ' (к прежней версии видео)' : '';

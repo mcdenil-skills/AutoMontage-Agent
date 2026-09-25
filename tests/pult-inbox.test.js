@@ -6,6 +6,8 @@ const path = require('node:path');
 const { buildInbox, formatInbox, main, parseInboxOptions } = require('../scripts/pult/inbox');
 const { scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
+const { cardIdFor } = require('../scripts/pult/cards');
+const { setArchived } = require('../scripts/pult/state');
 const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
 
 function withComment(t) {
@@ -38,6 +40,57 @@ test('the inbox lists edits with time and frame, and approved videos without a f
   assert.match(text, /## Утверждённый – `projects\/approved`/);
   assert.match(text, /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./);
   assert.match(text, /automontage inbox --accept <папка> <id>/);
+});
+
+// Архивная карточка без финала не должна выглядеть как обычное «начни собирать финал» –
+// пользователь спрятал её осознанно (Task A1, вариант А из плана доводки пульта).
+test('an approved video without a final that is archived is marked in the inbox', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'archived-approved', name: 'Утверждённый в архиве', approve: true });
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === 'archived-approved');
+  setArchived(projectsDir, cardIdFor(entry), true);
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(
+    text,
+    /- Утверждено \(в архиве – не начинай без просьбы пользователя\): `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./,
+  );
+});
+
+// Тот же случай без архивации – строка остаётся ровно такой, как была раньше.
+test('the same approved video, not archived, keeps the plain approval line', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'plain-approved', name: 'Утверждённый', approve: true });
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(
+    text,
+    /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./,
+  );
+  assert.doesNotMatch(text, /в архиве/);
+});
+
+// Новая правка в архивном ролике – явная новая работа автора, её агент должен увидеть как обычно.
+test('a new edit on an archived video is listed the same as usual', (t) => {
+  const { projectsDir, waiting } = withComment(t);
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === 'waiting');
+  setArchived(projectsDir, cardIdFor(entry), true);
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(text, /- Правка `c-0001` на 0:14: «Текст залезает на лицо»\. Видео: `previews\//);
+  assert.doesNotMatch(text, /в архиве/);
+});
+
+// Битый projects/.pult/state.json не должен ронять входящие – архив просто считается пустым
+// (readPultState уже гасит порчу файла; здесь проверяем интеграцию с inbox).
+test('a corrupted state.json does not break the inbox, the archive counts as empty', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addDraftProject(projectsDir, { folder: 'approved', name: 'Утверждённый', approve: true });
+  fs.mkdirSync(path.join(projectsDir, '.pult'), { recursive: true });
+  fs.writeFileSync(path.join(projectsDir, '.pult', 'state.json'), '{ broken');
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(
+    text,
+    /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./,
+  );
+  assert.doesNotMatch(text, /в архиве/);
 });
 
 test('edits to an older video are marked', (t) => {
@@ -153,7 +206,7 @@ test('every value printed by the inbox is stripped of control characters', () =>
   const item = (folder, { briefPath, videoPath, id }) => ({
     folder,
     title: 'Ролик',
-    approved: [briefPath],
+    approved: [{ briefPath, archived: false }],
     commentsBroken: true,
     passportError: null,
     comments: [{

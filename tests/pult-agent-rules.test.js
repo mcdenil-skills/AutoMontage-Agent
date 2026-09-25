@@ -25,6 +25,11 @@ test('AGENTS.md forbids calling the pult approve API on the user\'s behalf', () 
   assert.match(text, /никогда[\s\S]{0,120}\/api\/approve/iu);
 });
 
+test('AGENTS.md tells the agent not to start archived approvals without being asked', () => {
+  const text = read('AGENTS.md');
+  assert.match(text, /в архиве[\s\S]{0,80}не начинай без просьбы пользователя/u);
+});
+
 for (const file of ['AGENTS.md', 'skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md', 'skills/motion-reel/SKILL.md']) {
   test(`${file} explains --accept takes a folder name without the projects/ prefix`, () => {
     const text = read(file);
