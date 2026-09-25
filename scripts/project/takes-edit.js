@@ -78,11 +78,13 @@ function remapTakeRangesTranscript(ranges, wordsByTake, fps) {
   for (const range of ranges) {
     const local = remapTranscriptWords(wordsByTake.get(range.take), [range], fps);
     for (const word of local) {
-      words.push({
-        ...word,
-        s: roundedTime(word.s + offset, fps),
-        e: roundedTime(word.e + offset, fps),
-      });
+      const s = roundedTime(word.s + offset, fps);
+      const e = roundedTime(word.e + offset, fps);
+      // Слово, которое лишь на доли миллисекунды заходит за границу снапнутого куска,
+      // после округления получает e <= s: такое слово ломает потребителей transcript'а
+      // (collectWords в tighten/cut-pauses/source master), поэтому его отбрасываем.
+      if (e <= s) continue;
+      words.push({ ...word, s, e });
     }
     offset += range.end - range.start;
   }
@@ -91,13 +93,19 @@ function remapTakeRangesTranscript(ranges, wordsByTake, fps) {
 
 function takesTrimPlan(ranges, takes) {
   const inputs = [];
-  const inputIndex = new Map();
+  // На дубль запоминаем текущий индекс входа и конец последнего куска, размещённого на нём.
+  const activeInputByTake = new Map();
   const segments = ranges.map((range) => {
-    if (!inputIndex.has(range.take)) {
-      inputIndex.set(range.take, inputs.length);
-      inputs.push(takes.get(range.take).filePath);
-    }
-    return { input: inputIndex.get(range.take), start: range.start, end: range.end };
+    const active = activeInputByTake.get(range.take);
+    // Декодер одного -i общий для всех кусков этого входа. Если кусок начинается раньше конца
+    // предыдущего куска того же дубля на этом входе, FFmpeg должен сначала декодировать более
+    // позднее окно и держать в памяти уже декодированные кадры раннего окна до конкатенации -
+    // это и даёт рост RSS в разы. Поэтому такой кусок открывает дублю новый вход, а не переиспользует старый.
+    const reuse = active && range.start >= active.lastEnd;
+    const inputIndex = reuse ? active.input : inputs.length;
+    if (!reuse) inputs.push(takes.get(range.take).filePath);
+    activeInputByTake.set(range.take, { input: inputIndex, lastEnd: range.end });
+    return { input: inputIndex, start: range.start, end: range.end };
   });
   return { inputs, segments };
 }

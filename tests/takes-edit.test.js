@@ -109,6 +109,20 @@ test('words from each take move onto the assembled timeline', () => {
   ]);
 });
 
+test('words that round to zero length at a range boundary are dropped', () => {
+  const takes10 = new Map([['take-01', { id: 'take-01', filePath: 'take-01.mp4', duration: 10 }]]);
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 6.64, end: 7.5, beat: 'A', reason: 'x' }],
+    { fps: 30000 / 1001, takes: takes10 },
+  );
+  assert.equal(ranges[0].startFrame, 199);
+  const words = remapTakeRangesTranscript(ranges, new Map([
+    ['take-01', [{ w: 'хвост', s: 6.3, e: 6.64 }, { w: 'слово', s: 6.7, e: 7.2 }]],
+  ]), 30000 / 1001);
+  assert.deepEqual(words.map((word) => word.w), ['слово']);
+  for (const word of words) assert.ok(word.e > word.s, `${word.w} must have e > s`);
+});
+
 test('trim plan lists each take once in order of first use', () => {
   const ranges = snapTakeRanges([
     ...takesEdit().ranges,
@@ -120,6 +134,26 @@ test('trim plan lists each take once in order of first use', () => {
       { input: 0, start: 1, end: 2.52 },
       { input: 1, start: 4, end: 6 },
       { input: 0, start: 3, end: 4 },
+    ],
+  });
+});
+
+test('a take reused backwards in time gets its own ffmpeg input', () => {
+  const ranges = snapTakeRanges([
+    { take: 'take-01', start: 4, end: 6, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 0, end: 2, beat: 'B', reason: 'y' },
+    { take: 'take-02', start: 1, end: 2, beat: 'C', reason: 'z' },
+    { take: 'take-01', start: 7, end: 7.5, beat: 'D', reason: 'w' },
+  ], { fps: 25, takes });
+  assert.deepEqual(takesTrimPlan(ranges, takes), {
+    inputs: ['take-01.mp4', 'take-01.mp4', 'take-02.mov'],
+    segments: [
+      { input: 0, start: 4, end: 6 },
+      { input: 1, start: 0, end: 2 },
+      { input: 2, start: 1, end: 2 },
+      // 7.5s is not frame-aligned at fps 25 (7.5 * 25 = 187.5); snapTakeRanges ceils to frame 188,
+      // so the snapped end is 7.52s, not the raw 7.5s.
+      { input: 1, start: 7, end: 7.52 },
     ],
   });
 });
