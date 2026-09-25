@@ -20,16 +20,26 @@ test('affected test files leave nothing behind in their temporary directory', (t
   const temporary = path.join(parent, 'tmp');
   fs.mkdirSync(temporary);
   const env = { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary };
-  // Вложенный runner иначе решит, что он дочерний процесс внешнего runner.
-  delete env.NODE_TEST_CONTEXT;
+  // Вложенный runner иначе решит, что он дочерний процесс внешнего runner, и молча ничего не запустит.
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('NODE_TEST_')) delete env[key];
+  }
 
-  const result = spawnSync(process.execPath, ['--test', ...HYGIENE_FILES], {
+  const result = spawnSync(process.execPath, [
+    '--test', '--test-reporter=tap', '--test-concurrency=1', ...HYGIENE_FILES,
+  ], {
     cwd: ROOT,
     env,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    timeout: 10 * 60_000,
   });
 
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`.slice(-4000));
+  const output = [result.error, result.signal, result.stdout, result.stderr]
+    .filter(Boolean).join('\n').slice(-4000);
+  assert.equal(result.status, 0, output);
+  // Пустой прогон тоже даёт status 0 и пустую папку; файл без тестов считается одним pass.
+  const passed = Number(/^# pass (\d+)$/m.exec(result.stdout)?.[1] ?? 0);
+  assert.ok(passed > HYGIENE_FILES.length, `nested run executed only ${passed} tests\n${output}`);
   assert.deepEqual(fs.readdirSync(temporary).sort(), []);
 });
