@@ -198,9 +198,119 @@ test('a launcher that gives up releases its start lock', async (t) => {
       now: () => { clock += 1000; return clock; },
       log: quiet,
     }),
-    /не запустился/,
+    // Путь к журналу — внутри папки роликов, без абсолютного пути.
+    /не запустился[\s\S]*Подробности: projects\/\.pult\/serve\.log/,
   );
   assert.equal(fs.existsSync(startLockPath(projectsDir)), false);
+});
+
+test('the detached server writes its output to a private serve.log', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const port = await startFakePult(t);
+  const stdios = [];
+  const spawnImpl = (command, args, options) => {
+    stdios.push(options.stdio);
+    // Родитель закроет дескриптор сразу после spawn — пишем в него, пока он открыт.
+    if (Array.isArray(options.stdio)) fs.writeSync(options.stdio[2], 'след сервера\n');
+    const child = new EventEmitter();
+    child.unref = () => {};
+    setTimeout(() => writeInstance(projectsDir, { pid: process.pid, port, token: TOKEN }), 50);
+    return child;
+  };
+  const { openWindowImpl } = recordWindows();
+  await openMode({ mode: 'open', projectsDir, open: true }, { spawnImpl, openWindowImpl, log: quiet });
+  assert.equal(stdios.length, 1);
+  const [stdin, stdout, stderr] = stdios[0];
+  assert.equal(stdin, 'ignore');
+  assert.equal(typeof stdout, 'number');
+  assert.equal(stderr, stdout);
+  const logPath = path.join(projectsDir, '.pult', 'serve.log');
+  assert.equal(fs.readFileSync(logPath, 'utf8'), 'след сервера\n');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
+});
+
+test('a symlinked serve.log is never followed', { skip: process.platform === 'win32' }, async (t) => {
+  const { base, projectsDir } = makePultRoot(t);
+  const port = await startFakePult(t);
+  const target = path.join(base, 'outside.txt');
+  fs.writeFileSync(target, 'keep');
+  fs.mkdirSync(path.join(projectsDir, '.pult'), { recursive: true });
+  fs.symlinkSync(target, path.join(projectsDir, '.pult', 'serve.log'));
+  const { calls, spawnImpl } = fakeSpawner({ projectsDir, port });
+  const { openWindowImpl } = recordWindows();
+  const result = await openMode({ mode: 'open', projectsDir, open: true }, { spawnImpl, openWindowImpl, log: quiet });
+  assert.equal(result, 'open');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.stdio, 'ignore');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
+});
+
+// Пульт жив, но браузер не открылся: это не ошибка команды — даём адрес вручную.
+test('a window that fails to open still leaves a working pult and its address', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const url = 'http://127.0.0.1:3/#token=z';
+  const failingWindow = async () => { throw new Error('нет браузера'); };
+  const expected = `Пульт работает, но окно не открылось. Откройте в браузере: ${url}`;
+
+  const running = [];
+  assert.equal(await openMode({ mode: 'open', projectsDir, open: true }, {
+    findRunningInstanceImpl: async () => ({ url }),
+    openWindowImpl: failingWindow,
+    log: (line) => running.push(line),
+  }), 'open');
+  assert.ok(running.includes(expected), running.join('\n'));
+
+  const started = [];
+  let checks = 0;
+  const child = new EventEmitter();
+  child.unref = () => {};
+  assert.equal(await openMode({ mode: 'open', projectsDir, open: true }, {
+    spawnImpl: () => child,
+    findRunningInstanceImpl: async () => { checks += 1; return checks > 1 ? { url } : null; },
+    openWindowImpl: failingWindow,
+    sleep: async () => {},
+    log: (line) => started.push(line),
+  }), 'open');
+  assert.ok(started.includes(expected), started.join('\n'));
+
+  const existing = [];
+  assert.equal(await serve({ mode: 'serve', projectsDir, open: true }, {
+    findRunningInstanceImpl: async () => ({ url }),
+    openWindowImpl: failingWindow,
+    startServerImpl: async () => { throw new Error('must not start a second server'); },
+    log: (line) => existing.push(line),
+  }), 'existing');
+  assert.ok(existing.includes(expected), existing.join('\n'));
+});
+
+test('a freshly served pult tells its address when the window fails', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const signals = ['SIGINT', 'SIGTERM'];
+  const before = new Map(signals.map((signal) => [signal, process.listeners(signal)]));
+  // serve вешает обработчики сигналов на процесс — снимаем их, чтобы не задеть раннер тестов.
+  t.after(() => {
+    for (const signal of signals) {
+      for (const listener of process.listeners(signal)) {
+        if (!before.get(signal).includes(listener)) process.removeListener(signal, listener);
+      }
+    }
+  });
+  const url = `http://127.0.0.1:4/#token=${TOKEN}`;
+  const lines = [];
+  const result = await serve({ mode: 'serve', projectsDir, open: true }, {
+    findRunningInstanceImpl: async () => null,
+    startServerImpl: async () => ({
+      server: { address: () => ({ port: 4 }) },
+      token: TOKEN,
+      origin: 'http://127.0.0.1:4',
+      url,
+      close: async () => {},
+    }),
+    openWindowImpl: async () => { throw new Error('нет браузера'); },
+    log: (line) => lines.push(line),
+  });
+  assert.equal(result, 'started');
+  assert.ok(lines.includes(`Пульт работает, но окно не открылось. Откройте в браузере: ${url}`), lines.join('\n'));
 });
 
 test('a server that fails to spawn is reported instead of waiting', async (t) => {

@@ -60,6 +60,43 @@ function startLockPath(projectsDir) {
   return path.join(projectsDir, '.pult', 'starting.lock');
 }
 
+function serveLogPath(projectsDir) {
+  return path.join(projectsDir, '.pult', 'serve.log');
+}
+
+// Сервер жив, а окно не открылось (нет браузера, ошибка запуска) — это не провал команды:
+// печатаем полный адрес с токеном, это собственный терминал пользователя.
+async function openWindowSafely(openWindowImpl, url, log) {
+  try {
+    await openWindowImpl(url);
+    return true;
+  } catch (_) {
+    log(`Пульт работает, но окно не открылось. Откройте в браузере: ${url}`);
+    return false;
+  }
+}
+
+// Журнал фонового сервера: без него падение при запуске со значка не оставило бы следа.
+// O_NOFOLLOW: подложенный симлинк не должен перенаправить запись в чужой файл. Не вышло
+// открыть журнал — запускаем без него, это только диагностика.
+function openServeLog(projectsDir) {
+  const { constants } = fs;
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(
+      serveLogPath(projectsDir),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW || 0),
+      0o600,
+    );
+    // Права при создании не меняют уже существующий файл — выравниваем явно.
+    if (process.platform !== 'win32') fs.fchmodSync(descriptor, 0o600);
+    return descriptor;
+  } catch (_) {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    return null;
+  }
+}
+
 // Замок запуска: два щелчка по значку подряд не должны поднять два сервера. Файл создаётся
 // только исключительно ('wx'): такой open не проходит по симлинку и не открывает чужой файл.
 // Возвращает объект с release(), если замок наш, или null, если его держит другой запуск.
@@ -119,8 +156,8 @@ async function serve(options, {
   fs.mkdirSync(options.projectsDir, { recursive: true });
   const existing = await findRunningInstanceImpl(options.projectsDir, { busyWaitMs: 0 });
   if (existing) {
-    if (options.open) await openWindowImpl(existing.url);
     log('Пульт уже запущен.');
+    if (options.open) await openWindowSafely(openWindowImpl, existing.url, log);
     return 'existing';
   }
   const session = await startServerImpl({
@@ -143,11 +180,7 @@ async function serve(options, {
   process.once('SIGINT', () => stop(130));
   process.once('SIGTERM', () => stop(143));
   log(`Пульт работает: ${session.origin}`);
-  if (options.open) {
-    await openWindowImpl(session.url).catch(() => {
-      log('Окно не открылось. Запустите: automontage pult');
-    });
-  }
+  if (options.open) await openWindowSafely(openWindowImpl, session.url, log);
   return 'started';
 }
 
@@ -161,9 +194,10 @@ async function openMode(options, {
   log = console.log,
 } = {}) {
   fs.mkdirSync(options.projectsDir, { recursive: true });
+  // Окно — только удобство: если оно не открылось, команда всё равно успешна, адрес в выводе.
   const reveal = async (running) => {
-    if (options.open) await openWindowImpl(running.url);
-    log('Пульт открыт.');
+    const opened = options.open ? await openWindowSafely(openWindowImpl, running.url, log) : true;
+    if (opened) log('Пульт открыт.');
     return 'open';
   };
   // Первая проверка ждёт занятый пульт (до 20 с): пользователь ждёт именно его окно.
@@ -175,14 +209,21 @@ async function openMode(options, {
   try {
     let spawnError = null;
     if (lock) {
-      const child = spawnImpl(process.execPath, [__filename, '--serve', '--no-open', '--projects-dir', options.projectsDir], {
-        cwd: ROOT,
-        detached: true,
-        env: process.env,
-        shell: false,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
+      const logDescriptor = openServeLog(options.projectsDir);
+      let child;
+      try {
+        child = spawnImpl(process.execPath, [__filename, '--serve', '--no-open', '--projects-dir', options.projectsDir], {
+          cwd: ROOT,
+          detached: true,
+          env: process.env,
+          shell: false,
+          stdio: logDescriptor === null ? 'ignore' : ['ignore', logDescriptor, logDescriptor],
+          windowsHide: true,
+        });
+      } finally {
+        // Дочерний процесс уже получил свою копию дескриптора — родителю он больше не нужен.
+        if (logDescriptor !== null) fs.closeSync(logDescriptor);
+      }
       // Без обработчика ошибка запуска уронила бы процесс; с ним — понятное сообщение.
       child.once('error', (error) => { spawnError = error; });
       child.unref();
@@ -195,7 +236,9 @@ async function openMode(options, {
       const running = await findRunningInstanceImpl(options.projectsDir, { busyWaitMs: 0 });
       if (running) return reveal(running);
     }
-    throw new Error('пульт не запустился за 15 секунд. Для диагностики: automontage pult --serve');
+    // Путь журнала — относительно папки роликов: абсолютный путь здесь не нужен.
+    const logHint = `${path.basename(options.projectsDir)}/.pult/serve.log`;
+    throw new Error(`пульт не запустился за 15 секунд. Подробности: ${logHint}. Для диагностики: automontage pult --serve`);
   } finally {
     if (lock) lock.release();
   }
