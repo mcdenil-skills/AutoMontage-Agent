@@ -133,8 +133,12 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
       lines.push(`- Файл правок повреждён: \`${display(path.join(dir, 'pult', 'comments.json'))}\`. Проверь его и попроси автора повторить правки в пульте.`);
     }
     for (const approval of item.approved) {
-      const marker = approval.archived ? ' (в архиве – не начинай без просьбы пользователя)' : '';
-      lines.push(`- Утверждено${marker}: \`${stripControls(approval.briefPath)}\`. Собери финал и проведи полный QA.`);
+      const briefPath = stripControls(approval.briefPath);
+      // Архивная строка не должна одной фразой и запрещать, и предписывать действие: сначала
+      // запрет («не начинай без просьбы»), а условие для сборки финала – отдельным предложением.
+      lines.push(approval.archived
+        ? `- Утверждено (в архиве – не начинай без просьбы пользователя): \`${briefPath}\`. По просьбе пользователя – собери финал и проведи полный QA.`
+        : `- Утверждено: \`${briefPath}\`. Собери финал и проведи полный QA.`);
     }
     for (const comment of item.comments) {
       const outdated = comment.outdated ? ' (к прежней версии видео)' : '';

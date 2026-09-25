@@ -30,6 +30,12 @@ test('AGENTS.md tells the agent not to start archived approvals without being as
   assert.match(text, /в архиве[\s\S]{0,80}не начинай без просьбы пользователя/u);
 });
 
+test('AGENTS.md defines what counts as the user\'s request for an archived approval', () => {
+  const text = read('AGENTS.md');
+  assert.match(text, /Просьба[\s\S]{0,200}назван этот ролик или его папка/u);
+  assert.match(text, /после возврата карточки из архива пометка исчезает сама/u);
+});
+
 for (const file of ['AGENTS.md', 'skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md', 'skills/motion-reel/SKILL.md']) {
   test(`${file} explains --accept takes a folder name without the projects/ prefix`, () => {
     const text = read(file);

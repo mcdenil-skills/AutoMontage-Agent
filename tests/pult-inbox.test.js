@@ -43,7 +43,9 @@ test('the inbox lists edits with time and frame, and approved videos without a f
 });
 
 // Архивная карточка без финала не должна выглядеть как обычное «начни собирать финал» –
-// пользователь спрятал её осознанно (Task A1, вариант А из плана доводки пульта).
+// пользователь спрятал её осознанно (Task A1, вариант А из плана доводки пульта). Окончание
+// строки для архивного случая – «По просьбе пользователя – …», а не «Собери финал» без
+// условия: одна строка не должна одновременно запрещать и предписывать действие.
 test('an approved video without a final that is archived is marked in the inbox', (t) => {
   const { projectsDir } = makePultRoot(t);
   addDraftProject(projectsDir, { folder: 'archived-approved', name: 'Утверждённый в архиве', approve: true });
@@ -52,8 +54,49 @@ test('an approved video without a final that is archived is marked in the inbox'
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
   assert.match(
     text,
-    /- Утверждено \(в архиве – не начинай без просьбы пользователя\): `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./,
+    /- Утверждено \(в архиве – не начинай без просьбы пользователя\): `brief\/v\d{2}-approved\.lesson\.json`\. По просьбе пользователя – собери финал и проведи полный QA\./,
   );
+});
+
+// Одна и та же папка может одновременно ждать финала архивной версии и содержать новую
+// правку – архив должен пометить только строку утверждения, правка остаётся обычной.
+test('an archived video with an unfinaled approval and a new edit marks only the approval line', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const project = addDraftProject(projectsDir, { folder: 'archived-mixed', name: 'Архивный смешанный', approve: true });
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === 'archived-mixed');
+  setArchived(projectsDir, cardIdFor(entry), true);
+  addComment(project.projectDir, { timeSec: 3.2, text: 'Поправь титр', video: entry.video }, { id: () => 'c-9001' });
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(
+    text,
+    /- Утверждено \(в архиве – не начинай без просьбы пользователя\): `brief\/v\d{2}-approved\.lesson\.json`\. По просьбе пользователя – собери финал и проведи полный QA\./,
+  );
+  assert.match(text, /- Правка `c-9001` на 0:03: «Поправь титр»/);
+  assert.doesNotMatch(text, /Правка `c-9001`[^\n]*в архиве/);
+});
+
+// Варианты одной темы делят один id карточки (`group:<id>`, см. cardIdFor) – архивация
+// карточки темы должна пометить утверждение каждого варианта, а не только первого.
+test('archiving a group marks the unfinaled approval of every variant in that group', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const group = { id: 'tema-x', title: 'Тема X' };
+  addDraftProject(projectsDir, {
+    folder: 'tema-x-original',
+    name: 'Тема X – оригинал',
+    approve: true,
+    card: { version: 1, group, variantLabel: 'Оригинал' },
+  });
+  addDraftProject(projectsDir, {
+    folder: 'tema-x-hook1',
+    name: 'Тема X – хук 1',
+    approve: true,
+    card: { version: 1, group, variantLabel: 'Хук 1' },
+  });
+  const original = scanProjects({ projectsDir }).entries.find((item) => item.key === 'tema-x-original');
+  setArchived(projectsDir, cardIdFor(original), true);
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  const markedApprovals = text.match(/- Утверждено \(в архиве – не начинай без просьбы пользователя\)/g) || [];
+  assert.equal(markedApprovals.length, 2);
 });
 
 // Тот же случай без архивации – строка остаётся ровно такой, как была раньше.
