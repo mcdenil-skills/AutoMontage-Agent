@@ -104,7 +104,7 @@ test('snapped ranges from one take must not overlap and must keep at least one f
   ], { fps: 25, takes }));
 });
 
-test('ranges of one take that only touch after snapping share the frame with the earlier range', () => {
+test('ranges of one take that only touch after snapping keep the shared frame for the range listed earlier', () => {
   const forward = snapTakeRanges([
     { take: 'take-01', start: 2, end: 3.41, beat: 'A', reason: 'x' },
     { take: 'take-01', start: 3.41, end: 5, beat: 'B', reason: 'y' },
@@ -170,6 +170,25 @@ test('a sub-frame sliver of a clipped neighbour word is dropped, not carried int
   assert.deepEqual([ranges[0].start, ranges[0].end], [1, 2]);
   const words = remapTakeRangesTranscript(ranges, new Map([['take-01', takeWords]]), 25);
   assert.deepEqual(words, [{ w: 'слово', s: 0.01, e: 0.5 }]);
+});
+
+test('a short word exactly at a shared boundary is kept on exactly one side', () => {
+  const ranges = snapTakeRanges([
+    { take: 'take-01', start: 2, end: 3.42, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 3.42, end: 5, beat: 'B', reason: 'y' },
+  ], { fps: 25, takes });
+  assert.deepEqual(
+    ranges.map(({ startFrame, endFrame }) => [startFrame, endFrame]),
+    [[50, 86], [86, 125]],
+  );
+  const words = remapTakeRangesTranscript(ranges, new Map([
+    ['take-01', [
+      { w: 'до', s: 3.0, e: 3.42 },
+      { w: 'и', s: 3.42, e: 3.47 },
+      { w: 'после', s: 3.47, e: 4.0 },
+    ]],
+  ]), 25);
+  assert.deepEqual(words.map((word) => word.w), ['до', 'и', 'после']);
 });
 
 test('trim plan reuses one input for a take used forward in time', () => {

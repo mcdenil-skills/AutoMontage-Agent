@@ -79,7 +79,7 @@ function snapTakeRanges(ranges, { fps, takes }) {
         throw new Error(`ranges[${index}] overlaps ranges[${other.index}] in ${range.take}`);
       }
       // Начало округляется вниз, конец вверх, поэтому соседние куски одного дубля могут
-      // делить кадр; кадр остаётся первому куску.
+      // делить кадр; кадр остаётся куску, который стоит раньше в списке.
       if (range.startFrame < other.range.endFrame && other.range.startFrame < range.endFrame) {
         if (raw.start >= otherRaw.end) {
           range.startFrame = other.range.endFrame;
@@ -100,7 +100,11 @@ function snapTakeRanges(ranges, { fps, takes }) {
 }
 
 // Начало снапается вниз и конец вверх, поэтому в кусок может попасть лишь доля кадра соседнего
-// (часто отбракованного) слова; такую крошку не тащим в субтитры отдельным словом.
+// (часто отбракованного) слова; такую крошку не тащим в субтитры отдельным словом. Но если агент
+// разрезал речь ровно по началу слова короче двух кадров, у этого слова получается <1 кадра
+// внутри каждого из двух соседних кусков - и по старому правилу оно пропадёт из субтитров вовсе.
+// Поэтому слово также остаётся, если его середина лежит внутри куска: так оно достаётся ровно
+// одной стороне границы.
 function dropClippedSlivers(words, range, fps) {
   if (!Array.isArray(words)) return words;
   const minFrameSec = 1 / fps;
@@ -108,7 +112,9 @@ function dropClippedSlivers(words, range, fps) {
     const clipped = word.s < range.start || word.e > range.end;
     if (!clipped) return true;
     const inside = Math.min(word.e, range.end) - Math.max(word.s, range.start);
-    return inside >= minFrameSec;
+    if (inside >= minFrameSec) return true;
+    const mid = (word.s + word.e) / 2;
+    return mid >= range.start && mid < range.end;
   });
 }
 
