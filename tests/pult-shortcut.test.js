@@ -26,11 +26,56 @@ test('macOS app bundle launches the pult with the install-time environment', () 
   assert.equal(script.mode, 0o755);
   assert.equal(
     script.content,
-    "#!/bin/sh\nexport PATH='/opt/homebrew/bin:/usr/bin'\nexport AUTOMONTAGE_FFMPEG_DIR='/ff'\nexec '/n/node' '/r/AutoMontage/scripts/cli.js' pult\n",
+    "#!/bin/sh\nexport PATH='/opt/homebrew/bin:/usr/bin'\nexport AUTOMONTAGE_FFMPEG_DIR='/ff'\nNODE='/n/node'\n[ -x \"$NODE\" ] || NODE=\"$(command -v node)\"\nexec \"$NODE\" '/r/AutoMontage/scripts/cli.js' pult\n",
   );
   const plist = files.find((file) => file.relative === 'Contents/Info.plist').content;
   assert.match(plist, /<key>CFBundleExecutable<\/key><string>pult<\/string>/);
   assert.match(plist, /io\.automontage\.pult/);
+});
+
+test('macOS launcher falls back to the node found on PATH when the recorded one is gone', { skip: process.platform === 'win32' }, (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-root-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'scripts', 'cli.js'),
+    "console.log('pult-started', process.argv.slice(2).join(' '));\n",
+  );
+  const { appDir, files } = macShortcutFiles({ root, nodePath: '/no/such/node-1970', homeDir: home, env: {} });
+  for (const file of files) {
+    const target = path.join(appDir, ...file.relative.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, file.content, { mode: file.mode });
+  }
+  const script = path.join(appDir, 'Contents', 'MacOS', 'pult');
+  const output = execFileSync(script, [], {
+    encoding: 'utf8',
+    env: { PATH: path.dirname(process.execPath) },
+  });
+  assert.match(output, /pult-started pult/);
+});
+
+test('macOS launcher uses a valid recorded node directly, without touching PATH', { skip: process.platform === 'win32' }, (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-root-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'scripts', 'cli.js'),
+    "console.log('pult-started', process.argv.slice(2).join(' '));\n",
+  );
+  const { appDir, files } = macShortcutFiles({ root, nodePath: process.execPath, homeDir: home, env: {} });
+  for (const file of files) {
+    const target = path.join(appDir, ...file.relative.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, file.content, { mode: file.mode });
+  }
+  const script = path.join(appDir, 'Contents', 'MacOS', 'pult');
+  const output = execFileSync(script, [], { encoding: 'utf8', env: { PATH: '' } });
+  assert.match(output, /pult-started pult/);
 });
 
 test('installing on macOS writes an app and refuses to replace a foreign one', { skip: process.platform === 'win32' }, (t) => {
@@ -67,6 +112,27 @@ test('Windows shortcut passes paths through the environment, not the script', ()
   assert.equal(call.options.env.AUTOMONTAGE_SHORTCUT_NODE, 'C:\\Program Files\\nodejs\\node.exe');
   assert.equal(call.options.env.AUTOMONTAGE_SHORTCUT_ARGS, '"C:\\Users\\u\\AutoMontage\\scripts\\cli.js" pult');
   assert.equal(result.location, 'C:\\Users\\u\\Desktop\\Пульт роликов.lnk');
+});
+
+test('Windows script sets UTF-8 output encoding before writing the shortcut path', () => {
+  let call;
+  installShortcut({
+    platform: 'win32',
+    root: 'C:\\Users\\u\\AutoMontage',
+    nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+    env: { PATH: 'x' },
+    execFileSyncImpl: (command, args, options) => {
+      call = { command, args, options };
+      return 'C:\\Users\\u\\Desktop\\Пульт роликов.lnk\r\n';
+    },
+  });
+  const script = call.args.at(-1);
+  assert.ok(
+    script.startsWith(
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8;',
+    ),
+  );
+  assert.ok(!script.includes('AutoMontage'));
 });
 
 test('other systems get a clear message', () => {

@@ -24,7 +24,11 @@ function macShortcutFiles({ root, nodePath, homeDir, env = process.env }) {
   const lines = ['#!/bin/sh'];
   if (env.PATH) lines.push(`export PATH=${shellQuote(env.PATH)}`);
   if (env.AUTOMONTAGE_FFMPEG_DIR) lines.push(`export AUTOMONTAGE_FFMPEG_DIR=${shellQuote(env.AUTOMONTAGE_FFMPEG_DIR)}`);
-  lines.push(`exec ${shellQuote(nodePath)} ${shellQuote(path.posix.join(root, 'scripts', 'cli.js'))} pult`);
+  // `brew upgrade node` меняет версионный путь в Cellar — записанный nodePath может исчезнуть.
+  // Тогда ищем node на сохранённом PATH, чтобы значок не переставал работать молча.
+  lines.push(`NODE=${shellQuote(nodePath)}`);
+  lines.push('[ -x "$NODE" ] || NODE="$(command -v node)"');
+  lines.push(`exec "$NODE" ${shellQuote(path.posix.join(root, 'scripts', 'cli.js'))} pult`);
   const plist = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -53,6 +57,10 @@ function macShortcutFiles({ root, nodePath, homeDir, env = process.env }) {
 // Значения передаются через переменные окружения: в тексте PowerShell-скрипта нет путей,
 // поэтому кавычки и спецсимволы в пути не могут изменить команду.
 const WINDOWS_SCRIPT = [
+  // PowerShell 5.1 в русской локали пишет перенаправленный stdout не в UTF-8 —
+  // без этого путь к «Пульт роликов.lnk» вернётся кракозябрами.
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+  '$OutputEncoding = [System.Text.Encoding]::UTF8',
   "$ErrorActionPreference = 'Stop'",
   "$desktop = [Environment]::GetFolderPath('Desktop')",
   "$link = Join-Path $desktop ($env:AUTOMONTAGE_SHORTCUT_NAME + '.lnk')",
