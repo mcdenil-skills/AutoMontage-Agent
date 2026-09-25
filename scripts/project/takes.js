@@ -109,11 +109,11 @@ function transcribeTakeFile({ videoPath, model = 'large-v3-turbo', prompt = null
     // Без этого фильтра WAV начинается с первого настоящего аудио-сэмпла: если звук дубля
     // стартует позже контейнера (аудио после видео, как на части Android-записей), WAV теряет
     // этот начальный зазор, и все слова Whisper сдвигаются раньше оси trim. aresample с
-    // first_pts=0 восстанавливает тишину в начале, не трогая audioExtractionCommand (его
-    // использует и build.js).
+    // first_pts=0 восстанавливает тишину в начале, а min_hard_comp=0 заполняет и короткие
+    // (<0.1 с) разрывы внутри звука. audioExtractionCommand не трогаем: его использует build.js.
     const extractionArgs = [
       ...extraction.args.slice(0, -1),
-      '-af', 'aresample=async=1:first_pts=0',
+      '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
       extraction.args.at(-1),
     ];
     runToolImpl(extraction.command, extractionArgs, { stage: 'take audio extraction' });

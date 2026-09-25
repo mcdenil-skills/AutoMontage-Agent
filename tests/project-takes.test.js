@@ -244,11 +244,11 @@ test('transcribeTakeFile clamps zero-length whisper words and removes its tempor
   assert.notEqual(capturedDir, null);
   assert.equal(fs.existsSync(capturedDir), false);
   assert.notEqual(ffmpegArgs, null);
-  // -af aresample=async=1:first_pts=0 must sit right before the WAV output path, so a take's
+  // -af aresample=async=1:min_hard_comp=0:first_pts=0 must sit right before the WAV output path, so a take's
   // audio that starts after the container start keeps its leading silence instead of shifting
   // every Whisper word earlier than the trim axis.
   assert.equal(ffmpegArgs.at(-3), '-af');
-  assert.equal(ffmpegArgs.at(-2), 'aresample=async=1:first_pts=0');
+  assert.equal(ffmpegArgs.at(-2), 'aresample=async=1:min_hard_comp=0:first_pts=0');
   assert.ok(ffmpegArgs.at(-1).endsWith('audio.wav'));
 });
 
