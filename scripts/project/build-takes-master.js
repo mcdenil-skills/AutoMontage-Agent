@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const { frameRateFromFps } = require('../review/media-time');
 const { collectWords } = require('../tighten');
 const { publishSourceRevision, roundedTime } = require('./source-revision');
+const { analyzeLevels, isSilentSpan, snapRangesToPauses } = require('./take-pauses');
 const { assertCompatibleTakes, describeTake } = require('./takes');
 const {
   assertTakesEditShape,
@@ -19,6 +20,7 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
     probeVideoImpl,
     probeMediaPathImpl,
     runSegmentsTrimImpl,
+    readTakeLevelsImpl,
   } = dependencies;
   const normalized = assertTakesEditShape(edit, { sourceRevision: source.revision });
   const registry = workspace.manifest.takes || [];
@@ -47,7 +49,15 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
   assertCompatibleTakes(used);
   validateTakeRanges(normalized.ranges, takes);
   const [first] = used;
-  const ranges = snapTakeRanges(normalized.ranges, { fps: first.fps, takes });
+  // Граница, выбранная по таймингам Whisper, может попасть внутрь слова: Whisper прячет паузы
+  // внутрь соседних слов. Поэтому каждая граница сначала уходит в ближайшую паузу по звуку.
+  const analyses = new Map();
+  for (const take of used) {
+    const levels = readTakeLevelsImpl(take.filePath, { stage: `${take.id} levels` });
+    if (levels && levels.levels.length) analyses.set(take.id, analyzeLevels(levels));
+  }
+  const paused = snapRangesToPauses(normalized.ranges, { takes, analyses, fps: first.fps });
+  const ranges = snapTakeRanges(paused.ranges, { fps: first.fps, takes });
   const wordsByTake = new Map(used.map((take) => {
     try {
       return [take.id, collectWords(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8')))];
@@ -57,7 +67,16 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
       throw error;
     }
   }));
-  const words = remapTakeRangesTranscript(ranges, wordsByTake, first.fps);
+  const words = remapTakeRangesTranscript(ranges, wordsByTake, first.fps, {
+    isSilentWord: (takeId, word) => analyses.has(takeId)
+      && isSilentSpan(analyses.get(takeId), word.s, word.e),
+  });
+  const joints = [];
+  let elapsed = 0;
+  for (const range of ranges.slice(0, -1)) {
+    elapsed += range.end - range.start;
+    joints.push(roundedTime(elapsed, first.fps));
+  }
   const duration = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
   const rate = frameRateFromFps(first.fps);
   const { inputs, segments } = takesTrimPlan(ranges, takes);
@@ -96,6 +115,13 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
       start: roundedTime(start, first.fps),
       end: roundedTime(end, first.fps),
       beat,
+    })),
+    joints,
+    // Для сдвинутой границы показываем итоговую точку после кадрового выравнивания.
+    pauseAdjustments: paused.adjustments.map((item) => ({
+      ...item,
+      from: roundedTime(item.from, first.fps),
+      to: roundedTime(item.reason === 'pause' ? ranges[item.index][item.edge] : item.to, first.fps),
     })),
   };
 }

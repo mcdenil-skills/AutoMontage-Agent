@@ -19,6 +19,7 @@ const {
 } = require('./source-revision');
 const { buildTakesMaster } = require('./build-takes-master');
 const { isTakesEdit } = require('./takes-edit');
+const { readTakeLevels } = require('./take-pauses');
 const { readProjectManifest, resolveProjectPath } = require('./workspace');
 
 const validateSchema = new Ajv({ allErrors: true }).compile(sourceEditSchema);
@@ -89,6 +90,7 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
       ...publishDependencies,
       probeMediaPathImpl,
       runSegmentsTrimImpl: dependencies.runSegmentsTrimImpl || runSegmentsTrim,
+      readTakeLevelsImpl: dependencies.readTakeLevelsImpl || readTakeLevels,
     });
   }
   const sourcePath = resolveProjectPath(workspace.dir, source.localPath, {
@@ -139,6 +141,30 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
   };
 }
 
+function takesSummaryLines(result) {
+  const lines = [
+    `   takes: ${result.takes.join(', ')}`,
+    `   ranges: ${result.ranges.length}`,
+    ...result.ranges.map((range, index) => (
+      `     ${index + 1}. ${range.take} ${range.start.toFixed(2)}-${range.end.toFixed(2)} ${range.beat}`
+    )),
+  ];
+  if (result.joints.length) {
+    lines.push(`   joints: ${result.joints.map((time) => time.toFixed(2)).join(', ')}`);
+  }
+  for (const item of result.pauseAdjustments) {
+    const label = `ranges[${item.index}].${item.edge}`;
+    if (item.reason === 'pause') {
+      lines.push(`   pause: ${label} ${item.from.toFixed(2)} -> ${item.to.toFixed(2)}`);
+    } else if (item.reason === 'no-pause') {
+      lines.push(`   no pause near: ${label} ${item.from.toFixed(2)}`);
+    } else {
+      lines.push(`   kept: ${label} ${item.from.toFixed(2)} (moving would collapse or overlap)`);
+    }
+  }
+  return lines;
+}
+
 function parseMasterOptions(argv) {
   const options = { projectDir: null, editPath: null };
   for (let index = 0; index < argv.length; index += 2) {
@@ -162,8 +188,7 @@ function main(argv = process.argv.slice(2)) {
     console.log(`✅ source revision: ${result.revision}`);
     console.log(`   duration: ${result.duration.toFixed(2)} sec`);
     if (result.kind === 'takes') {
-      console.log(`   takes: ${result.takes.join(', ')}`);
-      console.log(`   ranges: ${result.ranges.length}`);
+      for (const line of takesSummaryLines(result)) console.log(line);
     } else {
       console.log(`   removed: ${result.removedDuration.toFixed(2)} sec`);
     }
@@ -181,5 +206,6 @@ module.exports = {
   main,
   parseMasterOptions,
   remapTranscriptWords,
+  takesSummaryLines,
   validateSourceEdit,
 };

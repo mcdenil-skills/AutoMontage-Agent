@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildMaster } = require('../scripts/project/build-master');
+const { buildMaster, takesSummaryLines } = require('../scripts/project/build-master');
 const { addTakes } = require('../scripts/project/takes');
 const {
   createOrOpenProject,
@@ -78,6 +78,7 @@ function masterDependencies(calls, overrides = {}) {
         : { width: 1920, height: 1080, fps: 25, duration: 10 };
     },
     probeMediaPathImpl: () => media(),
+    readTakeLevelsImpl: () => null,
     now: () => new Date('2026-09-25T11:00:00.000Z'),
     temporaryId: () => 'takes-master',
     ...overrides,
@@ -217,4 +218,71 @@ test('failed takes encode leaves the active source and manifest unchanged', (t) 
   assert.deepEqual(fs.readFileSync(path.join(fixture.dir, 'project.json')), before);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'source-v02.mp4')), false);
   assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'words-v02.json')), false);
+});
+
+function levelsWithPauses(pauses, duration = 10) {
+  const levels = [];
+  for (let index = 0; index < duration * 100; index += 1) {
+    const time = index / 100;
+    levels.push(pauses.some(([from, to]) => time >= from && time < to) ? -90 : -20);
+  }
+  return { frameSec: 0.01, levels };
+}
+
+test('takes master moves cuts into pauses, drops silent edge words and reports joints', (t) => {
+  const fixture = setupTakes(t);
+  const editPath = writeEdit(fixture.dir);
+  const calls = [];
+  const result = buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
+    readTakeLevelsImpl: (file) => (file.includes('take-02')
+      ? levelsWithPauses([[2.3, 2.45]])
+      : levelsWithPauses([[3.8, 4.1], [5.8, 6.4]])),
+    probeVideoImpl(filename) {
+      return path.basename(filename).startsWith('.source-v')
+        ? { width: 1920, height: 1080, fps: 25, duration: 3.36 }
+        : { width: 1920, height: 1080, fps: 25, duration: 10 };
+    },
+  }));
+  const [, trim] = calls[0];
+  assert.deepEqual(trim.segments, [
+    { input: 0, start: 1, end: 2.36 },
+    { input: 1, start: 4, end: 6 },
+  ]);
+  assert.deepEqual(result.pauseAdjustments, [
+    { index: 0, edge: 'start', from: 1.02, to: 1.02, reason: 'no-pause' },
+    { index: 0, edge: 'end', from: 2.51, to: 2.36, reason: 'pause' },
+  ]);
+  assert.deepEqual(result.joints, [1.36]);
+  assert.equal(result.duration, 3.36);
+  assert.deepEqual(JSON.parse(fs.readFileSync(
+    path.join(fixture.dir, 'transcript', 'words-v02.json'), 'utf8',
+  ))[0].words, [
+    { w: 'привет', s: 0.1, e: 0.5 },
+    { w: 'пока', s: 1.86, e: 2.36 },
+  ]);
+});
+
+test('master summary lists final ranges, joints and every pause decision', () => {
+  assert.deepEqual(takesSummaryLines({
+    takes: ['take-02', 'take-01'],
+    ranges: [
+      { take: 'take-02', start: 1, end: 2.52, beat: 'HOOK' },
+      { take: 'take-01', start: 4, end: 6, beat: 'CTA' },
+    ],
+    joints: [1.52],
+    pauseAdjustments: [
+      { index: 0, edge: 'end', from: 2.51, to: 2.52, reason: 'pause' },
+      { index: 1, edge: 'start', from: 4, to: 4, reason: 'no-pause' },
+      { index: 1, edge: 'end', from: 6, to: 6, reason: 'kept' },
+    ],
+  }), [
+    '   takes: take-02, take-01',
+    '   ranges: 2',
+    '     1. take-02 1.00-2.52 HOOK',
+    '     2. take-01 4.00-6.00 CTA',
+    '   joints: 1.52',
+    '   pause: ranges[0].end 2.51 -> 2.52',
+    '   no pause near: ranges[1].start 4.00',
+    '   kept: ranges[1].end 6.00 (moving would collapse or overlap)',
+  ]);
 });
