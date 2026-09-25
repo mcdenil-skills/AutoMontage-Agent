@@ -17,9 +17,10 @@
 Проверено прототипом 2026-09-25 на FFmpeg 9.0.1 и 7.1.5.
 
 - **P1. Границы по Whisper режут слова.** На пробе 3 из 8 краёв кусков попали внутрь слова (обрывок 60-100 мс): Whisper растягивает конец слова в паузу («эксперта?» до 3.54 при тишине с 3.46) и начинает слово раньше паузы («И» длиной 0.58 с). Повторная расшифровка master 2 из 3 обрывков не заметила.
-- **P2. Паузы видны по уровню.** Окна по 10 мс: тишина между словами на записях -65…-95 dBFS, обрывки слов около -27 dBFS. Порог `min(-30, max(шум + 15, речь - 35))`, где шум = 10-й и речь = 90-й процентиль уровней дубля, дал -46…-48 dB на реальных дублях.
-- **P3. Прототип нашёл те же точки, что человек вручную.** 3.57 → 3.48 (агент выбрал 3.48), 5.35 → 5.28 (пауза 5.23-5.31), 68.66 → 69.08 (пауза 68.75-69.16). Чтение уровней: 0.23-0.31 с на 80-секундный дубль.
-- **P4. Направление поиска.** Конец куска ищет паузу сначала до себя, начало – сначала после себя (так Whisper растягивает слова); если в предпочтительную сторону паузы нет, берётся другая сторона. Все три дефекта пробы лежат в предпочтительной стороне.
+- **P2. Паузы видны по уровню.** Окна по 10 мс: тишина между словами на записях -65…-95 dBFS, обрывки слов около -27 dBFS. Порог `min(-30, речь - 20, max(шум + 15, речь - 35))`, где шум = 10-й и речь = 90-й процентиль уровней дубля, дал -49…-50 dB на реальных дублях (короткие паузы -53…-65, согласные на хвостах слов -41…-48). Ограничение `речь - 20` держит порог ниже речи на дубле почти без пауз; шум по 2-му процентилю отвергнут: он дал -60 и потерял короткие паузы.
+- **P3. Прототип нашёл те же точки, что человек вручную.** 3.57 → 3.52 (пауза 3.46-3.54, агент выбрал 3.48), 5.35 → 5.28 (пауза 5.23-5.31), 68.66 → 69.08 (пауза 68.75-69.16). Чтение уровней: 0.23-0.31 с на 80-секундный дубль.
+- **P4. Направление поиска.** Конец куска предпочитает паузу до себя, начало – после себя (так Whisper растягивает слова); пауза с другой стороны выигрывает, только если она ближе на 0.1 с. Пауза короче 50 мс не считается (смычка согласного). Разрез не ближе 40 мс к речи. Все три дефекта пробы лежат в предпочтительной стороне.
+- **P7. Ревизия после ревью Task 1.** Независимый сдвиг конца и начала соседних кусков одного дубля терял слово между двумя паузами – такой стык теперь один общий разрез в середине ближайшей паузы. Пересечение кусков агента остаётся ошибкой. Края файла не двигаются. Длинная пауза видна до настоящих краёв.
 - **P5. Галлюцинация в хвосте.** Whisper «услышал» «Продолжение» (слово нулевой длины, нормализованное до 0.01 с) в тишине в конце дубля; после кадрового округления конца оно попадало внутрь куска и в транскрипт.
 - **P6. Разные записи.** `takes add` и `master` без изменений склеивают куски разных записей одного формата; на стыке виден скачок положения головы, нужна смена сцены.
 
@@ -63,14 +64,19 @@ const {
   snapRangesToPauses,
 } = require('../scripts/project/take-pauses');
 
-// Окна по 10 мс: речь -20 dB на 0-1.0 и 1.3-2.5 с, тишина -90 dB на 1.0-1.3 и 2.5-3.0 с.
-function speechLevels() {
+// Окна по 10 мс: речь speechDb, тишина silenceDb в интервалах pauses (секунды).
+function levelsWithPauses(pauses, { duration = 3, speechDb = -20, silenceDb = -90 } = {}) {
   const levels = [];
-  for (let index = 0; index < 300; index += 1) {
+  for (let index = 0; index < duration * 100; index += 1) {
     const time = index / 100;
-    levels.push(time < 1 || (time >= 1.3 && time < 2.5) ? -20 : -90);
+    levels.push(pauses.some(([from, to]) => time >= from && time < to) ? silenceDb : speechDb);
   }
   return { frameSec: 0.01, levels };
+}
+
+// Речь на 0-1.0 и 1.3-2.5 с, тишина на 1.0-1.3 и 2.5-3.0 с.
+function speechLevels() {
+  return levelsWithPauses([[1, 1.3], [2.5, 3]]);
 }
 
 function twoTakes() {
@@ -80,7 +86,7 @@ function twoTakes() {
   ]);
 }
 
-test('pcm levels are 10 ms RMS frames in dBFS with a floor for digital silence', () => {
+test('pcm levels are RMS frames in dBFS with a floor for digital silence', () => {
   const buffer = Buffer.alloc(320 * 2);
   for (let index = 160; index < 320; index += 1) buffer.writeInt16LE(16384, index * 2);
   const { frameSec, levels } = levelsFromPcm(buffer, { sampleRate: 16000 });
@@ -88,13 +94,17 @@ test('pcm levels are 10 ms RMS frames in dBFS with a floor for digital silence',
   assert.equal(levels.length, 2);
   assert.equal(levels[0], -120);
   assert.ok(Math.abs(levels[1] - 20 * Math.log10(0.5)) < 1e-9);
+  assert.equal(levelsFromPcm(Buffer.alloc(0), { sampleRate: 22050 }).frameSec, 221 / 22050);
 });
 
-test('pause threshold adapts to the take noise floor and never exceeds -30 dBFS', () => {
+test('pause threshold follows the take noise and stays at least 20 dB below speech', () => {
   assert.equal(pauseThresholdDb(speechLevels().levels), -55);
   const phone = speechLevels().levels.map((level) => (level === -90 ? -50 : level));
-  assert.equal(pauseThresholdDb(phone), -35);
-  assert.equal(pauseThresholdDb(new Array(100).fill(-20)), -30);
+  assert.equal(pauseThresholdDb(phone), -40);
+  assert.equal(pauseThresholdDb(new Array(100).fill(-20)), -40);
+  // Почти без пауз 10-й процентиль попадает в речь; ограничение от речи не даёт порогу подняться.
+  assert.equal(pauseThresholdDb([...new Array(98).fill(-20), -90, -90]), -40);
+  assert.equal(pauseThresholdDb([...new Array(98).fill(-44), -90, -90]), -64);
 });
 
 test('a cut inside speech moves to the nearest pause on the video frame grid', () => {
@@ -105,14 +115,39 @@ test('a cut inside speech moves to the nearest pause on the video frame grid', (
   assert.equal(findPauseCut(analysis, 1.13, 'end', { fps: 25 }), 1.12);
   assert.equal(findPauseCut(analysis, 0.5, 'end', { fps: 25 }), null);
   assert.equal(findPauseCut(analysis, 1.36, 'end', { fps: 30000 / 1001 }), 33 * 1001 / 30000);
+  assert.equal(findPauseCut(analysis, 3.2, 'end', { fps: 25 }), null);
 });
 
-test('a span is silent only when every level frame it touches is below the threshold', () => {
+test('the expected side wins unless the other pause is clearly closer', () => {
+  // Конец куска ищет паузу сначала до себя.
+  const preferred = analyzeLevels(levelsWithPauses([[0.95, 1.05], [1.17, 1.27]]));
+  assert.equal(findPauseCut(preferred, 1.12, 'end', { fps: 25 }), 1);
+  // Но пауза сразу после границы бьёт далёкий провал до неё.
+  const closer = analyzeLevels(levelsWithPauses([[0.9, 0.98], [1.2, 1.3]]));
+  assert.equal(findPauseCut(closer, 1.17, 'end', { fps: 25 }), 1.24);
+});
+
+test('dips shorter than 50 ms are not pauses and cuts keep a margin from speech', () => {
+  const dip = analyzeLevels(levelsWithPauses([[1.2, 1.24], [2.5, 3]]));
+  assert.equal(findPauseCut(dip, 1.3, 'end', { fps: 25 }), null);
+  const analysis = analyzeLevels(speechLevels());
+  assert.equal(findPauseCut(analysis, 1.01, 'end', { fps: 25 }), 1.04);
+  assert.equal(findPauseCut(analysis, 1.29, 'start', { fps: 25 }), 1.24);
+});
+
+test('a long pause is seen to its real edges', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 4]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 4.1, 'end', { fps: 25 }), 1.12);
+});
+
+test('a span is silent only when every covered level frame is below the threshold', () => {
   const analysis = analyzeLevels(speechLevels());
   assert.equal(isSilentSpan(analysis, 1.05, 1.06), true);
   assert.equal(isSilentSpan(analysis, 2.6, 2.6), true);
   assert.equal(isSilentSpan(analysis, 0.95, 1.05), false);
   assert.equal(isSilentSpan(analysis, 0.2, 0.6), false);
+  assert.equal(isSilentSpan(analysis, 5, 5.1), false);
+  assert.equal(isSilentSpan(analyzeLevels({ frameSec: 0.01, levels: [] }), 0, 0.1), false);
 });
 
 test('ranges move into pauses and report every moved or unmovable edge', () => {
@@ -126,15 +161,32 @@ test('ranges move into pauses and report every moved or unmovable edge', () => {
     analyses: new Map([['take-01', analysis], ['take-02', analysis]]),
     fps: 25,
   });
-  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.12], [1.2, 2.6], [0.4, 0.6]]);
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.16], [1.16, 2.6], [0.4, 0.6]]);
   assert.equal(result.ranges[0].beat, 'A');
   assert.deepEqual(result.adjustments, [
-    { index: 0, edge: 'end', from: 1.36, to: 1.12, reason: 'pause' },
-    { index: 1, edge: 'start', from: 1.36, to: 1.2, reason: 'pause' },
+    { index: 0, edge: 'end', from: 1.36, to: 1.16, reason: 'pause' },
+    { index: 1, edge: 'start', from: 1.36, to: 1.16, reason: 'pause' },
     { index: 1, edge: 'end', from: 2.4, to: 2.6, reason: 'pause' },
     { index: 2, edge: 'start', from: 0.4, to: 0.4, reason: 'no-pause' },
     { index: 2, edge: 'end', from: 0.6, to: 0.6, reason: 'no-pause' },
   ]);
+});
+
+test('touching pieces of one take share one cut, so no word between pauses is lost', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.2, end: 2.9, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.04], [1.04, 2.9]]);
+});
+
+test('overlapping agent ranges still fail instead of being hidden by pause cuts', () => {
+  const analysis = analyzeLevels(speechLevels());
+  assert.throws(() => snapRangesToPauses([
+    { take: 'take-01', start: 0, end: 1.4, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.3, end: 2.5, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 }), /ranges\[1\] overlaps ranges\[0\] in take-01/);
 });
 
 test('a range that would collapse or overlap keeps its original edges', () => {
@@ -157,7 +209,14 @@ test('a range that would collapse or overlap keeps its original edges', () => {
   );
 });
 
-test('edges at the file boundaries are not reported and takes without levels are untouched', () => {
+test('edges at or past the file boundaries stay and takes without levels are untouched', () => {
+  const analysis = analyzeLevels(speechLevels());
+  const pastEnd = snapRangesToPauses(
+    [{ take: 'take-01', start: 1.2, end: 3.2, beat: 'A', reason: 'x' }],
+    { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 },
+  );
+  assert.deepEqual(pastEnd.ranges.map(({ start, end }) => [start, end]), [[1.2, 3.2]]);
+  assert.deepEqual(pastEnd.adjustments, []);
   const tone = analyzeLevels({ frameSec: 0.01, levels: new Array(300).fill(-20) });
   const edges = snapRangesToPauses(
     [{ take: 'take-01', start: 0, end: 3, beat: 'A', reason: 'x' }],
@@ -185,15 +244,19 @@ const { frameRateFromFps, frameToSeconds } = require('../review/media-time');
 // Окно 10 мс видит паузу между словами и не размазывает её соседними словами.
 const LEVEL_FRAME_SEC = 0.01;
 const SILENCE_FLOOR_DB = -120;
-// Граница двигается только в паузу не дальше этого расстояния от точки, выбранной агентом.
+// Паузу ищем не дальше этого расстояния от границы, выбранной агентом.
 const PAUSE_SEARCH_SEC = 0.25;
-// Сколько тишины оставить у края куска: конец чуть после последнего слова, начало чуть до первого.
+// Сколько тишины оставить у края куска, когда граница уходит в паузу рядом.
 const PAUSE_LEAD_SEC = 0.1;
-// Паузу собираем с запасом за окном поиска, чтобы видеть её настоящие края.
-const RUN_CONTEXT_SEC = 1;
+// Провал короче 50 мс чаще смычка согласного внутри слова, чем пауза между словами.
+const MIN_PAUSE_SEC = 0.05;
+// Разрез не ставим ближе к речи: иначе 40-мс затухание звука на краю куска ляжет на слово.
+const MIN_MARGIN_SEC = 0.04;
+// Пауза на неожиданной стороне границы выигрывает, только если она ближе на столько.
+const SIDE_BIAS_SEC = 0.1;
 
 function levelsFromPcm(buffer, { sampleRate = 16000, frameSec = LEVEL_FRAME_SEC } = {}) {
-  const samplesPerFrame = Math.round(sampleRate * frameSec);
+  const samplesPerFrame = Math.max(1, Math.round(sampleRate * frameSec));
   const frameCount = Math.floor(Math.floor(buffer.length / 2) / samplesPerFrame);
   const levels = new Array(frameCount);
   for (let frame = 0; frame < frameCount; frame += 1) {
@@ -206,7 +269,7 @@ function levelsFromPcm(buffer, { sampleRate = 16000, frameSec = LEVEL_FRAME_SEC 
     const rms = Math.sqrt(sum / samplesPerFrame);
     levels[frame] = rms > 0 ? Math.max(SILENCE_FLOOR_DB, 20 * Math.log10(rms)) : SILENCE_FLOOR_DB;
   }
-  return { frameSec, levels };
+  return { frameSec: samplesPerFrame / sampleRate, levels };
 }
 
 function percentile(sorted, fraction) {
@@ -215,138 +278,186 @@ function percentile(sorted, fraction) {
   return sorted[index];
 }
 
-// Тишина: на 35 дБ тише обычной речи дубля или не громче 15 дБ над его шумом, но никогда не
-// громче -30 dBFS. Так порог подходит и студийной записи (шум около -90), и телефону (около -50).
+// Тишина: не громче 15 дБ над шумом дубля (10-й процентиль) или на 35 дБ тише его речи
+// (90-й процентиль), но всегда хотя бы на 20 дБ тише речи и не громче -30 dBFS. Ограничение
+// от речи не даёт порогу подняться в речь на дубле почти без пауз.
 function pauseThresholdDb(levels) {
   const sorted = [...levels].sort((left, right) => left - right);
   const noise = percentile(sorted, 0.1);
   const speech = percentile(sorted, 0.9);
-  return Math.min(-30, Math.max(noise + 15, speech - 35));
+  return Math.min(-30, speech - 20, Math.max(noise + 15, speech - 35));
 }
 
 function analyzeLevels({ frameSec, levels }) {
   return { frameSec, levels, thresholdDb: pauseThresholdDb(levels) };
 }
 
+// Паузу расширяем до её настоящих краёв, даже если она выходит за окно поиска.
 function silentRuns({ levels, frameSec, thresholdDb }, fromSec, toSec) {
+  const silent = (index) => index >= 0 && index < levels.length && levels[index] < thresholdDb;
   const first = Math.max(0, Math.floor(fromSec / frameSec));
   const last = Math.min(levels.length - 1, Math.ceil(toSec / frameSec));
   const runs = [];
-  let runStart = null;
-  for (let index = first; index <= last + 1; index += 1) {
-    const silent = index <= last && levels[index] < thresholdDb;
-    if (silent && runStart === null) runStart = index;
-    if (!silent && runStart !== null) {
-      runs.push({ start: runStart * frameSec, end: index * frameSec });
-      runStart = null;
+  let index = first;
+  while (index <= last) {
+    if (!silent(index)) {
+      index += 1;
+      continue;
     }
+    let start = index;
+    while (silent(start - 1)) start -= 1;
+    let end = index;
+    while (silent(end + 1)) end += 1;
+    runs.push({ start: start * frameSec, end: (end + 1) * frameSec });
+    index = end + 1;
   }
   return runs;
 }
 
+// Звук вне уровней неизвестен и тишиной не считается.
 function isSilentSpan(analysis, start, end) {
   const first = Math.max(0, Math.floor(start / analysis.frameSec + 1e-9));
   const last = Math.max(first, Math.ceil(end / analysis.frameSec - 1e-9) - 1);
-  for (let index = first; index <= last && index < analysis.levels.length; index += 1) {
+  if (last >= analysis.levels.length) return false;
+  for (let index = first; index <= last; index += 1) {
     if (analysis.levels[index] >= analysis.thresholdDb) return false;
   }
   return true;
 }
 
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
+}
+
 // Whisper растягивает конец слова в паузу и начинает слово раньше паузы. Поэтому конец куска
-// сначала ищет паузу до себя, начало – после себя; если там паузы нет, берётся другая сторона.
-// Точка ставится на границу видеокадра внутри паузы, чтобы кадровое округление её не сдвинуло.
+// предпочитает паузу до себя, начало – после себя; пауза с другой стороны выигрывает, только если
+// она ближе на SIDE_BIAS_SEC. Общий разрез двух соседних кусков одного дубля ('joint') берёт
+// ближайшую паузу и встаёт в её середину. Точка ставится на границу видеокадра внутри паузы.
 function findPauseCut(analysis, time, edge, {
   fps,
   searchSec = PAUSE_SEARCH_SEC,
   leadSec = PAUSE_LEAD_SEC,
 } = {}) {
+  const audioEnd = analysis.levels.length * analysis.frameSec;
+  if (!(time >= 0 && time <= audioEnd)) return null;
   const rate = frameRateFromFps(fps);
   const frameRate = rate.numerator / rate.denominator;
-  const minPause = Math.max(0.03, 1 / frameRate);
-  const rank = (run) => {
-    if (run.distance === 0) return 0;
+  const minPause = Math.max(MIN_PAUSE_SEC, 1 / frameRate);
+  const score = (run) => {
+    if (run.distance === 0 || edge === 'joint') return run.distance;
     const preferred = edge === 'end' ? run.end <= time : run.start >= time;
-    return preferred ? 1 : 2;
+    return run.distance + (preferred ? 0 : SIDE_BIAS_SEC);
   };
-  const [run] = silentRuns(analysis, time - searchSec - RUN_CONTEXT_SEC, time + searchSec + RUN_CONTEXT_SEC)
+  const [run] = silentRuns(analysis, time - searchSec, time + searchSec)
     .filter((candidate) => candidate.end - candidate.start >= minPause - 1e-9)
     .map((candidate) => ({
       ...candidate,
       distance: time < candidate.start ? candidate.start - time : Math.max(0, time - candidate.end),
     }))
     .filter((candidate) => candidate.distance <= searchSec + 1e-9)
-    .sort((left, right) => rank(left) - rank(right) || left.distance - right.distance);
+    .sort((left, right) => score(left) - score(right) || left.distance - right.distance);
   if (!run) return null;
-  const margin = Math.min(leadSec, (run.end - run.start) / 2);
-  const target = run.distance === 0 ? time : (edge === 'end' ? run.start + margin : run.end - margin);
-  const firstFrame = Math.ceil(run.start * frameRate - 1e-6);
-  const lastFrame = Math.floor(run.end * frameRate + 1e-6);
-  if (firstFrame > lastFrame) return null;
-  return frameToSeconds(Math.min(lastFrame, Math.max(firstFrame, Math.round(target * frameRate))), rate);
+  const length = run.end - run.start;
+  const margin = Math.min(MIN_MARGIN_SEC, length / 2);
+  let target;
+  if (run.distance === 0) target = time;
+  else if (edge === 'joint') target = (run.start + run.end) / 2;
+  else {
+    const lead = Math.min(leadSec, length / 2);
+    target = edge === 'end' ? run.start + lead : run.end - lead;
+  }
+  const innerFirst = Math.ceil((run.start + margin) * frameRate - 1e-6);
+  const innerLast = Math.floor((run.end - margin) * frameRate + 1e-6);
+  const first = innerFirst <= innerLast ? innerFirst : Math.ceil(run.start * frameRate - 1e-6);
+  const last = innerFirst <= innerLast ? innerLast : Math.floor(run.end * frameRate + 1e-6);
+  if (first > last) return null;
+  return frameToSeconds(clamp(Math.round(target * frameRate), first, last), rate);
 }
 
-function keptEdges(range, index) {
-  return [
-    { index, edge: 'start', from: range.start, to: range.start, reason: 'kept' },
-    { index, edge: 'end', from: range.end, to: range.end, reason: 'kept' },
-  ];
+function assertNoRawOverlap(ranges) {
+  ranges.forEach((range, index) => {
+    for (let other = 0; other < index; other += 1) {
+      const previous = ranges[other];
+      if (previous.take === range.take && range.start < previous.end && previous.start < range.end) {
+        throw new Error(`ranges[${index}] overlaps ranges[${other}] in ${range.take}`);
+      }
+    }
+  });
 }
 
+// Пересечение, которое сделал агент, остаётся ошибкой, а не превращается в потерю речи.
+// Конец одного куска и начало другого куска того же дубля в одной точке – один разрез.
+// Если сдвиг схлопывает кусок или создаёт новое пересечение, кусок и его соседи по стыку
+// возвращаются к исходным границам.
 function snapRangesToPauses(ranges, { takes, analyses, fps }) {
+  assertNoRawOverlap(ranges);
   const frameDuration = 1 / fps;
-  const adjustments = [];
+  const partners = ranges.map(() => []);
+  ranges.forEach((range, index) => ranges.forEach((other, otherIndex) => {
+    if (index !== otherIndex && range.take === other.take && Math.abs(range.end - other.start) <= 1e-9) {
+      partners[index].push(otherIndex);
+      partners[otherIndex].push(index);
+    }
+  }));
+  const isJoint = (index, edge) => ranges.some((other, otherIndex) => otherIndex !== index
+    && other.take === ranges[index].take
+    && Math.abs((edge === 'end' ? other.start : other.end) - ranges[index][edge]) <= 1e-9);
+  const notes = [];
   const snapped = ranges.map((range, index) => {
     const analysis = analyses.get(range.take);
     if (!analysis) return { ...range };
     const take = takes.get(range.take);
-    const edges = {};
-    const notes = [];
+    const next = { ...range };
     for (const edge of ['start', 'end']) {
       const from = range[edge];
-      const to = findPauseCut(analysis, from, edge, { fps });
-      // Край файла – естественная граница, без паузы рядом он не считается ошибкой.
       const atFileEdge = edge === 'start'
         ? from <= (take.usableStart || 0) + frameDuration
         : from >= take.duration - frameDuration;
+      if (atFileEdge) continue;
+      const to = findPauseCut(analysis, from, isJoint(index, edge) ? 'joint' : edge, { fps });
       if (to === null) {
-        edges[edge] = from;
-        if (!atFileEdge) notes.push({ index, edge, from, to: from, reason: 'no-pause' });
+        notes.push({ index, edge, from, to: from, reason: 'no-pause' });
       } else {
-        edges[edge] = to;
+        next[edge] = to;
         if (Math.abs(to - from) > 1e-9) notes.push({ index, edge, from, to, reason: 'pause' });
       }
     }
-    if (edges.end - edges.start < frameDuration) {
-      adjustments.push(...keptEdges(range, index));
-      return { ...range };
-    }
-    adjustments.push(...notes);
-    return { ...range, start: edges.start, end: edges.end };
+    return next;
   });
-  // Сдвиг в паузу не должен создать пересечение кусков одного дубля, которого не было у агента:
-  // тогда оба куска возвращаются к исходным границам.
+  const kept = new Set();
+  const revert = (index) => {
+    if (kept.has(index)) return;
+    kept.add(index);
+    snapped[index] = { ...ranges[index] };
+    for (const partner of partners[index]) revert(partner);
+  };
+  snapped.forEach((range, index) => {
+    if (range.end - range.start < frameDuration) revert(index);
+  });
   const overlaps = (left, right) => left.take === right.take
     && left.start < right.end && right.start < left.end;
-  const kept = new Set();
   let changed = true;
   while (changed) {
     changed = false;
     for (let index = 0; index < snapped.length; index += 1) {
       for (let other = 0; other < index; other += 1) {
-        if (!overlaps(snapped[index], snapped[other]) || overlaps(ranges[index], ranges[other])) continue;
-        for (const revert of [index, other]) {
-          snapped[revert] = { ...ranges[revert] };
-          kept.add(revert);
-        }
-        changed = true;
+        if (!overlaps(snapped[index], snapped[other])) continue;
+        const before = kept.size;
+        revert(index);
+        revert(other);
+        if (kept.size !== before) changed = true;
       }
     }
   }
-  const final = adjustments.filter((item) => !kept.has(item.index));
-  for (const index of kept) final.push(...keptEdges(ranges[index], index));
-  final.sort((left, right) => left.index - right.index || (left.edge === 'start' ? -1 : 1));
-  return { ranges: snapped, adjustments: final };
+  const adjustments = notes.filter((item) => !kept.has(item.index));
+  for (const index of kept) {
+    adjustments.push(
+      { index, edge: 'start', from: ranges[index].start, to: ranges[index].start, reason: 'kept' },
+      { index, edge: 'end', from: ranges[index].end, to: ranges[index].end, reason: 'kept' },
+    );
+  }
+  adjustments.sort((left, right) => left.index - right.index || (left.edge === 'start' ? -1 : 1));
+  return { ranges: snapped, adjustments };
 }
 
 module.exports = {
@@ -365,7 +476,7 @@ module.exports = {
 - [ ] **Step 3: Проверить**
 
 Run: `node --test tests/take-pauses.test.js`
-Expected: PASS (7 tests).
+Expected: PASS (12 tests).
 
 - [ ] **Step 4: Commit**
 
@@ -486,7 +597,7 @@ function readTakeLevels(filePath, {
 - [ ] **Step 3: Проверить**
 
 Run: `node --test tests/take-pauses.test.js` и `PATH="/opt/homebrew/opt/ffmpeg@7/bin:$PATH" node --test tests/take-pauses.test.js`
-Expected: PASS (9 tests) на обоих FFmpeg, реальный тест не пропущен.
+Expected: PASS (14 tests) на обоих FFmpeg, реальный тест не пропущен.
 
 - [ ] **Step 4: Commit**
 
@@ -731,7 +842,7 @@ const { analyzeLevels, isSilentSpan, snapRangesToPauses } = require('./take-paus
   const analyses = new Map();
   for (const take of used) {
     const levels = readTakeLevelsImpl(take.filePath, { stage: `${take.id} levels` });
-    if (levels) analyses.set(take.id, analyzeLevels(levels));
+    if (levels && levels.levels.length) analyses.set(take.id, analyzeLevels(levels));
   }
   const paused = snapRangesToPauses(normalized.ranges, { takes, analyses, fps: first.fps });
   const ranges = snapTakeRanges(paused.ranges, { fps: first.fps, takes });
@@ -762,10 +873,11 @@ const { analyzeLevels, isSilentSpan, snapRangesToPauses } = require('./take-paus
 
 ```js
     joints,
+    // Для сдвинутой границы показываем итоговую точку после кадрового выравнивания.
     pauseAdjustments: paused.adjustments.map((item) => ({
       ...item,
       from: roundedTime(item.from, first.fps),
-      to: roundedTime(item.to, first.fps),
+      to: roundedTime(item.reason === 'pause' ? ranges[item.index][item.edge] : item.to, first.fps),
     })),
 ```
 
@@ -1048,10 +1160,11 @@ git commit -m "docs: teach reel-turnkey pause cuts and one video from different 
 ```markdown
 Границы кусков по таймингам Whisper на живой пробе попали внутрь слова в 3 случаях из 8, и
 повторная расшифровка master этого не заметила. Поэтому master сам сдвигает каждую границу в
-ближайшую паузу по уровню звука дубля: окна по 10 мс, тишина на 35 дБ тише речи дубля или не
-громче 15 дБ над его шумом (не выше -30 dBFS), поиск не дальше 0.25 с, до 0.1 с тишины у края.
-Конец куска ищет паузу сначала до себя, начало после себя, потому что Whisper растягивает слова в
-паузы. Граница без паузы рядом остаётся на месте и печатается. Слова в тишине на краях куска
+ближайшую паузу по уровню звука дубля: окна по 10 мс; тишина не громче 15 дБ над шумом дубля или
+на 35 дБ тише его речи, но всегда хотя бы на 20 дБ тише речи и не выше -30 dBFS; пауза не короче
+50 мс; поиск не дальше 0.25 с; у края куска до 0.1 с тишины и не меньше 40 мс до речи. Конец куска
+предпочитает паузу до себя, начало после себя, потому что Whisper растягивает слова в паузы.
+Стык соседних кусков одного дубля – один общий разрез, иначе слово между двумя паузами терялось. Граница без паузы рядом остаётся на месте и печатается. Слова в тишине на краях куска
 считаются галлюцинациями Whisper и в транскрипт не попадают. Отклонены только инструкция агенту
 (агент не слышит звук, ручная проверка трудоёмка) и повторная расшифровка master (обрывки не ловит).
 ```
