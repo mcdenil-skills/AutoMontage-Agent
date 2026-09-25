@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Все ролики AutoMontage в одном окне">
+    <title>Пульт роликов · AutoMontage</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="pult-header">
+      <h1>Пульт роликов</h1>
+      <label class="search">
+        <span class="visually-hidden">Поиск по названию</span>
+        <input type="search" placeholder="Найти ролик…" autocomplete="off" data-search>
+      </label>
+      <nav class="tabs" aria-label="Разделы">
+        <button type="button" class="tab" data-tab="main" aria-pressed="true">Ролики</button>
+        <button type="button" class="tab" data-tab="archive" aria-pressed="false">Архив <span data-count="archive">0</span></button>
+        <button type="button" class="tab" data-tab="unregistered" aria-pressed="false" hidden>Без паспорта <span data-count="unregistered">0</span></button>
+        <button type="button" class="tab" data-tab="broken" aria-pressed="false" hidden>Не читается <span data-count="broken">0</span></button>
+      </nav>
+    </header>
+    <p class="notice" role="status" data-notice hidden></p>
+    <main class="pult-main">
+      <section data-view="list"></section>
+      <section data-view="detail" hidden></section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

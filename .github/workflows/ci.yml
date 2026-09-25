@@ -121,6 +121,10 @@ jobs:
         shell: pwsh
         run: node --test --test-name-pattern='a real import process keeps a second process out|setup failure removes only|clean setup failure removes|setup root|orphan cleanup never treats' tests/review-import-ownership.test.js
 
+      - name: Проверить пульт роликов
+        shell: pwsh
+        run: node --test (Get-ChildItem tests/pult-*.test.js).FullName
+
   review-ui:
     name: Node 20 · Review Chromium tests
     runs-on: ubuntu-latest
