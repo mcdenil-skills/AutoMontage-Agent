@@ -36,6 +36,15 @@ test('AGENTS.md defines what counts as the user\'s request for an archived appro
   assert.match(text, /после возврата карточки из архива пометка исчезает сама/u);
 });
 
+// Явное «утверждаю» в чате названо основанием для final отдельным правилом ниже («Основание
+// для final – … его явное «утверждаю» в чате»); без этой фразы правило «не начинай без
+// просьбы пользователя» читалось бы так, будто нужно ждать ЕЩЁ одну, отдельную просьбу даже
+// после явного «утверждаю» в этом же чате.
+test('AGENTS.md says an explicit "утверждаю" in the current chat is itself the request', () => {
+  const text = read('AGENTS.md');
+  assert.match(text, /Явное\s+«утверждаю»\s+в\s+текущем\s+чате\s+уже\s+и\s+есть\s+просьба/u);
+});
+
 for (const file of ['AGENTS.md', 'skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md', 'skills/motion-reel/SKILL.md']) {
   test(`${file} explains --accept takes a folder name without the projects/ prefix`, () => {
     const text = read(file);

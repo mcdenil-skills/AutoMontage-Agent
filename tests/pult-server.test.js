@@ -698,8 +698,8 @@ test('approving one variant of an archived group card returns the whole card fro
 
 // Обратный порядок действий – утвердили, потом убрали в архив: карточка получает честную
 // надпись, флаг для подписи плеера и попадает во входящих с пометкой «в архиве»
-// (scripts/pult/inbox.js). Удаление поля archivedNeedsFinal у browserVariant в server.js или
-// удаление его проверки в videoLabelFor (pult/app.js) не должно ронять этот и следующий тест.
+// (scripts/pult/inbox.js). Удаление поля archivedNeedsFinal из browserVariant (server.js)
+// должно ронять этот и следующий тест; ветку videoLabelFor в app.js ловит Playwright-тест.
 test('approving then archiving a card shows the honest next step, the flag and the inbox marker', async (t) => {
   const projectsDir = await standardRoot(t);
   const { session } = await startTest(t, projectsDir);
@@ -711,7 +711,10 @@ test('approving then archiving a card shows the honest next step, the flag and t
   assert.equal(card.nextStep, 'Утверждено, в архиве – агент соберёт финал по вашей просьбе');
   assert.equal(card.variants[0].archivedNeedsFinal, true);
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir });
-  assert.match(text, /в архиве/);
+  assert.match(
+    text,
+    /- Утверждено \(в архиве – не начинай без просьбы пользователя\): `brief\/v\d{2}-approved\.lesson\.json`\. По просьбе пользователя – собери финал и проведи полный QA\./,
+  );
 });
 
 // Новая правка после утверждения и архивации – nextStep остаётся «Ждёт агента: …» (это новая
