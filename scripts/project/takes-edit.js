@@ -65,6 +65,8 @@ function snapTakeRanges(ranges, { fps, takes }) {
     }
     return {
       ...range,
+      requestedStart: range.start,
+      requestedEnd: range.end,
       startFrame,
       endFrame,
       start: frameToSeconds(startFrame, rate),
@@ -121,11 +123,40 @@ function dropClippedSlivers(words, range, fps) {
   });
 }
 
-function remapTakeRangesTranscript(ranges, wordsByTake, fps) {
+// Кадровое округление может расширить кусок на долю кадра за пределы того, что просил агент
+// (или что выбрал поиск паузы). Слово целиком в этом расширении никто не выбирал, часто это
+// галлюцинация Whisper на тишине, поэтому такое слово в транскрипт не переносится.
+function dropOutsideRequested(words, range) {
+  if (!Array.isArray(words)
+    || !Number.isFinite(range.requestedStart) || !Number.isFinite(range.requestedEnd)) {
+    return words;
+  }
+  return words.filter((word) => word.e > range.requestedStart && word.s < range.requestedEnd);
+}
+
+// Whisper на тишине иногда «слышит» слова («Продолжение следует»). На краях куска такие слова
+// лежат целиком в паузе: их убираем с начала и с конца куска, слова внутри куска не трогаем.
+function trimSilentEdgeWords(words, range, isSilent) {
+  if (!Array.isArray(words) || typeof isSilent !== 'function') return words;
+  const inside = words
+    .filter((word) => word.e > range.start && word.s < range.end)
+    .sort((left, right) => left.s - right.s || left.e - right.e);
+  let first = 0;
+  let last = inside.length - 1;
+  while (first <= last && isSilent(inside[first])) first += 1;
+  while (last >= first && isSilent(inside[last])) last -= 1;
+  return inside.slice(first, last + 1);
+}
+
+function remapTakeRangesTranscript(ranges, wordsByTake, fps, { isSilentWord = null } = {}) {
   const words = [];
   let offset = 0;
   for (const range of ranges) {
-    const takeWords = dropClippedSlivers(wordsByTake.get(range.take), range, fps);
+    let takeWords = dropOutsideRequested(wordsByTake.get(range.take), range);
+    takeWords = dropClippedSlivers(takeWords, range, fps);
+    if (isSilentWord) {
+      takeWords = trimSilentEdgeWords(takeWords, range, (word) => isSilentWord(range.take, word));
+    }
     const local = remapTranscriptWords(takeWords, [range], fps);
     for (const word of local) {
       const s = roundedTime(word.s + offset, fps);

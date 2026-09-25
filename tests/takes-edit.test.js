@@ -238,3 +238,34 @@ test('a take reused backwards in time gets its own ffmpeg input', () => {
     ],
   });
 });
+
+test('a word lying only in the frame rounding overhang is not carried over', () => {
+  const longTakes = new Map([['take-01', { id: 'take-01', filePath: 'take-01.mp4', duration: 80 }]]);
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 1, end: 79.58, beat: 'CTA', reason: 'x' }],
+    { fps: 25, takes: longTakes },
+  );
+  assert.equal(ranges[0].end, 79.6);
+  assert.equal(ranges[0].requestedEnd, 79.58);
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'скилл', s: 79, e: 79.34 },
+    { w: 'Продолжение', s: 79.58, e: 79.59 },
+  ]]]), 25);
+  assert.deepEqual(words.map((word) => word.w), ['скилл']);
+});
+
+test('silent words at the edges of a piece are dropped, silent words inside stay', () => {
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 4, end: 6, beat: 'CTA', reason: 'x' }],
+    { fps: 25, takes },
+  );
+  const silent = new Set(['шум', 'и', 'Продолжение']);
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'шум', s: 4, e: 4.05 },
+    { w: 'пока', s: 4.3, e: 4.6 },
+    { w: 'и', s: 4.7, e: 4.72 },
+    { w: 'всё', s: 4.8, e: 5.2 },
+    { w: 'Продолжение', s: 5.9, e: 5.99 },
+  ]]]), 25, { isSilentWord: (takeId, word) => takeId === 'take-01' && silent.has(word.w) });
+  assert.deepEqual(words.map((word) => word.w), ['пока', 'и', 'всё']);
+});
