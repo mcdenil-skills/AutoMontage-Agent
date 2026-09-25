@@ -17,8 +17,6 @@ const PAUSE_LEAD_SEC = 0.1;
 const MIN_PAUSE_SEC = 0.05;
 // Разрез не ставим ближе к речи: иначе 40-мс затухание звука на краю куска ляжет на слово.
 const MIN_MARGIN_SEC = 0.04;
-// Пауза на неожиданной стороне границы выигрывает, только если она ближе на столько.
-const SIDE_BIAS_SEC = 0.1;
 
 function levelsFromPcm(buffer, { sampleRate = 16000, frameSec = LEVEL_FRAME_SEC } = {}) {
   const samplesPerFrame = Math.max(1, Math.round(sampleRate * frameSec));
@@ -97,30 +95,45 @@ function clamp(value, low, high) {
 }
 
 // Разрез не перескакивает через другое слово: между границей и паузой может лежать только звук,
-// который продолжается и по другую сторону границы (хвост или начало слова, внутрь которого
-// Whisper поставил границу). Граница на краю звука или в провале короче паузы уже стоит между
-// словами: пауза за соседним словом для неё недоступна, иначе пропало бы короткое слово или
-// вернулся вырезанный звук.
+// который продолжается по другую сторону границы и лежит там большей частью (правило середины,
+// как у слов на стыке): хвост или начало слова, внутрь которого Whisper поставил границу. Граница
+// на краю звука, в провале короче паузы или у края короткого слова уже стоит между словами: пауза
+// за соседним словом для неё недоступна, иначе пропало бы короткое слово или вернулся вырезанный
+// звук. Граница ровно в середине звука не уходит ни в одну сторону.
 function crossesOnlyCutSound(analysis, time, run) {
   const sound = (index) => index >= 0 && index < analysis.levels.length
     && analysis.levels[index] >= analysis.thresholdDb;
+  const before = run.end <= time;
   // По другую сторону границы звучать должно целое окно уровней, даже если граница вне их сетки.
-  const [first, last] = run.end <= time
+  const [first, last] = before
     ? [Math.round(run.end / analysis.frameSec), Math.ceil(time / analysis.frameSec - 1e-9)]
     : [Math.floor(time / analysis.frameSec + 1e-9) - 1, Math.round(run.start / analysis.frameSec) - 1];
   for (let index = first; index <= last; index += 1) {
     if (!sound(index)) return false;
   }
-  return true;
+  // Правило середины, как у слов на стыке: звук уходит из куска, только если большая его часть
+  // лежит по другую сторону границы. Граница у края короткого слова оставляет слово на месте.
+  // Провал в одно окно уровней внутри звука словом не считается.
+  const crossed = last - first;
+  const step = before ? 1 : -1;
+  let far = 0;
+  for (let index = before ? last : first, gap = 0; far <= crossed && gap < 2; index += step) {
+    if (sound(index)) {
+      far += 1;
+      gap = 0;
+    } else {
+      gap += 1;
+    }
+  }
+  return far > crossed;
 }
 
-// Whisper растягивает конец слова в паузу и начинает слово раньше паузы. Поэтому конец куска
-// предпочитает паузу до себя, начало – после себя; пауза с другой стороны выигрывает, только если
-// она ближе на SIDE_BIAS_SEC. Общий разрез двух соседних кусков одного дубля ('joint') берёт
-// ближайшую паузу и встаёт у её края, ближнего к стыку. Паузу, внутри которой границы нет, берём,
-// только если путь к ней идёт по звуку, который продолжается и по другую сторону границы
-// (crossesOnlyCutSound): иначе сдвиг перескочил бы через соседнее слово. Без доступной паузы
-// граница остаётся на месте. Точка ставится на границу видеокадра внутри паузы.
+// Сторону паузы выбирает сам звук, а не тип края и не привычка Whisper растягивать слова: граница
+// в звуке уходит в паузу через меньшую часть этого звука (crossesOnlyCutSound), граница в паузе
+// остаётся в ней. Конец куска оставляет около PAUSE_LEAD_SEC тишины после своей речи, начало –
+// перед своей, а общий разрез двух соседних кусков одного дубля ('joint') встаёт у края паузы,
+// ближнего к стыку. Без доступной паузы граница остаётся на месте. Точка ставится на границу
+// видеокадра внутри паузы.
 function findPauseCut(analysis, time, edge, {
   fps,
   searchSec = PAUSE_SEARCH_SEC,
@@ -131,20 +144,18 @@ function findPauseCut(analysis, time, edge, {
   const rate = frameRateFromFps(fps);
   const frameRate = rate.numerator / rate.denominator;
   const minPause = Math.max(MIN_PAUSE_SEC, 1 / frameRate);
-  const score = (run) => {
-    if (run.distance === 0 || edge === 'joint') return run.distance;
-    const preferred = edge === 'end' ? run.end <= time : run.start >= time;
-    return run.distance + (preferred ? 0 : SIDE_BIAS_SEC);
-  };
-  const [run] = silentRuns(analysis, time - searchSec, time + searchSec)
+  // Доступна не больше чем одна пауза: граница в паузе достаёт только её (путь к другой лежит через
+  // тишину), граница в провале короче паузы – ни одной, а граница в звуке – только паузу со стороны
+  // меньшей части этого звука: правило середины не пускает через большую часть, а путь дальше лежит
+  // через тишину. Поэтому выбирать между паузами не нужно.
+  const run = silentRuns(analysis, time - searchSec, time + searchSec)
     .filter((candidate) => candidate.end - candidate.start >= minPause - 1e-9)
     .map((candidate) => ({
       ...candidate,
       distance: time < candidate.start ? candidate.start - time : Math.max(0, time - candidate.end),
     }))
-    .filter((candidate) => candidate.distance <= searchSec + 1e-9)
-    .filter((candidate) => candidate.distance === 0 || crossesOnlyCutSound(analysis, time, candidate))
-    .sort((left, right) => score(left) - score(right) || left.distance - right.distance);
+    .find((candidate) => candidate.distance <= searchSec + 1e-9
+      && (candidate.distance === 0 || crossesOnlyCutSound(analysis, time, candidate)));
   if (!run) return null;
   const length = run.end - run.start;
   const margin = Math.min(MIN_MARGIN_SEC, length / 2);
@@ -158,9 +169,11 @@ function findPauseCut(analysis, time, edge, {
   let first = innerFirst;
   let last = innerLast;
   if (innerFirst > innerLast) {
-    // Короткая пауза не вмещает отступы с обеих сторон: разрез встаёт ближе к её середине,
-    // чтобы затухание на краю куска не легло на слово.
-    target = (run.start + run.end) / 2;
+    // Короткая пауза не вмещает отступы с обеих сторон: отступ получает речь, которая остаётся в
+    // куске (конец куска встаёт у конца паузы, начало – у её начала), а общий разрез – середина
+    // паузы.
+    if (edge === 'joint') target = (run.start + run.end) / 2;
+    else target = edge === 'end' ? run.end : run.start;
     first = Math.ceil(run.start * frameRate - 1e-6);
     last = Math.floor(run.end * frameRate + 1e-6);
   }

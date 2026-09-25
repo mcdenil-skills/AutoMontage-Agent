@@ -72,13 +72,17 @@ test('a cut inside speech moves to the nearest pause on the video frame grid', (
   assert.equal(findPauseCut(analysis, 3.2, 'end', { fps: 25 }), null);
 });
 
-test('the expected side wins unless the other pause is clearly closer', () => {
-  // Конец куска ищет паузу сначала до себя.
-  const preferred = analyzeLevels(levelsWithPauses([[0.95, 1.05], [1.17, 1.27]]));
-  assert.equal(findPauseCut(preferred, 1.12, 'end', { fps: 25 }), 1);
-  // Но пауза сразу после границы бьёт далёкий провал до неё.
-  const closer = analyzeLevels(levelsWithPauses([[0.9, 0.98], [1.2, 1.3]]));
-  assert.equal(findPauseCut(closer, 1.17, 'end', { fps: 25 }), 1.24);
+test('an edge inside a sound cuts at the pause on the side of the smaller part', () => {
+  // Пауза 0.95-1.05, звук 1.05-1.17, пауза 1.17-1.27. Сторону выбирает звук, а не тип края:
+  // разрез уходит через меньшую часть звука, а ровно в его середине (1.11) паузы нет.
+  const analysis = analyzeLevels(levelsWithPauses([[0.95, 1.05], [1.17, 1.27]]));
+  assert.equal(findPauseCut(analysis, 1.08, 'end', { fps: 25 }), 1);
+  assert.equal(findPauseCut(analysis, 1.08, 'start', { fps: 25 }), 1);
+  assert.equal(findPauseCut(analysis, 1.14, 'end', { fps: 25 }), 1.24);
+  assert.equal(findPauseCut(analysis, 1.14, 'start', { fps: 25 }), 1.2);
+  for (const edge of ['end', 'start', 'joint']) {
+    assert.equal(findPauseCut(analysis, 1.11, edge, { fps: 25 }), null, edge);
+  }
 });
 
 test('dips shorter than 50 ms are not pauses and cuts keep a margin from speech', () => {
@@ -94,17 +98,33 @@ test('a short pause of the live probe still yields a frame cut inside it', () =>
   assert.equal(findPauseCut(analysis, 3.57, 'end', { fps: 25 }), 3.52);
 });
 
-test('a pause too short for both margins puts the cut near its middle, not next to speech', () => {
-  // Пауза 3.18-3.24 при 60 fps: середина 3.21 ближе всего к кадру 193, а не к 3.1833 у края речи.
+test('a pause too short for both margins gives the margin to the speech kept in the piece', () => {
+  // Пауза 3.18-3.24 при 60 fps вмещает кадры 191-194. Конец куска встаёт у конца паузы, дальше
+  // всего от своей речи до неё, а не в 3.1833 у края этой речи.
   const analysis = analyzeLevels(levelsWithPauses([[3.18, 3.24]], { duration: 5 }));
-  assert.equal(findPauseCut(analysis, 3.18, 'end', { fps: 60 }), 193 / 60);
+  assert.equal(findPauseCut(analysis, 3.18, 'end', { fps: 60 }), 194 / 60);
+});
+
+test('a start edge in a short pause takes its earliest frame', () => {
+  // Пауза 3.18-3.26 при 25 fps вмещает кадры 3.20 и 3.24: начало куска встаёт дальше от своей
+  // речи после паузы, и из паузы, и из хвоста прошлого слова.
+  const analysis = analyzeLevels(levelsWithPauses([[3.18, 3.26]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 3.24, 'start', { fps: 25 }), 3.2);
+  assert.equal(findPauseCut(analysis, 3.15, 'start', { fps: 25 }), 3.2);
+});
+
+test('a joint in a short pause takes its middle', () => {
+  // Общий разрез оставляет речь с обеих сторон в кусках, поэтому встаёт в середине паузы 3.18-3.24.
+  const analysis = analyzeLevels(levelsWithPauses([[3.18, 3.24]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 3.18, 'joint', { fps: 60 }), 193 / 60);
 });
 
 test('a pause cut never drops a short word between the pause and the edge', () => {
   // Пауза 2.00-2.10, слово «да» 2.10-2.25, провал 40 мс, дальше речь с 2.29. 2.25 – ровно конец
-  // слова, 2.245 – вне сетки уровней, внутри последнего окна слова.
+  // слова, 2.245 – вне сетки уровней, внутри последнего окна слова. 2.20-2.24 – граница у конца
+  // слова: большая часть «да» лежит до неё, поэтому слово остаётся в куске.
   const analysis = analyzeLevels(levelsWithPauses([[2, 2.1], [2.25, 2.29]]));
-  for (const end of [2.245, 2.25, 2.26, 2.28, 2.3]) {
+  for (const end of [2.2, 2.23, 2.24, 2.245, 2.25, 2.26, 2.28, 2.3]) {
     assert.equal(findPauseCut(analysis, end, 'end', { fps: 25 }), null, String(end));
     assert.equal(findPauseCut(analysis, end, 'joint', { fps: 25 }), null, String(end));
     const result = snapRangesToPauses(
@@ -117,10 +137,29 @@ test('a pause cut never drops a short word between the pause and the edge', () =
 });
 
 test('a pause cut never drops the first word after a short gap', () => {
-  // Речь до 2.00, провал 30 мс, «И» 2.03-2.15, пауза 2.15-2.25, дальше речь.
+  // Речь до 2.00, провал 30 мс, «И» 2.03-2.15, пауза 2.15-2.25, дальше речь. 2.04 и 2.08 – граница
+  // у начала слова: большая часть «И» лежит после неё, поэтому слово остаётся в куске.
   const analysis = analyzeLevels(levelsWithPauses([[2, 2.03], [2.15, 2.25]]));
-  assert.equal(findPauseCut(analysis, 2.03, 'start', { fps: 25 }), null);
-  assert.equal(findPauseCut(analysis, 2.035, 'start', { fps: 25 }), null);
+  for (const start of [2.03, 2.035, 2.04, 2.08]) {
+    assert.equal(findPauseCut(analysis, start, 'start', { fps: 25 }), null, String(start));
+  }
+});
+
+test('the midpoint rule lets an edge cross the smaller part of a short word', () => {
+  // «И» 2.03-2.15 перед паузой 2.15-2.25: начало куска в 2.10 оставило до себя 70 мс слова, а после
+  // себя 50 мс. Большая часть слова уже вне куска, поэтому разрез уходит через хвост в паузу.
+  const analysis = analyzeLevels(levelsWithPauses([[2, 2.03], [2.15, 2.25]]));
+  assert.equal(findPauseCut(analysis, 2.1, 'start', { fps: 25 }), 2.2);
+});
+
+test('a one-window dip inside the sound beyond the edge does not end that sound', () => {
+  // Живой дубль: пауза 5.23-5.31, звук 5.31-5.37, одно окно 5.37-5.38 под порогом (-48 dB при
+  // пороге -47.8 dB), громкая речь 5.38-5.60. Конец куска в 5.35 попал в начало этой речи: провал
+  // в одно окно её не обрывает, большая часть звука лежит после границы, и разрез уходит в паузу.
+  const analysis = analyzeLevels(
+    levelsWithPauses([[5.23, 5.31], [5.37, 5.38], [5.6, 6]], { duration: 6 }),
+  );
+  assert.equal(findPauseCut(analysis, 5.35, 'end', { fps: 25 }), 5.28);
 });
 
 test('a pause cut never brings back a filler the agent cut off', () => {
@@ -131,18 +170,23 @@ test('a pause cut never brings back a filler the agent cut off', () => {
 
 test('an edge inside a word still crosses the rest of that word into the pause', () => {
   // Конец куска попал в начало следующего слова: разрез возвращается в паузу перед ним.
+  // Пауза 3.45-3.54 коротка для отступов с обеих сторон, поэтому конец встаёт у её конца.
   const head = analyzeLevels(levelsWithPauses([[3.45, 3.54], [3.74, 3.9]], { duration: 5 }));
-  assert.equal(findPauseCut(head, 3.57, 'end', { fps: 25 }), 3.48);
+  assert.equal(findPauseCut(head, 3.57, 'end', { fps: 25 }), 3.52);
   // Начало куска попало в хвост прошлого слова: разрез уходит вперёд в паузу после него.
   const tail = analyzeLevels(levelsWithPauses([[68.75, 69.18]], { duration: 70 }));
   assert.equal(findPauseCut(tail, 68.66, 'start', { fps: 25 }), 69.08);
 });
 
-test('an unreachable pause on the expected side yields to a reachable one on the other side', () => {
-  // Пауза 0.90-1.00, слово 1.00-1.10, провал 30 мс, речь, пауза 1.30-1.45: конец куска в 1.16
-  // не может уйти назад через провал, поэтому уходит вперёд.
-  const analysis = analyzeLevels(levelsWithPauses([[0.9, 1], [1.1, 1.13], [1.3, 1.45]]));
-  assert.equal(findPauseCut(analysis, 1.16, 'end', { fps: 25 }), 1.36);
+test('a short dip blocks the pause behind it and the midpoint lets the other side through', () => {
+  // Пауза 0.90-1.02, звук 1.02-1.05, провал 30 мс, звук 1.08-1.20, пауза 1.20-1.35.
+  const analysis = analyzeLevels(levelsWithPauses([[0.9, 1.02], [1.05, 1.08], [1.2, 1.35]]));
+  // В 1.10 большая часть звука до паузы 1.20 лежит впереди, а назад путь идёт через провал:
+  // паузы нет.
+  assert.equal(findPauseCut(analysis, 1.1, 'end', { fps: 25 }), null);
+  // В 1.15 назад по-прежнему мешает провал, а впереди осталась меньшая часть звука: разрез уходит
+  // вперёд.
+  assert.equal(findPauseCut(analysis, 1.15, 'end', { fps: 25 }), 1.28);
 });
 
 test('a long pause is seen to its real edges', () => {
@@ -182,13 +226,17 @@ test('ranges move into pauses and report every moved or unmovable edge', () => {
   ]);
 });
 
-test('touching pieces of one take share one cut, so no word between pauses is lost', () => {
-  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
+test('touching pieces of one take share one cut at the pause edge near the joint', () => {
+  // Длинная пауза 0.50-1.00, стык в 1.03 у начала речи. Порознь конец первого куска встал бы в
+  // начале паузы, а начало второго у её конца, и между кусками выпал бы кусок дубля. Общий разрез
+  // встаёт у края паузы, ближнего к стыку, и куски продолжают друг друга.
+  const analysis = analyzeLevels(levelsWithPauses([[0.5, 1]]));
   const result = snapRangesToPauses([
-    { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
-    { take: 'take-01', start: 1.2, end: 2.9, beat: 'B', reason: 'y' },
+    { take: 'take-01', start: 0.2, end: 1.03, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.03, end: 2.9, beat: 'B', reason: 'y' },
   ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
-  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.04], [1.04, 2.9]]);
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 0.92], [0.92, 2.9]]);
+  assert.equal(result.ranges[0].end, result.ranges[1].start);
 });
 
 test('overlapping agent ranges still fail instead of being hidden by pause cuts', () => {
@@ -243,12 +291,29 @@ test('edges at or past the file boundaries stay and takes without levels are unt
 });
 
 test('pieces of one take less than a frame apart share one cut', () => {
-  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
-  const result = snapRangesToPauses([
+  // Та же длинная пауза 0.50-1.00, куски расходятся на 10 мс (1.02 и 1.03): это тоже один стык.
+  const pause = analyzeLevels(levelsWithPauses([[0.5, 1]]));
+  const shared = snapRangesToPauses([
+    { take: 'take-01', start: 0.2, end: 1.02, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.03, end: 2.9, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', pause]]), fps: 25 });
+  assert.deepEqual(shared.ranges.map(({ start, end }) => [start, end]), [[0.2, 0.92], [0.92, 2.9]]);
+  // Стык 1.205 почти в середине звука 1.10-1.30 паузы не получает. Порознь начало второго куска
+  // ушло бы в паузу 1.30-1.40 и выбросило бы конец слова, а общий разрез держит оба края на месте.
+  const word = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
+  const blocked = snapRangesToPauses([
     { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
     { take: 'take-01', start: 1.21, end: 2.9, beat: 'B', reason: 'y' },
-  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
-  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.36], [1.36, 2.9]]);
+  ], { takes: twoTakes(), analyses: new Map([['take-01', word]]), fps: 25 });
+  assert.deepEqual(blocked.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.2], [1.21, 2.9]]);
+  // Оба края стыка печатаются как граница без паузы, чтобы агент проверил их.
+  assert.deepEqual(
+    blocked.adjustments.map(({ index, edge, reason }) => [index, edge, reason]),
+    [
+      [0, 'start', 'no-pause'], [0, 'end', 'no-pause'],
+      [1, 'start', 'no-pause'], [1, 'end', 'no-pause'],
+    ],
+  );
 });
 
 test('a joint cut stays at the near edge of a long pause', () => {

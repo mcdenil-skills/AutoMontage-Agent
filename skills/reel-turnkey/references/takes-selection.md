@@ -83,9 +83,9 @@
    него (по два окна с каждой стороны) не должно быть звука громче примерно -45 dB (RMS окнами
    по 10 мс: `ffmpeg -ss <стык-0.05>
    -t 0.1 -i input/source-vNN.mp4 -af aresample=16000,asetnsamples=n=160,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level -f null -`;
-   `pts_time` считается от `<стык-0.05>`). В короткой паузе master ставит разрез ближе к её
-   середине, поэтому речь дальше 0.02 с от стыка не дефект. Повторная расшифровка master обрывки
-   слов не ловит. Обрезанное слово, щелчок или повтор исправь новым `edit/vNN-takes.json` до draft.
+   `pts_time` считается от `<стык-0.05>`). В короткой паузе тишины у стыка меньше, поэтому речь
+   дальше 0.02 с от стыка не дефект. Повторная расшифровка master обрывки слов не ловит.
+   Обрезанное слово, щелчок или повтор исправь новым `edit/vNN-takes.json` до draft.
 7. Активный транскрипт уже пересчитан master. Не запускай Whisper заново и не создавай
    `transcript/words.json`: исходник и слова бери из `project.json` (`source.localPath`, например
    `input/source-v02.mp4`, и `transcript.words`, например `transcript/words-v02.json`). Этот же
