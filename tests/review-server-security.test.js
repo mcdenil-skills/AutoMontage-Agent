@@ -16,6 +16,7 @@ const { windowsFileSystem } = require('./helpers/windows-filesystem');
 
 const IMPORT_UUID = '4af36be4-0b26-4e6f-bd48-8bdd2215a4f1';
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const WINDOWS = process.platform === 'win32';
 
 function request(session, pathname, {
   token,
@@ -1609,6 +1610,69 @@ test('current rendered preview is token-protected, ranged, and hash-pinned at re
   fs.writeFileSync(preview.currentPath, Buffer.from('x'.repeat(bytes.length)));
   assert.equal((await request(session, '/media/current-preview', { token: session.token })).status, 404);
 });
+
+// Отменённый Range-запрос к serveFile: браузер рвёт соединение посреди файла (Chrome делает
+// это на каждой перемотке <video>). Если serveFile отдаёт поток через stream.pipe() вместо
+// pipeline(), файловый дескриптор источника остаётся открытым навсегда.
+function cancelRangedMediaRequest(session, pathname, token) {
+  return new Promise((resolve) => {
+    const outgoing = http.request({
+      host: '127.0.0.1',
+      port: session.server.address().port,
+      path: pathname,
+      headers: { authorization: `Bearer ${token}`, range: 'bytes=0-' },
+    }, (response) => {
+      response.once('data', () => outgoing.destroy());
+      response.on('close', resolve);
+      response.on('error', () => {});
+    });
+    outgoing.on('error', () => {});
+    outgoing.end();
+  });
+}
+
+test(
+  'review media streaming releases the file descriptor when a range request is cancelled',
+  { skip: WINDOWS && 'нет /dev/fd на Windows' },
+  async (t) => {
+    const fixture = makeReviewProject(t);
+    // Файл должен быть достаточно большим, чтобы поток ещё читал его, когда клиент рвёт
+    // соединение – иначе передача успевает завершиться раньше отмены и утечка не проявится.
+    // workspace.sourcePath – скопированный внутрь проекта исходник (input/source.mp4),
+    // именно его отдаёт /media/source, а не внешний camera.mp4 из фикстуры.
+    fs.writeFileSync(fixture.workspace.sourcePath, Buffer.alloc(2 * 1024 * 1024, 1));
+    const session = await startTestReviewServer({ root: ROOT, projectDir: fixture.projectDir, open: false });
+    t.after(() => closeServer(session.server));
+
+    const fdCount = () => fs.readdirSync('/dev/fd').length;
+    // Дать осесть хвостовым дескрипторам от предыдущих тестов файла, прежде чем снимать
+    // базовую метку – иначе случайно закрывающийся чужой сокет сдвигает счёт мимо теста.
+    let before = fdCount();
+    for (let stableReadings = 0; stableReadings < 3;) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const reading = fdCount();
+      if (reading === before) stableReadings += 1;
+      else { before = reading; stableReadings = 0; }
+    }
+
+    const ATTEMPTS = 20;
+    for (let i = 0; i < ATTEMPTS; i += 1) {
+      await cancelRangedMediaRequest(session, '/media/source', session.token);
+    }
+
+    // Дать серверу время закрыть файловые дескрипторы после отмены запросов.
+    let after = fdCount();
+    const deadline = Date.now() + 1000;
+    while (after > before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = fdCount();
+    }
+    assert.equal(after, before);
+    // Позитивный случай для того же serveFile (206, точные байты, Content-Range) уже
+    // проверен тестом «current rendered preview is token-protected, ranged, and
+    // hash-pinned at request time» выше – не дублируем его здесь.
+  },
+);
 
 test('current rendered preview refuses a symlink even when its target has registered bytes', async (t) => {
   const fixture = makeReviewProject(t);
