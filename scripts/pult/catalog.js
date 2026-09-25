@@ -192,10 +192,16 @@ function legacyEntries(folder, projectDir, card) {
 }
 
 // Сканирует одну папку и классифицирует её без исключений наружу – сервер вызывает эту
-// функцию и на весь каталог (из scanProjects), и точечно по одному ключу (Task 10), в том
-// числе с именем папки, пришедшим из URL. Поэтому здесь же – полная проверка безопасности
-// имени, а не только та, что уже прошла через listFolders.
+// функцию точечно по одному ключу (Task 10), в том числе с именем папки, пришедшим из URL.
+// Поэтому здесь же – полная проверка безопасности имени, а не только та, что уже прошла
+// через listFolders.
 function scanFolder(projectsDir, folder) {
+  return scanFolderIn(projectsDir, folder, new Set(listFolders(projectsDir)));
+}
+
+// knownFolders – уже прочитанный listFolders(projectsDir): scanProjects читает папку
+// projects/ один раз на весь каталог, а не заново для каждой папки ролика.
+function scanFolderIn(projectsDir, folder, knownFolders) {
   const empty = () => ({ entries: [], unregistered: [], broken: [] });
   if (!isSafeName(folder)) return empty();
   // APFS и NTFS по умолчанию нечувствительны к регистру и нормализации Unicode:
@@ -206,7 +212,7 @@ function scanFolder(projectsDir, folder) {
   // имя из readdir, а не доверяем тому, что нашла файловая система; заодно это и есть
   // проверка «папка реально существует, это каталог и не симлинк», которую раньше
   // делал отдельный lstat – listFolders уже её выполняет.
-  if (!listFolders(projectsDir).includes(folder)) return empty();
+  if (!knownFolders.has(folder)) return empty();
 
   const projectDir = path.join(projectsDir, folder);
 
@@ -271,10 +277,12 @@ function scanProjects({ projectsDir }) {
   const entries = [];
   const unregistered = [];
   const broken = [];
-  for (const folder of listFolders(projectsDir)) {
+  const folders = listFolders(projectsDir);
+  const knownFolders = new Set(folders);
+  for (const folder of folders) {
     let result;
     try {
-      result = scanFolder(projectsDir, folder);
+      result = scanFolderIn(projectsDir, folder, knownFolders);
     } catch (_) {
       result = { entries: [], unregistered: [], broken: [{ folder, error: FOLDER_UNREADABLE_ERROR }] };
     }

@@ -216,6 +216,21 @@ test('scanFolder requires the exact Unicode normalization of an on-disk folder n
   assert.equal(exact.entries[0].key, `${folder}#0`);
 });
 
+// Сервер сканирует каталог на каждый /api/cards: точная сверка имени в scanFolder не должна
+// перечитывать всю папку projects/ ради каждой папки ролика.
+test('scanProjects reads the projects folder once, not once per video folder', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  for (const folder of ['a', 'b', 'c']) addDraftProject(projectsDir, { folder });
+  const original = fs.readdirSync;
+  let listings = 0;
+  t.mock.method(fs, 'readdirSync', function countingReaddir(target, ...rest) {
+    if (path.resolve(String(target)) === path.resolve(projectsDir)) listings += 1;
+    return original.call(this, target, ...rest);
+  });
+  assert.equal(scanProjects({ projectsDir }).entries.length, 3);
+  assert.equal(listings, 1);
+});
+
 test('folderFromKey strips the trailing variant suffix', () => {
   assert.equal(folderFromKey('a#1'), 'a');
   assert.equal(folderFromKey('a'), 'a');

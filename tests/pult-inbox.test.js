@@ -6,7 +6,7 @@ const path = require('node:path');
 const { buildInbox, formatInbox, main, parseInboxOptions } = require('../scripts/pult/inbox');
 const { scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
-const { addDraftProject, makePultRoot } = require('./helpers/pult-projects');
+const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
 
 function withComment(t) {
   const { projectsDir } = makePultRoot(t);
@@ -114,6 +114,76 @@ test('a passport-broken folder without any comments file is not inbox noise', (t
   fs.writeFileSync(path.join(dir, 'project.json'), '{ not valid json');
   const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
   assert.equal(text, 'Во входящих пульта пусто.');
+});
+
+// Подменённый comments.json с escape-последовательностью в пути видео: раньше она уходила
+// в терминал агента как есть (смена заголовка окна, очистка экрана). Теперь такой файл
+// правок считается повреждённым, а в выводе нет ни одного управляющего байта.
+test('a tampered video path with terminal escapes marks the edits file broken instead of printing it', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const dir = addLegacyFolder(projectsDir, 'legacy', {
+    card: { version: 1, legacy: { status: 'ready', variants: [{ label: 'A', video: 'a.mp4' }] } },
+    files: { 'a.mp4': 'x' },
+  });
+  fs.mkdirSync(path.join(dir, 'pult'));
+  fs.writeFileSync(path.join(dir, 'pult', 'comments.json'), JSON.stringify({
+    version: 1,
+    comments: [{
+      id: 'c-1',
+      createdAt: 'x',
+      timeSec: 1,
+      text: 'ok',
+      status: 'new',
+      frame: null,
+      video: { kind: 'final', path: 'a.mp4\u001b]0;PWNED\u0007\u001b[2J', sha256: null },
+    }],
+  }));
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(text, /- Файл правок повреждён: `projects\/legacy\/pult\/comments\.json`/);
+  assert.doesNotMatch(text, /PWNED/);
+  assert.doesNotMatch(text, /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/);
+});
+
+// Имя папки на диске может содержать C1-символ (CSI \u009b): isSafeName отсекает только
+// C0 и DEL. Каждое подставляемое в вывод значение – путь папки, brief, видео, кадра и id –
+// проходит ту же очистку, что и текст правки, а обычные значения печатаются без изменений.
+test('every value printed by the inbox is stripped of control characters', () => {
+  const projectsDir = path.join(path.sep, 'tmp', 'pult-inbox', 'projects');
+  const cwd = path.dirname(projectsDir);
+  const item = (folder, { briefPath, videoPath, id }) => ({
+    folder,
+    title: 'Ролик',
+    approved: [briefPath],
+    commentsBroken: true,
+    passportError: null,
+    comments: [{
+      id,
+      timeSec: 1,
+      text: 'ok',
+      video: { kind: 'preview', path: videoPath, sha256: null },
+      frame: `pult/frames/${id}.jpg`,
+      outdated: false,
+    }],
+  });
+  const dirty = formatInbox([item('clip\u009b2J', {
+    briefPath: 'brief/v01\u001b[2J-approved.lesson.json',
+    videoPath: 'previews/a\u009b.mp4',
+    id: 'c-1\u0007',
+  })], { projectsDir, cwd });
+  assert.doesNotMatch(dirty, /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/);
+  assert.match(dirty, /## Ролик – `projects\/clip 2J`/);
+  assert.match(dirty, /Утверждено: `brief\/v01 \[2J-approved\.lesson\.json`/);
+
+  const clean = formatInbox([item('clip', {
+    briefPath: 'brief/v01-approved.lesson.json',
+    videoPath: 'Мой ролик/финал  v2.mp4',
+    id: 'c-0001',
+  })], { projectsDir, cwd });
+  assert.match(clean, /## Ролик – `projects\/clip`/);
+  assert.match(clean, /- Файл правок повреждён: `projects\/clip\/pult\/comments\.json`/);
+  assert.match(clean, /- Утверждено: `brief\/v01-approved\.lesson\.json`\./);
+  // Путь – не свободный текст: двойной пробел в имени файла остаётся как есть.
+  assert.match(clean, /- Правка `c-0001` на 0:01: «ok»\. Видео: `Мой ролик\/финал {2}v2\.mp4`\. Кадр: `projects\/clip\/pult\/frames\/c-0001\.jpg`\./);
 });
 
 test('comment text is stripped of terminal control characters, plain text stays intact', (t) => {

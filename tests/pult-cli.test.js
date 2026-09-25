@@ -23,6 +23,38 @@ test('pult options', () => {
   }
 });
 
+// Значок всегда запускает `automontage pult` без --projects-dir, то есть открывает projects/
+// рядом с движком. Раньше --projects-dir рядом с --install-shortcut молча игнорировался.
+test('--install-shortcut refuses --projects-dir instead of silently ignoring it', () => {
+  for (const argv of [
+    ['--install-shortcut', '--projects-dir', 'x'],
+    ['--projects-dir', 'x', '--install-shortcut'],
+  ]) {
+    assert.throws(
+      () => parsePultOptions(argv, { root: '/r' }),
+      { message: 'значок всегда открывает папку projects/ рядом с движком – уберите --projects-dir' },
+      JSON.stringify(argv),
+    );
+  }
+  assert.equal(parsePultOptions(['--install-shortcut'], { root: '/r' }).mode, 'install-shortcut');
+});
+
+// Команда целиком завершается с кодом 1 и ничего не создаёт. Домашняя папка подменена на
+// временную: даже если проверка когда-нибудь сломается, значок не попадёт в настоящую.
+test('pult --install-shortcut --projects-dir exits 1 without creating a shortcut', { skip: process.platform === 'win32' }, (t) => {
+  const { base, projectsDir } = makePultRoot(t);
+  const home = path.join(base, 'home');
+  fs.mkdirSync(home);
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, 'scripts', 'pult', 'cli.js'), '--install-shortcut', '--projects-dir', projectsDir],
+    { encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } },
+  );
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /значок всегда открывает папку projects\/ рядом с движком – уберите --projects-dir/);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
 test('main help lists the pult and inbox commands', (t) => {
   const cli = path.join(ROOT, 'scripts', 'cli.js');
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
@@ -40,10 +72,16 @@ test('main help lists the pult and inbox commands', (t) => {
   assert.match(inbox.stdout, /Во входящих пульта пусто/);
 });
 
-test('serve mode registers one instance and removes it on SIGTERM', { skip: process.platform === 'win32' }, async (t) => {
+// Настоящий дочерний сервер: собственный тайм-аут теста не даёт зависшему процессу
+// повесить CI, а уборка добивает его SIGKILL, если он ещё жив.
+test('serve mode registers one instance and removes it on SIGTERM', {
+  skip: process.platform === 'win32',
+  timeout: 30000,
+}, async (t) => {
   const { projectsDir } = makePultRoot(t);
   const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'pult', 'cli.js'), '--serve', '--no-open', '--projects-dir', projectsDir], { stdio: 'ignore' });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  const alive = () => child.exitCode === null && child.signalCode === null;
+  t.after(() => { if (alive()) child.kill('SIGKILL'); });
   let instance = null;
   for (let attempt = 0; attempt < 50 && !instance; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -51,7 +89,8 @@ test('serve mode registers one instance and removes it on SIGTERM', { skip: proc
   }
   assert.ok(instance, 'instance.json appeared');
   assert.equal(await probeHealth(instance.port), true);
-  const exited = new Promise((resolve) => child.once('exit', resolve));
+  // Процесс мог уже выйти сам: тогда события exit больше не будет, ждать его нельзя.
+  const exited = alive() ? new Promise((resolve) => child.once('exit', resolve)) : Promise.resolve();
   child.kill('SIGTERM');
   await exited;
   assert.equal(readInstance(projectsDir), null);

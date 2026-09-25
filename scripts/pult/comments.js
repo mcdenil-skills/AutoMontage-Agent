@@ -24,10 +24,24 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Путь видео из правки печатается агенту в терминал (`automontage inbox`) и адресует файл
+// внутри папки ролика. Поэтому в нём нет управляющих символов (ESC, BEL и другие C0/C1),
+// он не начинается с `/` или `\` и не содержит сегмента `..`: подменённый comments.json
+// не должен ни управлять терминалом, ни указывать за пределы ролика.
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/;
+
+function isSafeVideoPath(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && !CONTROL_CHARS.test(value)
+    && !/^[/\\]/.test(value)
+    && !value.split(/[/\\]/).includes('..');
+}
+
 function isValidVideoRecord(video) {
   return isPlainObject(video)
     && VIDEO_KINDS.has(video.kind)
-    && typeof video.path === 'string'
+    && isSafeVideoPath(video.path)
     && (video.sha256 === null || /^[a-f0-9]{64}$/.test(video.sha256));
 }
 
@@ -82,10 +96,9 @@ function validateInput(projectDir, { timeSec, text, video }) {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (!trimmed) throw new Error('правка: пустой текст');
   if (trimmed.length > MAX_TEXT) throw new Error('правка: слишком длинный текст');
-  if (!video || !VIDEO_KINDS.has(video.kind) || typeof video.path !== 'string'
-    || !(video.sha256 === null || /^[a-f0-9]{64}$/.test(video.sha256))) {
-    throw new Error('правка: неверное видео');
-  }
+  // Та же проверка, что и при чтении: иначе записанная правка сделала бы весь файл
+  // правок нечитаемым.
+  if (!isValidVideoRecord(video)) throw new Error('правка: неверное видео');
   let videoPath;
   try {
     videoPath = resolveProjectPath(projectDir, video.path, {

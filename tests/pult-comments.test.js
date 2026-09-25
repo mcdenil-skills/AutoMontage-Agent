@@ -201,6 +201,61 @@ test('readComments rejects tampered or duplicate entries without touching the fi
   }
 });
 
+// Путь видео из comments.json печатается агенту в терминал (`automontage inbox`). Подменённый
+// файл не должен протащить туда escape-последовательности, абсолютный путь или выход из
+// папки ролика: такая запись делает весь файл нечитаемым, как и другие подделки.
+test('readComments rejects a video path with control characters, a leading slash or a parent segment', (t) => {
+  const dir = project(t);
+  fs.mkdirSync(path.join(dir, 'pult'), { recursive: true });
+  const commentsFile = path.join(dir, 'pult', 'comments.json');
+  const write = (videoPath) => fs.writeFileSync(commentsFile, JSON.stringify({
+    version: 1,
+    comments: [{
+      id: 'c-deadbeef',
+      createdAt: '2026-09-24T12:00:00.000Z',
+      timeSec: 1,
+      text: 'x',
+      video: { ...VIDEO, path: videoPath },
+      frame: null,
+      status: 'new',
+    }],
+  }));
+  const tampered = [
+    'a.mp4\u001b]0;x\u0007\u001b[2J',
+    'previews/a\u009b2J.mp4',
+    'previews/a\u007f.mp4',
+    'previews/a\n.mp4',
+    '/etc/passwd',
+    '\\\\server\\share\\a.mp4',
+    '../outside.mp4',
+    'previews/../../outside.mp4',
+    'previews\\..\\..\\outside.mp4',
+    '..',
+  ];
+  for (const videoPath of tampered) {
+    write(videoPath);
+    assert.throws(() => readComments(dir), /comments\.json/, JSON.stringify(videoPath));
+  }
+  // Обычные пути, в том числе с точками внутри имени и кириллицей, читаются как раньше.
+  for (const videoPath of ['previews/v01-draft-full.mp4', 'out/a..b.mp4', 'Мой ролик/финал  v2.mp4', '..hidden.mp4']) {
+    write(videoPath);
+    assert.equal(readComments(dir)[0].video.path, videoPath);
+  }
+});
+
+// Та же проверка при записи: иначе правка к видео с управляющим символом в имени сделала
+// бы файл правок нечитаемым для всех остальных правок ролика.
+test('addComment refuses a video path with control characters without writing anything', (t) => {
+  const dir = project(t);
+  const odd = 'previews/a\u009bb.mp4';
+  fs.writeFileSync(path.join(dir, ...odd.split('/')), 'video');
+  assert.throws(
+    () => addComment(dir, { timeSec: 1, text: 'x', video: { ...VIDEO, path: odd } }, { captureFrame: () => false }),
+    /правка: неверное видео/,
+  );
+  assert.deepEqual(readComments(dir), []);
+});
+
 // I1 positive: an accepted comment carries an extra acceptedAt field, which read
 // validation must keep allowing.
 test('readComments accepts the extra acceptedAt field written by acceptComment', (t) => {

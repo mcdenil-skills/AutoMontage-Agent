@@ -90,21 +90,28 @@ function buildInbox({ projectsDir }) {
     }));
 }
 
-// Текст правки, название ролика и текст ошибки паспорта попадают прямо в терминал
-// агента как есть. Управляющие байты (ESC, BEL и другие C0/C1) вырезаем до печати:
-// иначе чужой текст в comments.json мог бы вставить ANSI-escape или сменить заголовок
-// терминала. После этого схлопываем пробелы, как и раньше.
+// Всё, что входящие подставляют в вывод, попадает прямо в терминал агента: текст правки,
+// название ролика, ошибка паспорта, пути папки, brief, видео и кадра, id правки.
+// Управляющие байты (ESC, BEL и другие C0/C1) вырезаем из каждого такого значения до
+// печати: иначе чужой текст в comments.json или имя папки с C1-символом могли бы вставить
+// ANSI-escape или сменить заголовок терминала.
+function stripControls(value) {
+  return String(value).replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
+}
+
+// Для свободного текста после этого ещё и схлопываем пробелы, как и раньше. Пути так не
+// трогаем: двойной пробел в имени файла – часть пути.
 function sanitizeText(value) {
-  return String(value).replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ');
+  return stripControls(value).replace(/\s+/g, ' ');
 }
 
 function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
   if (!items.length) return 'Во входящих пульта пусто.';
   const display = (absolute) => {
     const relative = path.relative(cwd, absolute);
-    return relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+    return stripControls(relative && !relative.startsWith('..') && !path.isAbsolute(relative)
       ? relative.split(path.sep).join('/')
-      : absolute;
+      : absolute);
   };
   const lines = ['# Входящие пульта', ''];
   for (const item of items) {
@@ -117,13 +124,15 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
       lines.push(`- Файл правок повреждён: \`${display(path.join(dir, 'pult', 'comments.json'))}\`. Проверь его и попроси автора повторить правки в пульте.`);
     }
     for (const briefPath of item.approved) {
-      lines.push(`- Утверждено: \`${briefPath}\`. Собери финал и проведи полный QA.`);
+      lines.push(`- Утверждено: \`${stripControls(briefPath)}\`. Собери финал и проведи полный QA.`);
     }
     for (const comment of item.comments) {
       const outdated = comment.outdated ? ' (к прежней версии видео)' : '';
       const frame = comment.frame ? ` Кадр: \`${display(path.join(dir, ...comment.frame.split('/')))}\`.` : '';
       const text = sanitizeText(comment.text);
-      lines.push(`- Правка \`${comment.id}\` на ${formatTime(comment.timeSec)}${outdated}: «${text}». Видео: \`${comment.video.path}\`.${frame}`);
+      const id = stripControls(comment.id);
+      const video = stripControls(comment.video.path);
+      lines.push(`- Правка \`${id}\` на ${formatTime(comment.timeSec)}${outdated}: «${text}». Видео: \`${video}\`.${frame}`);
     }
     lines.push('');
   }

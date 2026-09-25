@@ -23,7 +23,8 @@ const USAGE = `Пульт роликов AutoMontage
   automontage inbox                      правки и утверждения из пульта для агента
 
 Опции:
-  --projects-dir <путь>   папка с роликами (по умолчанию projects/ в репозитории)
+  --projects-dir <путь>   папка с роликами (по умолчанию projects/ в репозитории;
+                          значок всегда открывает projects/, с --install-shortcut не указывается)
   --no-open               не открывать окно`;
 
 function parsePultOptions(argv, { root = ROOT } = {}) {
@@ -48,6 +49,11 @@ function parsePultOptions(argv, { root = ROOT } = {}) {
   }
   if (seen.has('--serve') && seen.has('--install-shortcut')) {
     throw new Error('--serve и --install-shortcut нельзя указывать вместе');
+  }
+  // Значок запускает `automontage pult` без опций: другую папку он открыть не сможет,
+  // поэтому молча принять --projects-dir значило бы обмануть ожидание.
+  if (seen.has('--install-shortcut') && seen.has('--projects-dir')) {
+    throw new Error('значок всегда открывает папку projects/ рядом с движком – уберите --projects-dir');
   }
   return options;
 }
