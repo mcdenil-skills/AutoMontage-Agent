@@ -588,19 +588,23 @@ test('card titles stay bold and the handoff hint sits flush', async ({ page }) =
   expect(margins).toEqual(['0px', '0px']);
 });
 
-// document.fonts.check() возвращает true даже для незнакомых семейств в некоторых
-// движках, поэтому проверка ищет настоящий загруженный FontFace с именем Onest, а не
-// только полагается на check(). Кавычки вокруг family снимаем: браузеры отдают либо
-// "Onest", либо Onest в зависимости от того, как шрифт объявлен в @font-face.
+// document.fonts.check('16px Onest') – базовая проверка из плана задачи, но в некоторых
+// движках она возвращает true даже для незнакомых семейств, поэтому она – не единственное
+// доказательство. Настоящее доказательство того, что файл действительно загрузился, –
+// поиск загруженного FontFace с именем Onest в document.fonts. Кавычки вокруг family
+// снимаем: браузеры отдают либо "Onest", либо Onest в зависимости от того, как шрифт
+// объявлен в @font-face.
 test('the pult loads its own Onest font instead of falling back to a system one', async ({ page }) => {
   await page.goto(session.url);
-  const onest = await page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     await document.fonts.ready;
+    const checked = document.fonts.check('16px Onest');
     const face = [...document.fonts].find((item) => item.family.replace(/^['"]|['"]$/g, '') === 'Onest');
-    return face ? { family: face.family, status: face.status } : null;
+    return { checked, onest: face ? { family: face.family, status: face.status } : null };
   });
-  expect(onest).toBeTruthy();
-  expect(onest.status).toBe('loaded');
+  expect(result.checked).toBe(true);
+  expect(result.onest).toBeTruthy();
+  expect(result.onest.status).toBe('loaded');
   const bodyFont = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
   expect(bodyFont.replace(/^['"]|['"]$/g, '')).toMatch(/^Onest\b/);
 });
