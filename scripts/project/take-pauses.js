@@ -1,3 +1,9 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { hostPath, runTool } = require('../process');
+
 const { frameRateFromFps, frameToSeconds } = require('../review/media-time');
 
 // Окно 10 мс видит паузу между словами и не размазывает её соседними словами.
@@ -230,6 +236,28 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
   return { ranges: snapped, adjustments };
 }
 
+// Та же ось, что у trim и у WAV для Whisper: aresample восстанавливает тишину в начале и
+// короткие разрывы внутри звука. Моно 16 кГц хватает, чтобы увидеть паузы между словами.
+function readTakeLevels(filePath, {
+  stage = 'take levels',
+  fileSystem = fs,
+  runToolImpl = runTool,
+  sampleRate = 16000,
+} = {}) {
+  const directory = fileSystem.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-levels-'));
+  try {
+    const pcmPath = path.join(directory, 'audio.raw');
+    runToolImpl('ffmpeg', [
+      '-v', 'error', '-y', '-i', hostPath(filePath), '-vn',
+      '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
+      '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', pcmPath,
+    ], { stage });
+    return levelsFromPcm(fileSystem.readFileSync(pcmPath), { sampleRate });
+  } finally {
+    fileSystem.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 module.exports = {
   PAUSE_LEAD_SEC,
   PAUSE_SEARCH_SEC,
@@ -238,5 +266,6 @@ module.exports = {
   isSilentSpan,
   levelsFromPcm,
   pauseThresholdDb,
+  readTakeLevels,
   snapRangesToPauses,
 };

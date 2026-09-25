@@ -1,5 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { ffmpegEncoderAvailable, runTool: runFixture, toolAvailable } = require('./helpers/media-fixtures');
 
 const {
   analyzeLevels,
@@ -7,6 +12,7 @@ const {
   isSilentSpan,
   levelsFromPcm,
   pauseThresholdDb,
+  readTakeLevels,
   snapRangesToPauses,
 } = require('../scripts/project/take-pauses');
 
@@ -226,4 +232,46 @@ test('the collapse check uses the part of a piece that fits the take', () => {
   );
   assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[9.8, 10.2]]);
   assert.deepEqual(result.adjustments.map(({ edge, reason }) => [edge, reason]), [['start', 'kept'], ['end', 'kept']]);
+});
+
+test('readTakeLevels decodes mono 16 kHz PCM on the trim axis and removes its temp dir', () => {
+  const calls = [];
+  let tempDir = null;
+  const levels = readTakeLevels('clip.mp4', {
+    runToolImpl(command, args, options) {
+      calls.push({ command, args, options });
+      tempDir = path.dirname(args.at(-1));
+      fs.writeFileSync(args.at(-1), Buffer.alloc(320 * 2));
+    },
+  });
+  assert.equal(calls[0].command, 'ffmpeg');
+  assert.deepEqual(calls[0].args.slice(-9), [
+    '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
+    '-ac', '1', '-ar', '16000', '-f', 's16le', calls[0].args.at(-1),
+  ]);
+  assert.equal(calls[0].args.includes(path.resolve('clip.mp4')), true);
+  assert.equal(calls[0].options.stage, 'take levels');
+  assert.deepEqual(levels, { frameSec: 0.01, levels: [-120, -120] });
+  assert.equal(fs.existsSync(tempDir), false);
+});
+
+test('real levels show the pause of a generated take', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('real levels require ffmpeg and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-levels-real-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const take = path.join(dir, 'take.mp4');
+  runFixture('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', "aevalsrc='if(lt(t,1)+between(t,1.3,2.5),0.3*sin(2*PI*440*t),0)':s=48000:d=3",
+    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', take,
+  ], dir);
+  const analysis = analyzeLevels(readTakeLevels(take));
+  assert.equal(isSilentSpan(analysis, 1.05, 1.25), true);
+  assert.equal(isSilentSpan(analysis, 0.2, 0.8), false);
+  const cut = findPauseCut(analysis, 1.36, 'end', { fps: 25 });
+  assert.ok(cut >= 1 && cut <= 1.3, String(cut));
 });
