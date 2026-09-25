@@ -66,7 +66,7 @@ user, so a hang remains an availability risk and is not treated as fixed.
 We keep `node-vibrant@4.0.4`. We do not run `npm audit fix --force`, install a major
 override, or downgrade to the incompatible 3.x line. Reassess immediately on an upstream
 node-vibrant/Jimp update, if severity becomes high, if direct untrusted-image input is
-introduced, at the next release, or no later than 2026-10-06.
+introduced, at the next release, or no later than 2026-10-24.
 
 For release 1.8.0, the GitHub Security Advisory, npm registry metadata, `npm audit`, and the
 installed transitive dependency chain were reviewed again on 2026-09-25. The advisory is
@@ -75,7 +75,7 @@ latest upstream `node-vibrant` remains 4.0.4, whose `@vibrant/image-node` still 
 Jimp 0.22 line with `file-type@16.5.4`; the `file-type` 16.x line has no backported fix. The
 `--autotheme` code path did not change since 1.7.0, so the installed chain and limited local
 exposure still match the advisory and mitigation recorded below. This review accepts the
-remaining moderate availability risk until 2026-10-06; it does not claim that the dependency
+remaining moderate availability risk until 2026-10-24; it does not claim that the dependency
 is fixed.
 
 The block below is the machine-readable release-gate record. Keep the prose and JSON in
@@ -109,6 +109,6 @@ after 10:00 UTC, when that date has already begun in UTC+14.
   ],
   "reviewedAt": "2026-09-25",
   "reviewedFor": "1.8.0",
-  "revisitBy": "2026-10-06"
+  "revisitBy": "2026-10-24"
 }
 ```

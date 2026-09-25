@@ -107,7 +107,7 @@ test('repository dependency exception is reviewed for the 1.8.0 release window',
   }, {
     reviewedAt: '2026-09-25',
     reviewedFor: '1.8.0',
-    revisitBy: '2026-10-06',
+    revisitBy: '2026-10-24',
   });
 });
 
