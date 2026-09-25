@@ -4,6 +4,10 @@ const path = require('node:path');
 
 const { readJsonIfExists, writeJsonAtomic } = require('./files');
 
+// Windows повторяет SYN после отказа на localhost: ECONNREFUSED приходит только через ~2 с.
+// Таймаут должен быть длиннее, иначе закрытый порт будет принят за занятый пульт.
+const HEALTH_TIMEOUT_MS = process.platform === 'win32' ? 3000 : 1500;
+
 function instancePath(projectsDir) {
   return path.join(projectsDir, '.pult', 'instance.json');
 }
@@ -62,7 +66,7 @@ function isProcessAlive(pid) {
 //            JSON, опознать пульта по нему нельзя, поэтому статус 503 по коду тоже считаем занятостью;
 // 'absent' — порт не отвечает как пульт вовсе: отказ в соединении, чужой статус или чужое тело
 //            (например pid из instance.json достался после перезагрузки другому процессу).
-function checkHealth(port, { timeoutMs = 1500, maxBodyBytes = 4096 } = {}) {
+function checkHealth(port, { timeoutMs = HEALTH_TIMEOUT_MS, maxBodyBytes = 4096 } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
