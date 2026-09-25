@@ -166,6 +166,7 @@ function publishSourceRevision({
   let sourceCommittedIdentity = null;
   let transcriptCommittedIdentity = null;
   let manifestCommitted = false;
+  let caughtError = null;
   try {
     return withProjectMutation(workspace, (transaction) => {
       const active = normalizeSourceMetadata(transaction.manifest.source);
@@ -214,6 +215,7 @@ function publishSourceRevision({
       };
     }, { fileSystem, temporaryId });
   } catch (error) {
+    caughtError = error;
     if (!manifestCommitted) {
       if (transcriptCommittedIdentity) removeOwned(fileSystem, transcriptDestination, transcriptCommittedIdentity);
       if (sourceCommittedIdentity) removeOwned(fileSystem, destination, sourceCommittedIdentity);
@@ -234,7 +236,23 @@ function publishSourceRevision({
       }
     } else {
       if (transcriptStageIdentity) removeOwned(fileSystem, transcriptStage, transcriptStageIdentity);
-      if (sourceStageIdentity) removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+      if (sourceStageIdentity) {
+        removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+      } else {
+        // encode() упал или fsync не подтвердил стадию до получения identity, но имя стадии
+        // содержит случайный токен этого вызова: удалить обычный файл по одному пути безопасно,
+        // если ffmpeg успел записать в него частичный (возможно, большой) результат перед падением.
+        try {
+          const stat = fileSystem.lstatSync(sourceStage);
+          if (!stat.isSymbolicLink() && stat.isFile()) fileSystem.unlinkSync(sourceStage);
+        } catch (cleanupError) {
+          // Ошибка сборки master важнее ошибки уборки: не даём finally её заменить. Если это не
+          // ENOENT, прикладываем к исходной ошибке для диагностики и не бросаем повторно.
+          if (cleanupError && cleanupError.code !== 'ENOENT' && caughtError) {
+            caughtError.cleanupError = cleanupError;
+          }
+        }
+      }
     }
   }
 }

@@ -206,6 +206,32 @@ test('failed master encode leaves active source transcript preview and draft unc
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'transcript', 'words-v02.json')), false);
 });
 
+test('a partial master stage file left by a crashed encode is removed', (t) => {
+  const fixture = makeProject(t);
+  const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+
+  assert.throws(() => buildMaster({
+    projectDir: fixture.workspace.dir,
+    editPath: fixture.editPath,
+  }, {
+    runTrimImpl(options) {
+      // Simulates ffmpeg writing output before crashing partway through the encode: the stage
+      // file exists on disk, but encode() never returns, so fsyncFile() never runs either.
+      fs.writeFileSync(options.output, 'PARTIAL');
+      throw new Error('encode crashed');
+    },
+    probeVideoImpl() { return { duration: 8, fps: 25, width: 1920, height: 1080 }; },
+    probeMediaPathImpl() {
+      return { width: 1920, height: 1080, rotation: 0 };
+    },
+    temporaryId: () => 'partial-stage',
+  }), /encode crashed/);
+
+  assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+  const inputEntries = fs.readdirSync(path.join(fixture.workspace.dir, 'input'));
+  assert.equal(inputEntries.some((name) => name.startsWith('.source-v')), false);
+});
+
 test('master keeps committed revision files when releasing the project lock fails', (t) => {
   const fixture = makeProject(t);
   const failingFileSystem = {
