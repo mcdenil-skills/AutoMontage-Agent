@@ -13,10 +13,6 @@ const {
 } = require('./takes-edit');
 const { resolveProjectPath } = require('./workspace');
 
-function channelLayout(channels) {
-  return channels === 1 ? 'mono' : 'stereo';
-}
-
 function buildTakesMaster({ workspace, edit, editRelative, source }, dependencies) {
   const {
     fileSystem = fs,
@@ -52,10 +48,15 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
   validateTakeRanges(normalized.ranges, takes);
   const [first] = used;
   const ranges = snapTakeRanges(normalized.ranges, { fps: first.fps, takes });
-  const wordsByTake = new Map(used.map((take) => [
-    take.id,
-    collectWords(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8'))),
-  ]));
+  const wordsByTake = new Map(used.map((take) => {
+    try {
+      return [take.id, collectWords(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8')))];
+    } catch (error) {
+      // Без имени дубля непонятно, у какого из нескольких кусков сломан транскрипт.
+      error.message = `${take.id} transcript: ${error.message}`;
+      throw error;
+    }
+  }));
   const words = remapTakeRangesTranscript(ranges, wordsByTake, first.fps);
   const duration = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
   const rate = frameRateFromFps(first.fps);
@@ -76,9 +77,11 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
         audioFadeSec: 0.04,
         precision: 6,
         fps: `${rate.numerator}/${rate.denominator}`,
+        // Порядок кусков не должен понижать качество звука: берём максимальный sample rate
+        // и stereo, если хотя бы один из использованных дублей многоканальный.
         audioFormat: {
-          sampleRate: first.audioSampleRate,
-          channelLayout: channelLayout(first.audioChannels),
+          sampleRate: Math.max(...used.map((take) => take.audioSampleRate)),
+          channelLayout: used.some((take) => take.audioChannels >= 2) ? 'stereo' : 'mono',
         },
       });
     },

@@ -3,12 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { addTakes, transcribeTakeFile } = require('../scripts/project/takes');
 const {
   createOrOpenProject,
   readProjectManifest,
 } = require('../scripts/project/workspace');
+const { runTool } = require('../scripts/process');
+const { ffmpegEncoderAvailable, toolAvailable } = require('./helpers/media-fixtures');
 
 function media(overrides = {}) {
   return {
@@ -215,6 +218,7 @@ test('addTakes still rejects inverted word timings via collectWords', (t) => {
 
 test('transcribeTakeFile clamps zero-length whisper words and removes its temporary directory', () => {
   let capturedDir = null;
+  let ffmpegArgs = null;
   const segments = transcribeTakeFile({
     videoPath: '/tmp/source.mp4',
     model: 'large-v3-turbo',
@@ -222,6 +226,10 @@ test('transcribeTakeFile clamps zero-length whisper words and removes its tempor
   }, {
     pythonCommand: 'python3',
     runToolImpl(command, args) {
+      if (command === 'ffmpeg') {
+        ffmpegArgs = args;
+        return;
+      }
       if (String(args[0]).endsWith('transcribe.py')) {
         capturedDir = path.dirname(args[1]);
         assert.equal(args[3], 'large-v3-turbo');
@@ -235,6 +243,54 @@ test('transcribeTakeFile clamps zero-length whisper words and removes its tempor
   assert.equal(segments[0].words[0].e, 46.61);
   assert.notEqual(capturedDir, null);
   assert.equal(fs.existsSync(capturedDir), false);
+  assert.notEqual(ffmpegArgs, null);
+  // -af aresample=async=1:first_pts=0 must sit right before the WAV output path, so a take's
+  // audio that starts after the container start keeps its leading silence instead of shifting
+  // every Whisper word earlier than the trim axis.
+  assert.equal(ffmpegArgs.at(-3), '-af');
+  assert.equal(ffmpegArgs.at(-2), 'aresample=async=1:first_pts=0');
+  assert.ok(ffmpegArgs.at(-1).endsWith('audio.wav'));
+});
+
+test('real transcribeTakeFile keeps the leading silence of audio starting after the video', { timeout: 60_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('leading audio gap probe requires ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-take-late-audio-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const late = path.join(dir, 'late.mp4');
+  const encode = spawnSync('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-itsoffset', '0.3', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:d=3',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-t', '3.3',
+    late,
+  ], { encoding: 'utf8' });
+  assert.equal(encode.status, 0, encode.stderr);
+
+  let measuredDuration = null;
+  transcribeTakeFile({ videoPath: late }, {
+    runToolImpl(command, args, options) {
+      if (command === 'ffmpeg') {
+        runTool(command, args, options);
+        return;
+      }
+      const wavPath = args[1];
+      const wordsPath = args[2];
+      const probe = spawnSync('ffprobe', [
+        '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', wavPath,
+      ], { encoding: 'utf8' });
+      measuredDuration = Number(JSON.parse(probe.stdout).format.duration);
+      fs.writeFileSync(wordsPath, JSON.stringify([
+        { start: 0, end: 1, text: 'x', words: [{ w: 'x', s: 0.1, e: 0.5 }] },
+      ]));
+    },
+  });
+  // Without the leading-gap fix, extracting only the audio stream drops the 0.3 s gap and the
+  // WAV measures near 3.0 s; with the fix it keeps the container's full ~3.3 s.
+  assert.ok(measuredDuration > 3.2, `expected WAV duration > 3.2, got ${measuredDuration}`);
 });
 
 test('a leftover take file from an interrupted run is rejected before transcribing', (t) => {

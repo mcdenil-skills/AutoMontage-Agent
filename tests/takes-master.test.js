@@ -143,7 +143,7 @@ test('a take range starts where both its streams have begun, not at zero', (t) =
   const calls = [];
   buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
     probeMediaPathImpl: (file) => (file.includes('take-02') ? media({ startOffsetSec: 0.04 }) : media()),
-    // take-02 [0.04, 2.52] + take-01 [4, 6]: 0.04 shorter on one side than the base fixture's 3.52.
+    // take-02 [0.04, 2.52] is 2.48 long, plus take-01 [4, 6] is 2: total duration 4.48.
     probeVideoImpl(filename) {
       return path.basename(filename).startsWith('.source-v')
         ? { width: 1920, height: 1080, fps: 25, duration: 4.48 }
@@ -152,6 +152,37 @@ test('a take range starts where both its streams have begun, not at zero', (t) =
   }));
   const [, trim] = calls[0];
   assert.equal(trim.segments[0].start, 0.04);
+});
+
+test('audio format picks the richest sample rate and channel layout regardless of range order', (t) => {
+  const fixture = setupTakes(t);
+  const editPath = writeEdit(fixture.dir);
+  const calls = [];
+  // take-02 (44100/mono) is used FIRST in the edit's ranges; take-01 (48000/stereo, the default
+  // fixture) is used second. The order must not downgrade the assembled audio quality.
+  buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
+    probeMediaPathImpl: (file) => (file.includes('take-02')
+      ? media({ audioSampleRate: 44100, audioChannels: 1 })
+      : media()),
+  }));
+  const [, trim] = calls[0];
+  assert.deepEqual(trim.audioFormat, { sampleRate: 48000, channelLayout: 'stereo' });
+});
+
+test('a corrupt take transcript names the take in the error and leaves the manifest unchanged', (t) => {
+  const fixture = setupTakes(t);
+  const editPath = writeEdit(fixture.dir);
+  const before = fs.readFileSync(path.join(fixture.dir, 'project.json'));
+  fs.writeFileSync(path.join(fixture.dir, 'transcript', 'takes', 'take-02.json'), '{');
+  let thrown = null;
+  try {
+    buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies([]));
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown, 'buildMaster should throw');
+  assert.match(thrown.message, /^take-02 transcript: /);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.dir, 'project.json')), before);
 });
 
 test('takes master rejects stale, unknown, unregistered and incompatible selections', (t) => {

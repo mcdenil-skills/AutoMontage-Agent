@@ -106,7 +106,17 @@ function transcribeTakeFile({ videoPath, model = 'large-v3-turbo', prompt = null
     const audioPath = path.join(directory, 'audio.wav');
     const wordsPath = path.join(directory, 'words.json');
     const extraction = audioExtractionCommand(videoPath, audioPath);
-    runToolImpl(extraction.command, extraction.args, { stage: 'take audio extraction' });
+    // Без этого фильтра WAV начинается с первого настоящего аудио-сэмпла: если звук дубля
+    // стартует позже контейнера (аудио после видео, как на части Android-записей), WAV теряет
+    // этот начальный зазор, и все слова Whisper сдвигаются раньше оси trim. aresample с
+    // first_pts=0 восстанавливает тишину в начале, не трогая audioExtractionCommand (его
+    // использует и build.js).
+    const extractionArgs = [
+      ...extraction.args.slice(0, -1),
+      '-af', 'aresample=async=1:first_pts=0',
+      extraction.args.at(-1),
+    ];
+    runToolImpl(extraction.command, extractionArgs, { stage: 'take audio extraction' });
     const args = [path.join(ROOT, 'scripts', 'transcribe.py'), audioPath, wordsPath, model];
     if (prompt) args.push('--prompt', String(prompt));
     runToolImpl(pythonCommand || python(), args, { cwd: ROOT, stage: 'take transcription' });
