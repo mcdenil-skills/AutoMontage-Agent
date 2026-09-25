@@ -158,7 +158,10 @@ Windows-проверку. Import ownership отдельно воспроизво
 повтор разрешён только для identity-проверенных пустых tombstone и quarantine root, а чужой или
 недоказанный остаток должен сохраниться. Отдельная матрица использует NTFS-подобные inode выше
 `2^53`: собственные setup entries очищаются по точному BigInt id, а соседние округляемые id
-сохраняются. Локально проверяются команды и YAML; hosted Windows run
+сохраняются. Отдельный шаг там же выполняет весь unit-набор пульта роликов
+(`tests/pult-*.test.js` через `(Get-ChildItem tests/pult-*.test.js).FullName`, чтобы pwsh
+раскрыл маску без пайпа) – браузерный `pult-ui.spec.js` в него не входит и остаётся в
+`review-ui`. Локально проверяются команды и YAML; hosted Windows run
 остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
