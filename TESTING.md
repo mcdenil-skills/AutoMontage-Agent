@@ -169,9 +169,10 @@ FPS, bitrate и resolution имеют конечные диапазоны, а п
 ffmpeg filter script удаляется через `finally` и при успешном, и при аварийном завершении.
 `trim-media.js` выбирает форму filter script по версии FFmpeg: `-/filter_complex` для 7+ и
 неизвестных git-сборок, `-filter_complex_script` для 6.x.
-`tests/trim-media-real.test.js`, `tests/takes-master-media.test.js` и `tests/take-pauses.test.js`
-запускают настоящий FFmpeg на сгенерированных роликах и пропускаются без `ffmpeg`, `ffprobe` или
-`libx264`. Перед изменением склейки прогони их с FFmpeg 7 и FFmpeg 9 в `PATH`; Linux CI добавляет
+`tests/trim-media-real.test.js` и `tests/takes-master-media.test.js` запускают настоящий FFmpeg
+на сгенерированных роликах и пропускаются без `ffmpeg`, `ffprobe` или `libx264`; настоящие
+проверки уровней в `tests/take-pauses.test.js` пропускаются без `ffmpeg` или `libx264`. Перед
+изменением склейки прогони их с FFmpeg 7 и FFmpeg 9 в `PATH`; Linux CI добавляет
 FFmpeg 6.x. Контракт дублей закрывают
 `tests/takes-edit.test.js`, `tests/takes-master.test.js`, `tests/project-takes.test.js` и
 `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
