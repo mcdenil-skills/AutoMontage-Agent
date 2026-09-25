@@ -272,6 +272,7 @@ test('real transcribeTakeFile keeps the leading silence of audio starting after 
 
   let measuredDuration = null;
   transcribeTakeFile({ videoPath: late }, {
+    pythonCommand: 'python3',
     runToolImpl(command, args, options) {
       if (command === 'ffmpeg') {
         runTool(command, args, options);

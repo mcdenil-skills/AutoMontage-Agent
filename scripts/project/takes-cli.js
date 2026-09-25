@@ -38,6 +38,7 @@ function parseTakesOptions(argv) {
 }
 
 function main(argv = process.argv.slice(2)) {
+  if (argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); return; }
   try {
     configureMediaToolPath();
     const options = parseTakesOptions(argv);

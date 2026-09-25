@@ -23,4 +23,7 @@ test('public CLI advertises multi-take commands and routes takes to its own scri
   assert.equal(usage.status, 1);
   assert.match(usage.stderr, /usage: automontage takes add\|pack/);
   assert.doesNotMatch(usage.stderr, /build\.js|ENOENT/);
+  const takesHelp = spawnSync(process.execPath, [cli, 'takes', '--help'], { encoding: 'utf8' });
+  assert.equal(takesHelp.status, 0, takesHelp.stderr);
+  assert.match(takesHelp.stdout, /usage: automontage takes add\|pack/);
 });
