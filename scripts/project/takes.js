@@ -6,7 +6,7 @@ const { randomUUID } = require('node:crypto');
 const { audioExtractionCommand } = require('../build-commands');
 const { python } = require('../env');
 const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
-const { runTool } = require('../process');
+const { hostPath, runTool } = require('../process');
 const { collectWords } = require('../tighten');
 const { removeOwned } = require('./source-revision');
 const {
@@ -131,10 +131,10 @@ function transcribeTakeFile({ videoPath, model = 'large-v3-turbo', prompt = null
     // кадров. -map 0:a:0 берёт первую звуковую дорожку – ту же, что [N:a] у trim, а не выбор
     // ffmpeg по числу каналов. audioExtractionCommand не трогаем: его использует build.js.
     const extractionArgs = [
-      '-y', '-i', extraction.args[2],
+      '-y', '-i', hostPath(videoPath),
       '-map', '0:a:0',
       '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0',
-      '-ar', '16000', '-ac', '1', extraction.args.at(-1),
+      '-ar', '16000', '-ac', '1', hostPath(audioPath),
       '-map', '0:v:0?', '-c', 'copy', '-f', 'null', '-',
     ];
     runToolImpl(extraction.command, extractionArgs, { stage: 'take audio extraction' });

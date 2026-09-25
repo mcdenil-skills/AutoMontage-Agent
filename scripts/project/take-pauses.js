@@ -96,11 +96,31 @@ function clamp(value, low, high) {
   return Math.min(high, Math.max(low, value));
 }
 
+// Разрез не перескакивает через другое слово: между границей и паузой может лежать только звук,
+// который продолжается и по другую сторону границы (хвост или начало слова, внутрь которого
+// Whisper поставил границу). Граница на краю звука или в провале короче паузы уже стоит между
+// словами: пауза за соседним словом для неё недоступна, иначе пропало бы короткое слово или
+// вернулся вырезанный звук.
+function crossesOnlyCutSound(analysis, time, run) {
+  const sound = (index) => index >= 0 && index < analysis.levels.length
+    && analysis.levels[index] >= analysis.thresholdDb;
+  const at = Math.floor(time / analysis.frameSec + 1e-9);
+  const [first, last] = run.end <= time
+    ? [Math.round(run.end / analysis.frameSec), at]
+    : [at - 1, Math.round(run.start / analysis.frameSec) - 1];
+  for (let index = first; index <= last; index += 1) {
+    if (!sound(index)) return false;
+  }
+  return true;
+}
+
 // Whisper растягивает конец слова в паузу и начинает слово раньше паузы. Поэтому конец куска
 // предпочитает паузу до себя, начало – после себя; пауза с другой стороны выигрывает, только если
 // она ближе на SIDE_BIAS_SEC. Общий разрез двух соседних кусков одного дубля ('joint') берёт
-// ближайшую паузу и встаёт у её края, ближнего к стыку. Точка ставится на границу видеокадра
-// внутри паузы.
+// ближайшую паузу и встаёт у её края, ближнего к стыку. Паузу, внутри которой границы нет, берём,
+// только если путь к ней идёт по звуку, который продолжается и по другую сторону границы
+// (crossesOnlyCutSound): иначе сдвиг перескочил бы через соседнее слово. Без доступной паузы
+// граница остаётся на месте. Точка ставится на границу видеокадра внутри паузы.
 function findPauseCut(analysis, time, edge, {
   fps,
   searchSec = PAUSE_SEARCH_SEC,
@@ -123,6 +143,7 @@ function findPauseCut(analysis, time, edge, {
       distance: time < candidate.start ? candidate.start - time : Math.max(0, time - candidate.end),
     }))
     .filter((candidate) => candidate.distance <= searchSec + 1e-9)
+    .filter((candidate) => candidate.distance === 0 || crossesOnlyCutSound(analysis, time, candidate))
     .sort((left, right) => score(left) - score(right) || left.distance - right.distance);
   if (!run) return null;
   const length = run.end - run.start;
@@ -134,8 +155,15 @@ function findPauseCut(analysis, time, edge, {
   else target = edge === 'end' ? run.start + lead : run.end - lead;
   const innerFirst = Math.ceil((run.start + margin) * frameRate - 1e-6);
   const innerLast = Math.floor((run.end - margin) * frameRate + 1e-6);
-  const first = innerFirst <= innerLast ? innerFirst : Math.ceil(run.start * frameRate - 1e-6);
-  const last = innerFirst <= innerLast ? innerLast : Math.floor(run.end * frameRate + 1e-6);
+  let first = innerFirst;
+  let last = innerLast;
+  if (innerFirst > innerLast) {
+    // Короткая пауза не вмещает отступы с обеих сторон: разрез встаёт ближе к её середине,
+    // чтобы затухание на краю куска не легло на слово.
+    target = (run.start + run.end) / 2;
+    first = Math.ceil(run.start * frameRate - 1e-6);
+    last = Math.floor(run.end * frameRate + 1e-6);
+  }
   if (first > last) return null;
   return frameToSeconds(clamp(Math.round(target * frameRate), first, last), rate);
 }
@@ -227,13 +255,11 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
       }
     }
   }
-  const adjustments = notes.filter((item) => !kept.has(item.index));
-  for (const index of kept) {
-    adjustments.push(
-      { index, edge: 'start', from: ranges[index].start, to: ranges[index].start, reason: 'kept' },
-      { index, edge: 'end', from: ranges[index].end, to: ranges[index].end, reason: 'kept' },
-    );
-  }
+  // Возвращённый кусок отчитывается только за края, которые пауза действительно сдвигала: край
+  // без паузы остаётся 'no-pause', а край у границы файла или без сдвига в отчёт не попадает.
+  const adjustments = notes.map((item) => (kept.has(item.index) && item.reason === 'pause'
+    ? { index: item.index, edge: item.edge, from: item.from, to: item.from, reason: 'kept' }
+    : item));
   adjustments.sort((left, right) => left.index - right.index || (left.edge === 'start' ? -1 : 1));
   return { ranges: snapped, adjustments };
 }
@@ -266,7 +292,6 @@ function readTakeLevels(filePath, {
 }
 
 module.exports = {
-  PAUSE_LEAD_SEC,
   PAUSE_SEARCH_SEC,
   analyzeLevels,
   findPauseCut,

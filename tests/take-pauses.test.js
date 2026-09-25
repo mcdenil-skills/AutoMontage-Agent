@@ -94,6 +94,55 @@ test('a short pause of the live probe still yields a frame cut inside it', () =>
   assert.equal(findPauseCut(analysis, 3.57, 'end', { fps: 25 }), 3.52);
 });
 
+test('a pause too short for both margins puts the cut near its middle, not next to speech', () => {
+  // Пауза 3.18-3.24 при 60 fps: середина 3.21 ближе всего к кадру 193, а не к 3.1833 у края речи.
+  const analysis = analyzeLevels(levelsWithPauses([[3.18, 3.24]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 3.18, 'end', { fps: 60 }), 193 / 60);
+});
+
+test('a pause cut never drops a short word between the pause and the edge', () => {
+  // Пауза 2.00-2.10, слово «да» 2.10-2.25, провал 40 мс, дальше речь с 2.29.
+  const analysis = analyzeLevels(levelsWithPauses([[2, 2.1], [2.25, 2.29]]));
+  for (const end of [2.26, 2.28, 2.3]) {
+    assert.equal(findPauseCut(analysis, end, 'end', { fps: 25 }), null, String(end));
+    assert.equal(findPauseCut(analysis, end, 'joint', { fps: 25 }), null, String(end));
+    const result = snapRangesToPauses(
+      [{ take: 'take-01', start: 0, end, beat: 'A', reason: 'x' }],
+      { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 },
+    );
+    assert.deepEqual(result.ranges.map((range) => [range.start, range.end]), [[0, end]]);
+    assert.deepEqual(result.adjustments, [{ index: 0, edge: 'end', from: end, to: end, reason: 'no-pause' }]);
+  }
+});
+
+test('a pause cut never drops the first word after a short gap', () => {
+  // Речь до 2.00, провал 30 мс, «И» 2.03-2.15, пауза 2.15-2.25, дальше речь.
+  const analysis = analyzeLevels(levelsWithPauses([[2, 2.03], [2.15, 2.25]]));
+  assert.equal(findPauseCut(analysis, 2.03, 'start', { fps: 25 }), null);
+});
+
+test('a pause cut never brings back a filler the agent cut off', () => {
+  // «слово» кончается в 2.00, провал 30 мс, «эм» 2.03-2.20, пауза 2.20-2.50.
+  const analysis = analyzeLevels(levelsWithPauses([[2, 2.03], [2.2, 2.5]]));
+  assert.equal(findPauseCut(analysis, 2, 'end', { fps: 25 }), null);
+});
+
+test('an edge inside a word still crosses the rest of that word into the pause', () => {
+  // Конец куска попал в начало следующего слова: разрез возвращается в паузу перед ним.
+  const head = analyzeLevels(levelsWithPauses([[3.45, 3.54], [3.74, 3.9]], { duration: 5 }));
+  assert.equal(findPauseCut(head, 3.57, 'end', { fps: 25 }), 3.48);
+  // Начало куска попало в хвост прошлого слова: разрез уходит вперёд в паузу после него.
+  const tail = analyzeLevels(levelsWithPauses([[68.75, 69.18]], { duration: 70 }));
+  assert.equal(findPauseCut(tail, 68.66, 'start', { fps: 25 }), 69.08);
+});
+
+test('an unreachable pause on the expected side yields to a reachable one on the other side', () => {
+  // Пауза 0.90-1.00, слово 1.00-1.10, провал 30 мс, речь, пауза 1.30-1.45: конец куска в 1.16
+  // не может уйти назад через провал, поэтому уходит вперёд.
+  const analysis = analyzeLevels(levelsWithPauses([[0.9, 1], [1.1, 1.13], [1.3, 1.45]]));
+  assert.equal(findPauseCut(analysis, 1.16, 'end', { fps: 25 }), 1.36);
+});
+
 test('a long pause is seen to its real edges', () => {
   const analysis = analyzeLevels(levelsWithPauses([[1, 4]], { duration: 5 }));
   assert.equal(findPauseCut(analysis, 4.1, 'end', { fps: 25 }), 1.12);
@@ -164,7 +213,7 @@ test('a range that would collapse or overlap keeps its original edges', () => {
   assert.deepEqual(overlapped.ranges.map(({ start, end }) => [start, end]), [[0, 2.4], [2.55, 2.9]]);
   assert.deepEqual(
     overlapped.adjustments.map(({ index, edge, reason }) => [index, edge, reason]),
-    [[0, 'start', 'kept'], [0, 'end', 'kept'], [1, 'start', 'kept'], [1, 'end', 'kept']],
+    [[0, 'end', 'kept'], [1, 'start', 'kept'], [1, 'end', 'kept']],
   );
 });
 
@@ -219,7 +268,7 @@ test('a collapsing piece reverts its joint partner too, so no speech falls betwe
   assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.2], [1.2, 1.3]]);
   assert.deepEqual(
     result.adjustments.map(({ index, edge, reason }) => [index, edge, reason]),
-    [[0, 'start', 'kept'], [0, 'end', 'kept'], [1, 'start', 'kept'], [1, 'end', 'kept']],
+    [[0, 'start', 'no-pause'], [0, 'end', 'kept'], [1, 'start', 'kept'], [1, 'end', 'kept']],
   );
 });
 
@@ -231,7 +280,23 @@ test('the collapse check uses the part of a piece that fits the take', () => {
     { takes, analyses: new Map([['take-01', analysis]]), fps: 25 },
   );
   assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[9.8, 10.2]]);
-  assert.deepEqual(result.adjustments.map(({ edge, reason }) => [edge, reason]), [['start', 'kept'], ['end', 'kept']]);
+  assert.deepEqual(result.adjustments.map(({ edge, reason }) => [edge, reason]), [['start', 'kept']]);
+});
+
+test('a reverted range reports only edges that pause cuts moved', () => {
+  const analysis = analyzeLevels(speechLevels());
+  // Первый кусок уходит концом в паузу 2.5-3.0 и налезает на второй, поэтому оба возвращаются.
+  // Край без паузы остаётся no-pause, а конец второго куска у конца файла не двигался и молчит.
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 0.4, end: 2.4, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 2.55, end: 2.98, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.4, 2.4], [2.55, 2.98]]);
+  assert.deepEqual(result.adjustments, [
+    { index: 0, edge: 'start', from: 0.4, to: 0.4, reason: 'no-pause' },
+    { index: 0, edge: 'end', from: 2.4, to: 2.4, reason: 'kept' },
+    { index: 1, edge: 'start', from: 2.55, to: 2.55, reason: 'kept' },
+  ]);
 });
 
 test('a pause target before the usable start of the take is not reported as a pause', () => {
@@ -289,6 +354,26 @@ test('readTakeLevels decodes mono 16 kHz PCM on the trim axis and removes its te
   assert.equal(calls[0].options.stage, 'take levels');
   assert.deepEqual(levels, { frameSec: 0.01, levels: [-120, -120] });
   assert.equal(fs.existsSync(tempDir), false);
+});
+
+test('readTakeLevels rethrows a failed decode and still removes its temp dir', () => {
+  const created = [];
+  const fileSystem = {
+    ...fs,
+    mkdtempSync(prefix) {
+      const directory = fs.mkdtempSync(prefix);
+      created.push(directory);
+      return directory;
+    },
+  };
+  assert.throws(() => readTakeLevels('clip.mp4', {
+    fileSystem,
+    runToolImpl() {
+      throw new Error('ffmpeg failed');
+    },
+  }), /ffmpeg failed/);
+  assert.equal(created.length, 1);
+  assert.equal(fs.existsSync(created[0]), false);
 });
 
 test('real levels show the pause of a generated take', { timeout: 60_000 }, (t) => {

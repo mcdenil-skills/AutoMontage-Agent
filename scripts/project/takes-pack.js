@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { finiteNumber } = require('../build-options');
 const { collectWords } = require('../tighten');
+const { PAUSE_SEARCH_SEC } = require('./take-pauses');
 const { readProjectManifest, resolveProjectPath } = require('./workspace');
 
 const SILENCE_EPSILON = 1e-9;
@@ -42,7 +43,7 @@ function formatTakesMarkdown(entries, silence = 0.5) {
     '# Дубли проекта',
     '',
     `Фразы разделены концом предложения или паузой от ${silence} с. Время указано в секундах от начала файла дубля.`,
-    'Master сам ставит границы кусков в паузу рядом (ищет её в звуке не дальше 0.25 с от границы).',
+    `Master сам ставит границы кусков в паузу рядом (ищет её в звуке не дальше ${PAUSE_SEARCH_SEC} с от границы).`,
     'Диапазоны для edit/vNN-takes.json записывай как take + start/end из этих строк.',
     '',
   ];
