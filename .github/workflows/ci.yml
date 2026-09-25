@@ -125,6 +125,19 @@ jobs:
         shell: pwsh
         run: node --test (Get-ChildItem tests/pult-*.test.js).FullName
 
+      - name: Проверить кодер libx264 для настоящих тестов склейки
+        shell: pwsh
+        run: |
+          $encoders = (ffmpeg -hide_banner -encoders) | Out-String
+          if ($LASTEXITCODE -ne 0 -or $encoders -notmatch '\blibx264\b') {
+            Write-Output '::error::FFmpeg без libx264: настоящие тесты склейки дублей пропустились бы молча'
+            exit 1
+          }
+
+      - name: Проверить склейку дублей на настоящем FFmpeg 7
+        shell: pwsh
+        run: node --test tests/trim-media-real.test.js tests/takes-master-media.test.js tests/take-pauses.test.js tests/project-takes.test.js
+
   review-ui:
     name: Node 20 · Review Chromium tests
     runs-on: ubuntu-latest

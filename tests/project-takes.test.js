@@ -266,7 +266,7 @@ test('transcribeTakeFile clamps zero-length whisper words and removes its tempor
   // shifting every Whisper word earlier than the trim axis. The WAV path is no longer the last
   // argument: a second null output keeps the video stream in use (without decoding it) so MPEG-TS
   // does not recompute the start time from audio alone.
-  assert.deepEqual(ffmpegArgs.slice(0, 5), ['-y', '-i', '/tmp/source.mp4', '-map', '0:a:0']);
+  assert.deepEqual(ffmpegArgs.slice(0, 5), ['-y', '-i', path.resolve('/tmp/source.mp4'), '-map', '0:a:0']);
   assert.deepEqual(ffmpegArgs.slice(5, 11), [
     '-af', 'aresample=async=1:min_hard_comp=0:first_pts=0', '-ar', '16000', '-ac', '1',
   ]);

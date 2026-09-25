@@ -166,8 +166,10 @@ SIGTERM, `/dev/fd`) пропускаются сами через `process.platfo
 `scripts/check-release.js` (правило `motion-ci`) отдельно требует, чтобы каждый шаг с
 `node --test` на Windows был одной строкой без `;`, `&`, `|` и обратных кавычек, иначе
 PowerShell может скрыть код выхода нативной команды за пайпом. Браузерный `pult-ui.spec.js`
-в этот шаг не входит и остаётся в `review-ui`. Локально проверяются команды и YAML; hosted
-Windows run остаётся обязательным pre-merge gate.
+в этот шаг не входит и остаётся в `review-ui`. Ещё один шаг запускает настоящие тесты склейки
+дублей (`tests/trim-media-real.test.js`, `tests/takes-master-media.test.js`,
+`tests/take-pauses.test.js`, `tests/project-takes.test.js`) после проверки кодера `libx264`.
+Локально проверяются команды и YAML; hosted Windows run остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
 `--frames`, `--max`, `--beatSec`, `--brandLock` и `--reframe` проверяются до ffprobe.
@@ -180,8 +182,9 @@ ffmpeg filter script удаляется через `finally` и при успе�
 `tests/trim-media-real.test.js` и `tests/takes-master-media.test.js` запускают настоящий FFmpeg
 на сгенерированных роликах и пропускаются без `ffmpeg`, `ffprobe` или `libx264`; настоящие
 проверки уровней в `tests/take-pauses.test.js` пропускаются без `ffmpeg` или `libx264`. Перед
-изменением склейки прогони их с FFmpeg 7 и FFmpeg 9 в `PATH`; Linux CI добавляет
-FFmpeg 6.x. Контракт дублей закрывают
+изменением склейки прогони их с FFmpeg 7 и FFmpeg 9 в `PATH`; Linux CI добавляет FFmpeg 6.x, а
+Windows CI прогоняет их вместе с `tests/project-takes.test.js` на FFmpeg 7.1 и падает, если у
+FFmpeg нет `libx264`, чтобы тесты не пропустились молча. Контракт дублей закрывают
 `tests/takes-edit.test.js`, `tests/take-pauses.test.js`, `tests/takes-master.test.js`,
 `tests/project-takes.test.js` и `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
 `tests/take-pauses.test.js` закрывает уровни, порог паузы, выбор точки разреза, запрет перехода
