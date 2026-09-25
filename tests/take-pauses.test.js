@@ -224,7 +224,7 @@ test('a collapsing piece reverts its joint partner too, so no speech falls betwe
 });
 
 test('the collapse check uses the part of a piece that fits the take', () => {
-  const analysis = analyzeLevels(levelsWithPauses([[9.95, 10.15]], { duration: 11 }));
+  const analysis = analyzeLevels(levelsWithPauses([[9.91, 10.11]], { duration: 11 }));
   const takes = new Map([['take-01', { id: 'take-01', duration: 10, usableStart: 0 }]]);
   const result = snapRangesToPauses(
     [{ take: 'take-01', start: 9.8, end: 10.2, beat: 'A', reason: 'x' }],
@@ -232,6 +232,34 @@ test('the collapse check uses the part of a piece that fits the take', () => {
   );
   assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[9.8, 10.2]]);
   assert.deepEqual(result.adjustments.map(({ edge, reason }) => [edge, reason]), [['start', 'kept'], ['end', 'kept']]);
+});
+
+test('a pause target before the usable start of the take is not reported as a pause', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[0, 0.15]], { duration: 3 }));
+  const takes = new Map([['take-01', { id: 'take-01', duration: 3, usableStart: 0.2 }]]);
+  const result = snapRangesToPauses(
+    [{ take: 'take-01', start: 0.3, end: 2.5, beat: 'A', reason: 'x' }],
+    { takes, analyses: new Map([['take-01', analysis]]), fps: 25 },
+  );
+  assert.equal(result.ranges[0].start, 0.3);
+  assert.deepEqual(result.adjustments, [
+    { index: 0, edge: 'start', from: 0.3, to: 0.3, reason: 'no-pause' },
+    { index: 0, edge: 'end', from: 2.5, to: 2.5, reason: 'no-pause' },
+  ]);
+});
+
+test('a pause target past the usable end of the take is not reported as a pause', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[3.05, 3.4]], { duration: 3.4 }));
+  const takes = new Map([['take-01', { id: 'take-01', duration: 3, usableStart: 0 }]]);
+  const result = snapRangesToPauses(
+    [{ take: 'take-01', start: 1, end: 2.9, beat: 'A', reason: 'x' }],
+    { takes, analyses: new Map([['take-01', analysis]]), fps: 25 },
+  );
+  assert.equal(result.ranges[0].end, 2.9);
+  assert.deepEqual(result.adjustments, [
+    { index: 0, edge: 'start', from: 1, to: 1, reason: 'no-pause' },
+    { index: 0, edge: 'end', from: 2.9, to: 2.9, reason: 'no-pause' },
+  ]);
 });
 
 test('readTakeLevels decodes mono 16 kHz PCM on the trim axis and removes its temp dir', () => {

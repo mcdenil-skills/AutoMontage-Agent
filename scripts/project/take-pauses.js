@@ -184,9 +184,11 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
         : from >= take.duration - frameDuration;
       if (atFileEdge) continue;
       const joint = jointTime.get(`${index}:${edge}`);
-      const to = joint === undefined
+      let to = joint === undefined
         ? findPauseCut(analysis, from, edge, { fps })
         : findPauseCut(analysis, joint, 'joint', { fps });
+      // Пауза за пределами кадров дубля не годится: обрезка по краю вернула бы разрез в речь.
+      if (to !== null && (to < (take.usableStart || 0) - 1e-9 || to > take.duration + 1e-9)) to = null;
       if (to === null) {
         notes.push({ index, edge, from, to: from, reason: 'no-pause' });
       } else {

@@ -220,6 +220,19 @@ test('failed takes encode leaves the active source and manifest unchanged', (t) 
   assert.equal(fs.existsSync(path.join(fixture.dir, 'transcript', 'words-v02.json')), false);
 });
 
+test('a failing level read stops the master before encoding', (t) => {
+  const fixture = setupTakes(t);
+  const editPath = writeEdit(fixture.dir);
+  const before = fs.readFileSync(path.join(fixture.dir, 'project.json'));
+  const calls = [];
+  assert.throws(() => buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
+    readTakeLevelsImpl() { throw new Error('levels failed'); },
+  })), /levels failed/);
+  assert.equal(calls.some(([stage]) => stage === 'trim'), false);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.dir, 'project.json')), before);
+  assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'source-v02.mp4')), false);
+});
+
 function levelsWithPauses(pauses, duration = 10) {
   const levels = [];
   for (let index = 0; index < duration * 100; index += 1) {

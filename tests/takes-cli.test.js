@@ -37,7 +37,7 @@ test('takes options keep repeated files in order and reject foreign flags', () =
 test('takes and master modules contain no shell execution escape hatch', () => {
   for (const file of [
     'build-master.js', 'build-takes-master.js', 'source-revision.js',
-    'takes.js', 'takes-cli.js', 'takes-edit.js', 'takes-pack.js',
+    'take-pauses.js', 'takes.js', 'takes-cli.js', 'takes-edit.js', 'takes-pack.js',
   ]) {
     const source = fs.readFileSync(path.join(ROOT, 'scripts', 'project', file), 'utf8');
     assert.doesNotMatch(source, /\bexecSync\b|shell\s*:\s*true/, file);
