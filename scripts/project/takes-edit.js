@@ -5,7 +5,7 @@ const { frameRateFromFps, frameToSeconds, secondsToFrame } = require('../review/
 const { remapTranscriptWords, roundedTime } = require('./source-revision');
 
 const validateSchema = new Ajv({ allErrors: true }).compile(takesEditSchema);
-// Запас после последнего слова, который агент добавляет по брифу; хвост обрезается по концу дубля.
+// Допуск конца куска за концом дубля (запас после последнего слова или сдвиг в паузу); хвост обрезается по концу дубля.
 const MAX_END_OVERRUN_SEC = 0.25;
 
 function formatSchemaError(error) {
