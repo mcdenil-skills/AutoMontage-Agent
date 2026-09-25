@@ -1,0 +1,289 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+
+const {
+  hasUnsafePath,
+  readJsonBody,
+  requestToken,
+  safeTokenEqual,
+  serveFile,
+  serveStatic,
+} = require('../scripts/pult/http');
+
+const WINDOWS = process.platform === 'win32';
+
+test('unsafe request targets are detected', () => {
+  for (const target of ['/media/../x', '/%2e%2e/x', '/a\\b', '/a%5cb', '/a%00', '/%E0%A4%A', '/media/..#x']) {
+    assert.equal(hasUnsafePath(target), true, target);
+  }
+  for (const target of ['/', '/api/cards', '/media/video?key=a%2Fb']) {
+    assert.equal(hasUnsafePath(target), false, target);
+  }
+});
+
+test('tokens come from the bearer header, or from the query only for media', () => {
+  assert.equal(requestToken({ headers: {} }, new URL('http://127.0.0.1/api/cards?token=q')), null);
+  assert.equal(requestToken({ headers: { authorization: 'Bearer abc' } }, new URL('http://127.0.0.1/api/cards')), 'abc');
+  assert.equal(requestToken({ headers: {} }, new URL('http://127.0.0.1/media/video?token=q')), 'q');
+  assert.equal(safeTokenEqual('abc', 'abc'), true);
+  assert.equal(safeTokenEqual('abc', 'abd'), false);
+  assert.equal(safeTokenEqual('abc', 'abcd'), false);
+  assert.equal(safeTokenEqual(null, 'abc'), false);
+});
+
+// Поддельный IncomingMessage: EventEmitter с headers и resume(), как ждёт readJsonBody.
+function fakeRequest(headers, chunks) {
+  const request = new EventEmitter();
+  request.headers = headers;
+  request.resume = () => {};
+  queueMicrotask(() => {
+    for (const chunk of chunks) request.emit('data', Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    request.emit('end');
+  });
+  return request;
+}
+
+test('readJsonBody rejects invalid UTF-8 bytes with 400', async () => {
+  // Строка JSON с одним недопустимым байтом: без fatal-декодера она молча становилась «�».
+  const request = fakeRequest({ 'content-type': 'application/json' }, [Buffer.from([0x22, 0xff, 0x22])]);
+  await assert.rejects(readJsonBody(request), (error) => {
+    assert.equal(error.status, 400);
+    assert.equal(error.code, 'INVALID_JSON');
+    return true;
+  });
+});
+
+test('readJsonBody rejects a non-utf-8 charset with 415', async () => {
+  const request = fakeRequest({ 'content-type': 'application/json; charset=latin1' }, ['{}']);
+  await assert.rejects(readJsonBody(request), (error) => {
+    assert.equal(error.status, 415);
+    assert.equal(error.code, 'UNSUPPORTED_MEDIA_TYPE');
+    return true;
+  });
+});
+
+test('readJsonBody parses application/json with an explicit utf-8 charset', async () => {
+  const request = fakeRequest({ 'content-type': 'application/json; charset=utf-8' }, ['{"a":1}']);
+  assert.deepEqual(await readJsonBody(request), { a: 1 });
+});
+
+// Мини-HTTP-сервер поверх serveFile для тестов, которым нужен настоящий request/response.
+function withServeFileServer(filePath, requestOptions, onResponse) {
+  const responseClosed = [];
+  const server = http.createServer((request, response) => {
+    responseClosed.push(new Promise((resolve) => response.on('close', resolve)));
+    serveFile(request, response, filePath);
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      const outgoing = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/file',
+        agent: false,
+        ...requestOptions,
+      });
+      outgoing.on('error', reject);
+      outgoing.on('response', async (response) => {
+        try {
+          const result = await onResponse(response, outgoing);
+          await Promise.all(responseClosed);
+          server.close(() => resolve(result));
+        } catch (error) {
+          server.close(() => reject(error));
+        }
+      });
+      outgoing.end();
+    });
+  });
+}
+
+test('serveFile releases the file descriptor when the client cancels a range request', { skip: WINDOWS && 'нет /dev/fd на Windows' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'video.mp4');
+  fs.writeFileSync(filePath, Buffer.alloc(2 * 1024 * 1024, 1));
+
+  const fdCount = () => fs.readdirSync('/dev/fd').length;
+  const before = fdCount();
+
+  const ATTEMPTS = 20;
+  for (let i = 0; i < ATTEMPTS; i += 1) {
+    await withServeFileServer(filePath, { headers: { Range: 'bytes=0-' } }, (response, outgoing) => new Promise((resolve) => {
+      response.once('data', () => outgoing.destroy());
+      response.on('close', resolve);
+      response.on('error', () => {});
+    }));
+  }
+
+  // Дать серверу время закрыть файловые дескрипторы после отмены запросов.
+  let after = fdCount();
+  const deadline = Date.now() + 1000;
+  while (after > before && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    after = fdCount();
+  }
+  assert.equal(after, before);
+});
+
+test('serveFile: a regular file serves 200, a symlinked final component is rejected', { skip: WINDOWS && 'символические ссылки требуют прав на Windows' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const realPath = path.join(dir, 'real.mp4');
+  fs.writeFileSync(realPath, Buffer.from('abc'));
+
+  const okStatus = await withServeFileServer(realPath, {}, (response) => {
+    response.resume();
+    return new Promise((resolve) => response.on('end', () => resolve(response.statusCode)));
+  });
+  assert.equal(okStatus, 200);
+
+  const linkPath = path.join(dir, 'link.mp4');
+  fs.symlinkSync(realPath, linkPath);
+  const linkedStatus = await withServeFileServer(linkPath, {}, (response) => {
+    response.resume();
+    return new Promise((resolve) => response.on('end', () => resolve(response.statusCode)));
+  });
+  assert.equal(linkedStatus, 404);
+});
+
+// Мини-сервер поверх serveStatic: как route() в scripts/pult/server.js, отсутствие
+// совпадения в белом списке само по себе не отвечает – это делает вызывающий код.
+function withServeStaticServer(root, pathname) {
+  const server = http.createServer((request, response) => {
+    if (!serveStatic(root, pathname, request, response)) {
+      response.writeHead(404);
+      response.end();
+    }
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      const outgoing = http.request({ host: '127.0.0.1', port, path: '/probe', agent: false });
+      outgoing.on('error', reject);
+      outgoing.on('response', (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => {
+          const result = {
+            status: response.statusCode,
+            type: response.headers['content-type'],
+            body: Buffer.concat(chunks),
+          };
+          server.close(() => resolve(result));
+        });
+      });
+      outgoing.end();
+    });
+  });
+}
+
+test('serveStatic serves a whitelisted file by its real path and rejects a symlink on any directory or the file itself', { skip: WINDOWS && 'символические ссылки требуют прав на Windows' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  // Позитивный случай: настоящий public/fonts/Onest.ttf под настоящим root.
+  const realRoot = path.join(dir, 'real-root');
+  fs.mkdirSync(path.join(realRoot, 'public', 'fonts'), { recursive: true });
+  fs.writeFileSync(path.join(realRoot, 'public', 'fonts', 'Onest.ttf'), 'font bytes');
+  const ok = await withServeStaticServer(realRoot, '/fonts/Onest.ttf');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.type, 'font/ttf');
+  assert.equal(ok.body.toString('utf8'), 'font bytes');
+
+  // Файл лежит не под public/fonts, а где-то ещё, и подставлен только симлинком.
+  const elsewhere = path.join(dir, 'elsewhere-fonts');
+  fs.mkdirSync(elsewhere, { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'Onest.ttf'), 'font bytes');
+
+  // Негативный случай 1: symlink вместо каталога public/fonts – под подозрением весь
+  // путь до файла, а не только его последний компонент.
+  const linkedDirRoot = path.join(dir, 'linked-dir-root');
+  fs.mkdirSync(path.join(linkedDirRoot, 'public'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(linkedDirRoot, 'public', 'fonts'));
+  const linkedDir = await withServeStaticServer(linkedDirRoot, '/fonts/Onest.ttf');
+  assert.equal(linkedDir.status, 404);
+
+  // Негативный случай 2: сам файл – симлинк на настоящий шрифт в другом месте.
+  const linkedFileRoot = path.join(dir, 'linked-file-root');
+  fs.mkdirSync(path.join(linkedFileRoot, 'public', 'fonts'), { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'Onest.ttf'), path.join(linkedFileRoot, 'public', 'fonts', 'Onest.ttf'));
+  const linkedFile = await withServeStaticServer(linkedFileRoot, '/fonts/Onest.ttf');
+  assert.equal(linkedFile.status, 404);
+
+  // Негативный случай 3: симлинк не на последнем, а на промежуточном каталоге – самом
+  // public, а не на public/fonts. lstat промежуточного компонента пути следует за ним
+  // прозрачно: lstat('.../public/fonts') через симлинкнутый public честно докладывает
+  // «настоящий каталог», потому что смотрит только на последний компонент – 'fonts'.
+  // Проверка, которая lstat'ит лишь конечный public/fonts (а не каждый сегмент отдельно),
+  // тут ошибочно сочла бы путь безопасным и отдала бы файл из-под симлинка public.
+  const realFontsDir = path.join(dir, 'real-fonts-target');
+  fs.mkdirSync(path.join(realFontsDir, 'fonts'), { recursive: true });
+  fs.writeFileSync(path.join(realFontsDir, 'fonts', 'Onest.ttf'), 'font bytes');
+  const sneakyRoot = path.join(dir, 'sneaky-root');
+  fs.mkdirSync(sneakyRoot, { recursive: true });
+  fs.symlinkSync(realFontsDir, path.join(sneakyRoot, 'public'));
+  const sneaky = await withServeStaticServer(sneakyRoot, '/fonts/Onest.ttf');
+  assert.equal(sneaky.status, 404);
+});
+
+function statusAndType(filePath) {
+  return withServeFileServer(filePath, {}, (response) => {
+    const chunks = [];
+    response.on('data', (chunk) => chunks.push(chunk));
+    return new Promise((resolve) => response.on('end', () => resolve({
+      status: response.statusCode,
+      type: response.headers['content-type'],
+      body: Buffer.concat(chunks).toString('utf8'),
+    })));
+  });
+}
+
+test('serveFile refuses anything that is not a known media file, never sending text/html', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const [name, content] of [['page.html', '<html></html>'], ['notes.txt', 'private notes'], ['clip', 'no extension']]) {
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, content);
+    const result = await statusAndType(filePath);
+    assert.equal(result.status, 404, name);
+    assert.doesNotMatch(result.type, /text\/html/, name);
+    assert.ok(!result.body.includes(content), name);
+  }
+});
+
+test('serveFile serves known video and image files with their media type', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const [name, type] of [['clip.mp4', 'video/mp4'], ['CLIP.MOV', 'video/quicktime'], ['frame.jpg', 'image/jpeg']]) {
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, `bytes of ${name}`);
+    const result = await statusAndType(filePath);
+    assert.equal(result.status, 200, name);
+    assert.equal(result.type, type, name);
+    assert.equal(result.body, `bytes of ${name}`, name);
+  }
+});
+
+test('serveFile answers an unsatisfiable range with 416 and Content-Range: bytes */size', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'video.mp4');
+  fs.writeFileSync(filePath, Buffer.alloc(100, 1));
+
+  const result = await withServeFileServer(filePath, { headers: { Range: 'bytes=500-600' } }, (response) => {
+    response.resume();
+    return new Promise((resolve) => response.on('end', () => resolve({
+      status: response.statusCode,
+      contentRange: response.headers['content-range'],
+    })));
+  });
+  assert.equal(result.status, 416);
+  assert.equal(result.contentRange, 'bytes */100');
+});
