@@ -14,6 +14,10 @@ const REFRESH_MS = 20000;
 
 const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
 const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null };
+// Снимок последних /api/cards, для которых список уже перерисован — фоновый опрос
+// каждые 20 с не должен пересобирать DOM и сбрасывать фокус/скролл, если ничего не
+// изменилось на сервере.
+let lastCardsJson = null;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -92,6 +96,15 @@ function formatClock(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// Таймкоды правок — по низу секунды (14.6 → 0:14), как в самом плеере: округление вверх
+// (0:15) обещало бы кадр, которого правка ещё не касалась. Длительность в cardFacts()
+// по-прежнему округляется через formatClock — там это просто «сколько идёт ролик».
+function formatClockFloor(seconds) {
+  if (!Number.isFinite(seconds)) return '';
+  const total = Math.floor(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 function formatAspect(meta) {
   if (!meta) return '';
   const ratio = meta.width / meta.height;
@@ -102,7 +115,10 @@ function formatAspect(meta) {
 
 function formatDate(iso) {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  // Legacy-вариант без файла на диске получает updatedAt = new Date(0) (см. catalog.js) —
+  // это не настоящая дата, а «файл потерян», и показывать «1 янв.» человеку не нужно.
+  if (Number.isNaN(date.getTime()) || date.getFullYear() < 2000) return '';
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
 function pluralVariants(count) {
@@ -140,7 +156,10 @@ function leadVariant(card) {
 
 function cardFacts(card) {
   const lead = leadVariant(card);
-  const facts = [formatAspect(lead.meta), lead.meta ? formatClock(lead.meta.durationSec) : '']
+  // Срочный вариант мог ещё не обзавестись ffprobe-метаданными (preview только что
+  // опубликован) — ищем факты у любого другого варианта карточки, а не показываем пустоту.
+  const source = lead.meta ? lead : (card.variants.find((variant) => variant.meta) || lead);
+  const facts = [formatAspect(source.meta), source.meta ? formatClock(source.meta.durationSec) : '']
     .filter(Boolean)
     .join(' · ');
   return card.variants.length > 1 ? [facts, pluralVariants(card.variants.length)].filter(Boolean).join(' · ') : facts;
@@ -152,22 +171,27 @@ function renderCard(card) {
   node.dataset.cardId = card.id;
   const thumb = el('div', 'card__thumb');
   const lead = leadVariant(card);
-  if (lead.thumbUrl) {
+  // Та же логика, что в cardFacts: у срочного варианта может не быть обложки (или её ещё
+  // не сгенерировал ffmpeg), тогда карточка берёт обложку у любого варианта, где она есть.
+  const source = lead.thumbUrl ? lead : (card.variants.find((variant) => variant.thumbUrl) || lead);
+  if (source.thumbUrl) {
     const image = el('img');
     image.alt = '';
     image.loading = 'lazy';
-    image.src = mediaUrl(lead.thumbUrl);
+    image.src = mediaUrl(source.thumbUrl);
     image.addEventListener('error', () => image.remove());
     thumb.append(image);
   }
   const body = el('div', 'card__body');
-  const meta = el('p', 'card__meta');
+  // <button> — фразовый контент: h3/p внутри него не по спецификации (хоть браузеры это
+  // и прощают). span + display:block в CSS даёт тот же вид, оставаясь валидной разметкой.
+  const meta = el('span', 'card__meta');
   meta.append(
     el('span', `badge badge--${card.status}`, STATUS_LABELS[card.status]),
     el('span', '', formatDate(card.updatedAt)),
     el('span', '', cardFacts(card)),
   );
-  body.append(el('h3', 'card__title', card.title), meta, el('p', 'card__next', card.nextStep));
+  body.append(el('span', 'card__title', card.title), meta, el('span', 'card__next', card.nextStep));
   node.append(thumb, body);
   node.addEventListener('click', () => openCard(card.id));
   return node;
@@ -206,7 +230,9 @@ function renderList() {
       if (!cards.length) continue;
       shown += cards.length;
       const section = el('section', 'section');
-      section.append(el('h2', 'section__title', `${SECTION_TITLES[key]} (${cards.length})`), renderGrid(cards, key));
+      const title = el('h2', 'section__title', `${SECTION_TITLES[key]} (${cards.length})`);
+      title.dataset.sectionTitle = key;
+      section.append(title, renderGrid(cards, key));
       view.append(section);
     }
     if (!shown) {
@@ -221,7 +247,10 @@ function renderList() {
       renderFolderList(data.unregistered, 'unregistered', (item) => `${data.projectsLabel}/${item.folder}`),
     );
   } else if (state.tab === 'broken') {
-    view.append(renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} — ${item.error}`));
+    view.append(
+      el('p', 'hint', 'Попросите агента проверить паспорт этой папки.'),
+      renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} — ${item.error}`),
+    );
   }
 }
 
@@ -229,7 +258,17 @@ function updateTabs() {
   const data = state.data;
   for (const key of ['archive', 'unregistered', 'broken']) {
     document.querySelector(`[data-count="${key}"]`).textContent = String(data[key].length);
-    if (key !== 'archive') document.querySelector(`[data-tab="${key}"]`).hidden = data[key].length === 0;
+    if (key === 'archive') continue;
+    const tabButton = document.querySelector(`[data-tab="${key}"]`);
+    tabButton.hidden = data[key].length === 0;
+    // Открытая вкладка «Без паспорта»/«Не читается» вдруг опустела (агент завёл паспорт,
+    // почистил ошибку) — нельзя оставлять человека смотреть на спрятанную кнопку раздела.
+    if (state.tab === key && data[key].length === 0) {
+      state.tab = 'main';
+      document.querySelectorAll('[data-tab]').forEach((other) => {
+        other.setAttribute('aria-pressed', String(other.dataset.tab === 'main'));
+      });
+    }
   }
 }
 
@@ -263,6 +302,7 @@ function closeCard() {
 
 function actionsBlock(card, variant) {
   const box = el('div', 'actions');
+  box.append(el('h3', '', 'Передать агенту'));
   box.append(button('Показать в папке', () => api('/api/reveal', { method: 'POST', body: { key: variant.key } })));
   if (variant.reviewable) {
     box.append(button('Открыть проверку монтажа', async () => {
@@ -276,8 +316,10 @@ function actionsBlock(card, variant) {
     await refresh();
     closeCard();
   }));
+  box.append(el('p', 'hint', 'Скопируйте фразу и вставьте её в чат с агентом.'));
   const phrase = `Продолжи ролик «${card.title}» в ${state.data.projectsLabel}/${variant.folder}: выполни automontage inbox и обработай входящие.`;
-  const field = el('input', 'phrase');
+  const field = el('textarea', 'phrase');
+  field.rows = 3;
   field.readOnly = true;
   field.value = phrase;
   field.dataset.agentPhrase = '';
@@ -285,13 +327,20 @@ function actionsBlock(card, variant) {
   const copyStatus = el('span', 'copy-status');
   copyStatus.dataset.copyStatus = '';
   const copy = button('Скопировать для агента', async () => {
+    let copied = false;
     try {
       await navigator.clipboard.writeText(phrase);
+      copied = true;
     } catch (_) {
       field.select();
-      document.execCommand('copy');
+      // execCommand — резервный путь, когда Clipboard API недоступен (нет разрешения,
+      // страница не в фокусе): он тоже может не сработать, и об этом нужно сказать честно,
+      // а не показывать «Скопировано» вслепую.
+      copied = document.execCommand('copy');
     }
-    copyStatus.textContent = 'Скопировано — вставьте в чат с агентом';
+    copyStatus.textContent = copied
+      ? 'Скопировано — вставьте в чат с агентом'
+      : 'Не удалось скопировать — выделите фразу и нажмите ⌘C / Ctrl+C';
   }, 'primary');
   box.append(field, copy, copyStatus);
   return box;
@@ -358,7 +407,7 @@ async function loadComments(variant, list, video) {
   }
   for (const comment of comments) {
     const item = el('li', `comment comment--${comment.status}`);
-    const jump = el('button', 'link-button', formatClock(comment.timeSec));
+    const jump = el('button', 'link-button', formatClockFloor(comment.timeSec));
     jump.type = 'button';
     jump.addEventListener('click', () => {
       video.currentTime = comment.timeSec;
@@ -404,13 +453,15 @@ function commentsBlock(variant, video) {
   text.placeholder = 'Что поправить в этом месте?';
   text.dataset.commentText = '';
   text.setAttribute('aria-label', 'Текст правки');
-  const syncTime = () => { time.textContent = `на ${formatClock(video.currentTime || 0)}`; };
+  const syncTime = () => { time.textContent = `на ${formatClockFloor(video.currentTime || 0)}`; };
   video.addEventListener('timeupdate', syncTime);
   video.addEventListener('seeked', syncTime);
   text.addEventListener('focus', () => video.pause());
   const list = el('ul', 'comment-list');
   list.dataset.commentList = '';
-  const save = el('button', 'primary', 'Добавить правку');
+  // secondary — амбер оставлен только двум по-настоящему решающим кнопкам («Утверждаю»,
+  // «Скопировать для агента»), чтобы взгляд не разбегался между тремя яркими кнопками.
+  const save = el('button', 'secondary', 'Добавить правку');
   save.type = 'button';
   save.addEventListener('click', async () => {
     if (!text.value.trim()) {
@@ -470,21 +521,42 @@ function renderDetail() {
   }
   const layout = el('div', 'detail');
   const playerColumn = el('div', 'detail__player');
-  const video = el('video', 'player');
-  video.controls = true;
-  video.preload = 'metadata';
-  video.dataset.player = '';
-  if (variant.video) video.src = mediaUrl(variant.video.url);
+  const playerSlot = el('div', 'player-slot');
+  playerColumn.append(playerSlot);
+  // video остаётся null, пока в слоте не настоящий <video> (например, легаси .mkv или
+  // ролик без preview) — dead-плеер без источника выглядел рабочим, но не проигрывал ничего.
+  let video = null;
+  function showVideo(url) {
+    playerSlot.replaceChildren();
+    video = el('video', 'player');
+    video.controls = true;
+    video.preload = 'metadata';
+    video.dataset.player = '';
+    video.src = url;
+    playerSlot.append(video);
+  }
+  function showPlaceholder() {
+    playerSlot.replaceChildren(el('div', 'player player--empty'));
+    video = null;
+  }
+
   let videoLabelText;
   if (variant.video) {
-    videoLabelText = VIDEO_LABELS[variant.video.kind];
+    // Сразу после утверждения ролик ещё «В работе» (агент собирает финал), но видео на
+    // экране — уже утверждённый preview, а не тот, что «ждёт проверки».
+    if (variant.video.kind === 'preview' && variant.status === 'working' && !variant.nextStep.startsWith('Ждёт агента')) {
+      videoLabelText = 'Утверждённый preview — агент собирает финал';
+    } else {
+      videoLabelText = VIDEO_LABELS[variant.video.kind];
+    }
   } else if (variant.videoUnsupported) {
     videoLabelText = VIDEO_UNSUPPORTED_LABEL;
   } else {
     videoLabelText = 'Видео пока нет';
   }
+  if (variant.video) showVideo(mediaUrl(variant.video.url)); else showPlaceholder();
   const videoLabel = el('p', 'player__label', videoLabelText);
-  playerColumn.append(video, videoLabel);
+  playerColumn.append(videoLabel);
 
   // approveBox/commentsBox назначаются ниже, но замыкания истории читают их только по
   // клику — к тому моменту renderDetail уже отработает целиком, и обе переменные будут
@@ -496,7 +568,7 @@ function renderDetail() {
   const backToCurrent = el('button', 'link-button', 'Вернуться к текущей');
   backToCurrent.type = 'button';
   backToCurrent.addEventListener('click', () => {
-    if (variant.video) video.src = mediaUrl(variant.video.url);
+    if (variant.video) showVideo(mediaUrl(variant.video.url)); else showPlaceholder();
     videoLabel.textContent = videoLabelText;
     historyBar.hidden = true;
     approveBox.setHistoryMode(false);
@@ -513,7 +585,9 @@ function renderDetail() {
       const open = el('button', 'link-button', item.label);
       open.type = 'button';
       open.addEventListener('click', () => {
-        video.src = mediaUrl(item.url);
+        // Рендеры Истории — всегда обычный mp4 (см. renderHistory в catalog.js), поэтому
+        // тут всегда показываем настоящее видео, даже если текущий вариант — плейсхолдер.
+        showVideo(mediaUrl(item.url));
         videoLabel.textContent = item.label;
         // Кадр из Истории уже не текущий: правку по нему добавить нельзя (агент увидит
         // не тот таймкод), а утверждение всегда привязано именно к текущему preview.
@@ -558,7 +632,9 @@ async function refresh({ keepDetail = false } = {}) {
   if (notice.dataset.tone === 'error') notify('');
   updateTabs();
   if (!state.openCardId) {
-    renderList();
+    const json = JSON.stringify(state.data);
+    if (json !== lastCardsJson) renderList();
+    lastCardsJson = json;
     return;
   }
   const card = currentCard();

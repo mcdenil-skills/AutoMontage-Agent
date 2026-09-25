@@ -201,8 +201,16 @@ test('no absolute paths or hashes reach the page', async ({ page }) => {
   page.on('response', async (response) => {
     if (response.url().includes('/api/')) bodies.push(await response.text());
   });
-  await openCard(page, 'Перфекционизм');
-  await expect(page.locator('[data-comment-list]')).toBeVisible();
+  // toBeVisible() смотрит только на разметку — <ul data-comment-list> уже в DOM до того,
+  // как ответ /api/comments придёт, поэтому раньше проверка тела ответов могла случиться
+  // до его загрузки. Дожидаемся самого GET-запроса правок, чтобы тело точно попало в bodies.
+  const commentsLoaded = page.waitForResponse((response) => response.url().includes('/api/comments')
+    && response.request().method() === 'GET');
+  await page.goto(session.url);
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  await expect(page.locator('[data-view="detail"]')).toBeVisible();
+  await commentsLoaded;
+  await expect(page.locator('[data-comment-list]')).toContainText('Правок пока нет.');
   const text = bodies.join('\n');
   expect(text).not.toContain(projectsDir);
   expect(text).not.toMatch(/[a-f0-9]{64}/);
@@ -285,7 +293,14 @@ test('a legacy .mkv variant shows the unsupported-format label', async ({ page }
   await page.locator('.card', { hasText: 'Старый формат' }).click();
   await expect(page.locator('[data-view="detail"]')).toBeVisible();
   await expect(page.locator('.player__label')).toHaveText('Этот формат не проигрывается в пульте — откройте в папке');
+  // Мёртвый <video> без источника выглядел рабочим плеером, но ничего не проигрывал —
+  // вместо него теперь пустая заглушка, а не элемент [data-player].
+  await expect(page.locator('[data-player]')).toHaveCount(0);
+  await expect(page.locator('.player--empty')).toBeVisible();
   await expect(page.locator('button', { hasText: 'Показать в папке' })).toBeVisible();
+  await expect(page.locator('.comments')).toContainText(
+    'Этот формат не проигрывается в пульте — правку можно описать словами агенту.',
+  );
 });
 
 // --- Commit A: список читаем, утверждение честное ---
@@ -340,5 +355,18 @@ test('a dead server shows a Russian message, never the raw fetch error', async (
   await page.evaluate(() => refresh());
   await expect(page.locator('[data-notice]')).toHaveText(
     'Пульт не отвечает — откройте его снова значком «Пульт роликов».',
+  );
+});
+
+// --- Commit B: полировка интерфейса ---
+
+test('copy for agent puts the phrase on the real clipboard', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openCard(page, 'Перфекционизм');
+  await page.locator('button', { hasText: 'Скопировать для агента' }).click();
+  await expect(page.locator('[data-copy-status]')).toHaveText('Скопировано — вставьте в чат с агентом');
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clipboardText).toBe(
+    'Продолжи ролик «Перфекционизм — тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
   );
 });
