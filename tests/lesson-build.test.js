@@ -28,6 +28,10 @@ function runLessonBuildWithIntercept(t, args, {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-lesson-intercept-'));
   const hook = path.join(directory, 'hook.js');
   const calls = path.join(directory, 'calls.jsonl');
+  // build.js кладёт временный план в os.tmpdir(); держим его внутри directory,
+  // чтобы надгробия защищённого удаления исчезали вместе с ней.
+  const temporary = path.join(directory, 'tmp');
+  fs.mkdirSync(temporary);
   fs.writeFileSync(hook, [
     "const childProcess = require('node:child_process');",
     "const fs = require('node:fs');",
@@ -97,6 +101,9 @@ function runLessonBuildWithIntercept(t, args, {
     encoding: 'utf8',
     env: {
       ...process.env,
+      TMPDIR: temporary,
+      TEMP: temporary,
+      TMP: temporary,
       AUTOMONTAGE_LESSON_CAPTURE: calls,
       AUTOMONTAGE_LESSON_FAIL_RENDER: failRender ? '1' : '',
       ...(materializePlan ? { OPENAI_API_KEY: 'test-only-placeholder' } : {}),
@@ -459,13 +466,6 @@ test('project lesson planning preserves a foreign replacement of its generated t
   assert.ok(generated, result.stderr);
   const jsonPath = generated.args[2];
   const markdownPath = generated.args[generated.args.indexOf('--markdown') + 1];
-  t.after(() => {
-    for (const target of [jsonPath, `${jsonPath}.original`, markdownPath]) {
-      try { fs.unlinkSync(target); } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    }
-  });
   assert.ok(findRegularFileWithBytes(path.dirname(jsonPath), 'foreign replacement'));
   assert.equal(fs.existsSync(markdownPath), false);
 });
@@ -482,15 +482,6 @@ test('project lesson cleanup preserves foreign bytes swapped at the final remova
   const race = invocations.find((entry) => entry.raceTarget);
   assert.ok(race, result.stderr);
   assert.equal(fs.readFileSync(race.raceTarget, 'utf8'), 'foreign-plan-at-removal');
-  t.after(() => {
-    for (const entry of invocations) {
-      if (entry.raceTarget) {
-        try { fs.unlinkSync(entry.raceTarget); } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
-        }
-      }
-    }
-  });
 });
 
 test('lesson rejects source-changing flags that invalidate approved timings', () => {

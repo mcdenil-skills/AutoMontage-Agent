@@ -13,6 +13,7 @@ const ROOT = path.resolve(__dirname, '..');
 const HYGIENE_FILES = [
   'tests/release-hygiene.test.js',
   'tests/review-media-import.test.js',
+  'tests/lesson-build.test.js',
 ];
 
 test('affected test files leave nothing behind in their temporary directory', (t) => {
@@ -27,7 +28,7 @@ test('affected test files leave nothing behind in their temporary directory', (t
   }
 
   const result = spawnSync(process.execPath, [
-    '--test', '--test-reporter=tap', '--test-concurrency=1', ...HYGIENE_FILES,
+    '--test', '--test-reporter=tap', ...HYGIENE_FILES,
   ], {
     cwd: ROOT,
     env,
