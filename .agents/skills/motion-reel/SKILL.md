@@ -174,4 +174,5 @@ approved-копия может попасть в `renders/` и `final/`; receipt
   `group` и подписью `variantLabel`.
 - Показывая preview, напомни: его можно посмотреть и утвердить в «Пульте роликов»
   (`automontage pult`).
-- Выполненную правку из пульта отмечай: `automontage inbox --accept <папка> <id>`.
+- Выполненную правку из пульта отмечай: `automontage inbox --accept <папка> <id>` (имя папки
+  без `projects/`).

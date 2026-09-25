@@ -344,7 +344,8 @@ node scripts/build.js <project-dir>/input/source.mp4 --template lesson \
   `group` и подписью `variantLabel`.
 - Показывая preview, напомни: его можно посмотреть и утвердить в «Пульте роликов»
   (`automontage pult`).
-- Выполненную правку из пульта отмечай: `automontage inbox --accept <папка> <id>`.
+- Выполненную правку из пульта отмечай: `automontage inbox --accept <папка> <id>` (имя папки
+  без `projects/`).
 
 ## Когда остановиться
 
