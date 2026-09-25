@@ -29,14 +29,21 @@ function mediaUrl(url) {
 }
 
 async function api(pathname, { method = 'GET', body } = {}) {
-  const response = await fetch(pathname, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(pathname, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (_) {
+    // Сервер пульта закрылся или недоступен: fetch() отклоняется низкоуровневой сетевой
+    // ошибкой браузера («Failed to fetch»), которую человеку показывать нельзя.
+    throw new Error('Пульт не отвечает — откройте его снова значком «Пульт роликов».');
+  }
   const text = await response.text();
   let payload = null;
   try {
@@ -44,7 +51,15 @@ async function api(pathname, { method = 'GET', body } = {}) {
   } catch (_) {
     payload = null;
   }
-  if (!response.ok) throw new Error((payload && payload.message) || 'Запрос не выполнен');
+  if (!response.ok) {
+    // 401 и 503 сервер отдаёт как обычный текст, а не JSON (см. sendError в http.js),
+    // и это не разовая ошибка запроса — токен умер или пульт выключается совсем.
+    if (response.status === 401) throw new Error('Ключ доступа устарел — откройте пульт заново значком.');
+    if (response.status === 503) throw new Error('Пульт закрывается — откройте его снова значком.');
+    const error = new Error((payload && payload.message) || 'Запрос не выполнен');
+    error.code = payload && payload.code;
+    throw error;
+  }
   return payload;
 }
 
@@ -227,6 +242,7 @@ function currentVariant(card) {
 }
 
 function openCard(cardId) {
+  notify('');
   state.openCardId = cardId;
   const card = currentCard();
   state.variantKey = card ? leadVariant(card).key : null;
@@ -236,6 +252,7 @@ function openCard(cardId) {
 }
 
 function closeCard() {
+  notify('');
   state.openCardId = null;
   state.variantKey = null;
   document.querySelector('[data-view="detail"]').hidden = true;
@@ -282,8 +299,12 @@ function actionsBlock(card, variant) {
 
 function approveBlock(variant) {
   const box = el('div', 'approve');
+  // Билет запоминаем на самой коробке — по нему фоновое обновление узнаёт, что вариант
+  // стал (не)утверждаемым или что появился новый preview, не дожидаясь полной перерисовки.
+  box.dataset.ticket = variant.approvalTicket || '';
   if (!variant.approvable) {
     box.hidden = true;
+    box.setHistoryMode = () => {};
     return box;
   }
   box.append(el('h3', '', 'Утверждение'));
@@ -295,7 +316,10 @@ function approveBlock(variant) {
   const approve = el('button', 'primary', 'Утверждаю');
   approve.type = 'button';
   approve.disabled = true;
-  checkbox.addEventListener('change', () => { approve.disabled = !checkbox.checked; });
+  // Пока человек смотрит старую версию из Истории, утверждать нельзя — кнопка блокируется
+  // независимо от чекбокса (см. box.setHistoryMode, дергает renderDetail).
+  let viewingHistory = false;
+  checkbox.addEventListener('change', () => { approve.disabled = viewingHistory || !checkbox.checked; });
   approve.addEventListener('click', async () => {
     approve.disabled = true;
     try {
@@ -306,11 +330,22 @@ function approveBlock(variant) {
       notify('Утверждено. Скопируйте фразу для агента — он соберёт финал и проверит его.');
       await refresh();
     } catch (error) {
-      notify(error.message, 'error');
-      approve.disabled = !checkbox.checked;
+      if (error.code === 'PREVIEW_CHANGED') {
+        // Билет протух не из-за сети, а потому что ролик реально изменился — перечитываем
+        // карточку целиком вместо просьбы «обновите страницу вручную».
+        await refresh();
+        notify('Появилась новая версия preview — посмотрите её перед утверждением.', 'error');
+      } else {
+        notify(error.message, 'error');
+        approve.disabled = viewingHistory || !checkbox.checked;
+      }
     }
   });
   box.append(label, approve);
+  box.setHistoryMode = (active) => {
+    viewingHistory = active;
+    approve.disabled = active || !checkbox.checked;
+  };
   return box;
 }
 
@@ -355,7 +390,11 @@ function commentsBlock(variant, video) {
   const box = el('div', 'comments');
   box.append(el('h3', '', 'Правки'));
   if (!variant.video) {
-    box.append(el('p', 'hint', 'Правки можно оставить, когда появится видео.'));
+    const hint = variant.videoUnsupported
+      ? 'Этот формат не проигрывается в пульте — правку можно описать словами агенту.'
+      : 'Правки можно оставить, когда появится видео.';
+    box.append(el('p', 'hint', hint));
+    box.setHistoryMode = () => {};
     return box;
   }
   const time = el('span', 'comment-time', 'на 0:00');
@@ -398,6 +437,7 @@ function commentsBlock(variant, video) {
   form.append(time, text, save);
   box.append(form, list);
   loadComments(variant, list, video).catch((error) => notify(error.message, 'error'));
+  box.setHistoryMode = (active) => { save.disabled = active; };
   return box;
 }
 
@@ -445,6 +485,26 @@ function renderDetail() {
   }
   const videoLabel = el('p', 'player__label', videoLabelText);
   playerColumn.append(video, videoLabel);
+
+  // approveBox/commentsBox назначаются ниже, но замыкания истории читают их только по
+  // клику — к тому моменту renderDetail уже отработает целиком, и обе переменные будут
+  // присвоены (порядок объявления здесь не важен, важен порядок исполнения).
+  let approveBox;
+  let commentsBox;
+  const historyBar = el('div', 'history-bar');
+  historyBar.hidden = true;
+  const backToCurrent = el('button', 'link-button', 'Вернуться к текущей');
+  backToCurrent.type = 'button';
+  backToCurrent.addEventListener('click', () => {
+    if (variant.video) video.src = mediaUrl(variant.video.url);
+    videoLabel.textContent = videoLabelText;
+    historyBar.hidden = true;
+    approveBox.setHistoryMode(false);
+    commentsBox.setHistoryMode(false);
+  });
+  historyBar.append(el('span', 'history-bar__text', 'Вы смотрите прежнюю версию'), backToCurrent);
+  playerColumn.append(historyBar);
+
   if (variant.history.length) {
     const history = el('ul', 'history');
     history.hidden = true;
@@ -455,13 +515,22 @@ function renderDetail() {
       open.addEventListener('click', () => {
         video.src = mediaUrl(item.url);
         videoLabel.textContent = item.label;
+        // Кадр из Истории уже не текущий: правку по нему добавить нельзя (агент увидит
+        // не тот таймкод), а утверждение всегда привязано именно к текущему preview.
+        historyBar.hidden = false;
+        approveBox.setHistoryMode(true);
+        commentsBox.setHistoryMode(true);
       });
       row.append(open);
       history.append(row);
     }
     const toggle = el('button', 'secondary', `История (${variant.history.length})`);
     toggle.type = 'button';
-    toggle.addEventListener('click', () => { history.hidden = !history.hidden; });
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => {
+      history.hidden = !history.hidden;
+      toggle.setAttribute('aria-expanded', String(!history.hidden));
+    });
     playerColumn.append(toggle, history);
   }
   const side = el('div', 'detail__side');
@@ -469,7 +538,9 @@ function renderDetail() {
   badge.dataset.variantStatus = '';
   const next = el('p', 'detail__next', variant.nextStep);
   next.dataset.variantNext = '';
-  side.append(badge, next, approveBlock(variant), commentsBlock(variant, video), actionsBlock(card, variant));
+  approveBox = approveBlock(variant);
+  commentsBox = commentsBlock(variant, video);
+  side.append(badge, next, approveBox, commentsBox, actionsBlock(card, variant));
   layout.append(playerColumn, side);
   view.append(layout);
 }
@@ -481,6 +552,10 @@ async function refresh({ keepDetail = false } = {}) {
     notify(error.message, 'error');
     return;
   }
+  // Сервер снова ответил — прежняя ошибка («Failed to fetch», 409 и т.п.) больше не
+  // актуальна. Успешные подсказки (тон не 'error') это не трогает.
+  const notice = document.querySelector('[data-notice]');
+  if (notice.dataset.tone === 'error') notify('');
   updateTabs();
   if (!state.openCardId) {
     renderList();
@@ -503,6 +578,22 @@ async function refresh({ keepDetail = false } = {}) {
     badge.className = `badge badge--${variant.status}`;
   }
   if (next) next.textContent = variant.nextStep;
+  // Билет утверждения мог устареть между фоновыми обновлениями: новая правка убирает
+  // возможность утвердить, удаление правки — возвращает, а новый preview меняет билет
+  // на другой непустой. Лёгкое обновление badge/next этого не замечает — досверяем отдельно.
+  const approveBox = document.querySelector('.approve');
+  if (approveBox) {
+    const previousTicket = approveBox.dataset.ticket || '';
+    const freshTicket = variant.approvalTicket || '';
+    if (previousTicket !== freshTicket) {
+      if (!previousTicket || !freshTicket) {
+        approveBox.replaceWith(approveBlock(variant));
+      } else {
+        renderDetail();
+        notify('Появилась новая версия preview — посмотрите её перед утверждением.');
+      }
+    }
+  }
 }
 
 async function init() {

@@ -1,15 +1,65 @@
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const { test, expect } = require('playwright/test');
 
+const { createHash } = require('node:crypto');
+
 const { startPultServer } = require('../scripts/pult/server');
+const ws = require('../scripts/project/workspace');
+const pw = require('../scripts/project/preview-workspace');
 const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
+
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
+// Публикует ВТОРОЙ черновик и preview поверх уже утверждённого и отрендеренного проекта:
+// ролик возвращается в «Ждёт меня», а рендер v01 остаётся в Истории как прошлая версия —
+// нужен тесту A4 (просмотр Истории на карточке, которую всё ещё можно утвердить и править).
+function addSecondRevision(projectDir, name) {
+  let workspace = ws.createOrOpenProject({ projectDir });
+  const brief = {
+    version: 1,
+    status: 'draft',
+    source: workspace.sourcePath,
+    theme: 'lesson-neutral',
+    title: name,
+    output: { aspect: 'horizontal', width: 320, height: 180, fps: 25, durationInFrames: 100 },
+    corrections: [],
+    scenes: [{ scene: 'fullscreen', start: 0, end: 4, caption: 'СНОВА' }],
+  };
+  const draft = ws.publishBriefRevision(workspace, { brief, markdown: `# ${name} v2` });
+  workspace = ws.createOrOpenProject({ projectDir });
+  const plan = pw.planPreview(workspace, {
+    briefPath: draft.jsonPath,
+    briefSha256: sha256(fs.readFileSync(draft.jsonPath)),
+    range: { kind: 'full', fromSec: 0, toSec: 4 },
+  });
+  const staged = path.join(workspace.dir, 'previews', 'stage-v2.mp4');
+  fs.writeFileSync(staged, 'preview v2');
+  pw.publishCurrentPreview(workspace, plan, staged, {
+    width: 160, height: 90, fps: 25, generatedAt: '2026-09-21T10:05:00.000Z',
+  });
+}
 
 let session;
 let calls;
 let projectsDir;
 const cleanups = [];
 const registrar = { after: (fn) => cleanups.push(fn) };
+
+// Настоящий маленький вертикальный JPEG (не 3 байта текста «jpg»): у него есть
+// собственные ширина/высота, и только с ними браузер способен воспроизвести баг A1
+// (растянутая карточка) и проверить его исправление.
+let verticalThumbBytes;
+
+test.beforeAll(() => {
+  const tmp = path.join(os.tmpdir(), `pult-ui-thumb-${process.pid}.jpg`);
+  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=gray:s=180x320', '-frames:v', '1', tmp], { stdio: 'ignore' });
+  verticalThumbBytes = fs.readFileSync(tmp);
+  fs.rmSync(tmp, { force: true });
+});
 
 function fakeCapture(command, args) {
   if (command === 'ffprobe') {
@@ -20,7 +70,7 @@ function fakeCapture(command, args) {
       }),
     };
   }
-  fs.writeFileSync(args.at(-1), 'jpg');
+  fs.writeFileSync(args.at(-1), verticalThumbBytes);
   return { stdout: '' };
 }
 
@@ -236,4 +286,59 @@ test('a legacy .mkv variant shows the unsupported-format label', async ({ page }
   await expect(page.locator('[data-view="detail"]')).toBeVisible();
   await expect(page.locator('.player__label')).toHaveText('Этот формат не проигрывается в пульте — откройте в папке');
   await expect(page.locator('button', { hasText: 'Показать в папке' })).toBeVisible();
+});
+
+// --- Commit A: список читаем, утверждение честное ---
+
+test('a vertical thumbnail is letterboxed and never stretches the card row', async ({ page }) => {
+  await page.goto(session.url);
+  const box = await page.locator('.card', { hasText: 'Перфекционизм' }).locator('.card__thumb').boundingBox();
+  expect(box.height).toBeLessThanOrEqual(200);
+});
+
+test('the approve block for a ready card is fully hidden, not an empty bordered box', async ({ page }) => {
+  await openCard(page, 'Готовый ролик');
+  await expect(page.locator('.approve')).toBeHidden();
+});
+
+test('adding an edit hides the approve block; deleting it brings the block back', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  await expect(page.locator('.approve')).toBeVisible();
+  await page.fill('[data-comment-text]', 'Текст залезает на лицо');
+  await page.locator('button', { hasText: 'Добавить правку' }).click();
+  await expect(page.locator('[data-comment-list]')).toContainText('Текст залезает на лицо');
+  await expect(page.locator('.approve')).toBeHidden();
+  await page.locator('[data-comment-list] button', { hasText: 'Удалить' }).click();
+  await expect(page.locator('[data-comment-list]')).toContainText('Правок пока нет.');
+  await expect(page.locator('.approve')).toBeVisible();
+});
+
+test('watching a past render disables edits and approval until returning to the current version', async ({ page }) => {
+  await restartWith((dir) => {
+    const built = addDraftProject(dir, { folder: 'history-then-waiting', name: 'Снова на проверке', approve: true, final: true });
+    addSecondRevision(built.projectDir, 'Снова на проверке');
+  });
+  await openCard(page, 'Снова на проверке');
+  await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
+  await page.locator('button', { hasText: 'История' }).click();
+  await page.locator('.history button').first().click();
+  await expect(page.locator('.history-bar')).toBeVisible();
+  await expect(page.locator('.history-bar')).toContainText('Вы смотрите прежнюю версию');
+  await expect(page.locator('button', { hasText: 'Добавить правку' })).toBeDisabled();
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeDisabled();
+  await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
+  await expect(page.locator('.history-bar')).toBeHidden();
+  await expect(page.locator('button', { hasText: 'Добавить правку' })).toBeEnabled();
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeDisabled();
+  await page.check('[data-viewed]');
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeEnabled();
+});
+
+test('a dead server shows a Russian message, never the raw fetch error', async ({ page }) => {
+  await page.goto(session.url);
+  await session.close();
+  await page.evaluate(() => refresh());
+  await expect(page.locator('[data-notice]')).toHaveText(
+    'Пульт не отвечает — откройте его снова значком «Пульт роликов».',
+  );
 });
