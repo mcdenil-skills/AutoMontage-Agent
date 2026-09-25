@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
+const { pipeline } = require('node:stream');
 
 const { validateLessonBrief } = require('../lesson/brief');
 const {
@@ -609,14 +610,23 @@ function serveFile(request, response, file) {
     response.end();
     return;
   }
+  if (response.destroyed) {
+    // serveFile может быть вызван уже с уничтоженным response – например, из маршрута,
+    // который перед вызовом что-то ждёт (await). pipeline() тогда бросает синхронно, не
+    // успев подписаться на события потока, и дескриптор остаётся открытым – закрываем сами.
+    fs.closeSync(descriptor);
+    return;
+  }
   const stream = fs.createReadStream(expected.filePath, {
     fd: descriptor,
     autoClose: true,
     start,
     end,
   });
-  stream.on('error', () => response.destroy());
-  stream.pipe(response);
+  // pipeline, а не stream.pipe(): при отмене запроса (Chrome шлёт новый Range на каждой
+  // перемотке) response уничтожается раньше конца файла – pipe() не закрывает источник за
+  // собой, и файловый дескриптор остаётся висеть. pipeline() уничтожает оба конца всегда.
+  pipeline(stream, response, () => {});
 }
 
 function verifiedCurrentPreview(projectDir) {

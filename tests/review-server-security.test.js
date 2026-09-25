@@ -16,6 +16,7 @@ const { windowsFileSystem } = require('./helpers/windows-filesystem');
 
 const IMPORT_UUID = '4af36be4-0b26-4e6f-bd48-8bdd2215a4f1';
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const WINDOWS = process.platform === 'win32';
 
 function request(session, pathname, {
   token,
@@ -1609,6 +1610,106 @@ test('current rendered preview is token-protected, ranged, and hash-pinned at re
   fs.writeFileSync(preview.currentPath, Buffer.from('x'.repeat(bytes.length)));
   assert.equal((await request(session, '/media/current-preview', { token: session.token })).status, 404);
 });
+
+// Отменённый Range-запрос к serveFile: браузер рвёт соединение посреди файла (Chrome делает
+// это на каждой перемотке <video>). Если serveFile отдаёт поток через stream.pipe() вместо
+// pipeline(), файловый дескриптор источника остаётся открытым навсегда. agent: false – как в
+// tests/pult-http.test.js – чтобы каждый запрос шёл по своему сокету, без пула keep-alive.
+// Резолвится response.complete: false подтверждает, что отмена случилась до конца файла.
+function cancelRangedMediaRequest(session, pathname, token) {
+  return new Promise((resolve) => {
+    let response = null;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      // null, если соединение упало раньше самого ответа – это не «удалось дочитать до
+      // конца» (true) и не «отменили посреди файла» (false), поэтому не должно молча
+      // засчитаться как успешная отмена в проверке ниже.
+      resolve(response ? response.complete : null);
+    };
+    const outgoing = http.request({
+      host: '127.0.0.1',
+      port: session.server.address().port,
+      path: pathname,
+      agent: false,
+      headers: { authorization: `Bearer ${token}`, range: 'bytes=0-' },
+    }, (res) => {
+      response = res;
+      response.once('data', () => outgoing.destroy());
+      response.on('close', finish);
+      response.on('error', () => {});
+    });
+    outgoing.on('error', () => {});
+    // Если соединение упало раньше ответа, request тоже эмитит 'close' – без этого один
+    // неудачный запрос подвесил бы промис и весь тест навсегда.
+    outgoing.on('close', finish);
+    outgoing.end();
+  });
+}
+
+test(
+  'review media streaming releases the file descriptor when a range request is cancelled',
+  { skip: WINDOWS && 'нет /dev/fd на Windows', timeout: 10_000 },
+  async (t) => {
+    const fixture = makeReviewProject(t);
+    // Файл должен быть достаточно большим, чтобы поток ещё читал его, когда клиент рвёт
+    // соединение – иначе передача успевает завершиться раньше отмены и утечка не проявится.
+    // workspace.sourcePath – скопированный внутрь проекта исходник (input/source.mp4),
+    // именно его отдаёт /media/source, а не внешний camera.mp4 из фикстуры.
+    const fileSize = 2 * 1024 * 1024;
+    fs.writeFileSync(fixture.workspace.sourcePath, Buffer.alloc(fileSize, 1));
+    const session = await startTestReviewServer({ root: ROOT, projectDir: fixture.projectDir, open: false });
+    t.after(() => closeServer(session.server));
+
+    // Убедиться, что обычный (не отменённый) запрос честно отдаёт весь файл – иначе тест ниже
+    // мог бы пройти даже при полностью сломанном /media/source.
+    const full = await request(session, '/media/source', { token: session.token });
+    assert.equal(full.status, 200);
+    assert.equal(full.body.length, fileSize);
+
+    const fdCount = () => fs.readdirSync('/dev/fd').length;
+    // Дать осесть хвостовым дескрипторам от предыдущих тестов файла, прежде чем снимать
+    // базовую метку – иначе случайно закрывающийся чужой сокет сдвигает счёт мимо теста.
+    let before = fdCount();
+    const settleDeadline = Date.now() + 2000;
+    let stableReadings = 0;
+    while (stableReadings < 3) {
+      assert.ok(
+        Date.now() < settleDeadline,
+        `число дескрипторов не устоялось за 2 с (последнее значение ${before})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const reading = fdCount();
+      if (reading === before) stableReadings += 1;
+      else { before = reading; stableReadings = 0; }
+    }
+
+    const ATTEMPTS = 20;
+    const completed = [];
+    for (let i = 0; i < ATTEMPTS; i += 1) {
+      completed.push(await cancelRangedMediaRequest(session, '/media/source', session.token));
+    }
+    // Самопроверка: если хоть один запрос успел дочитаться целиком, отмена не задела
+    // середину потока, и тест мог бы пройти, не упражняя утечку вовсе.
+    assert.deepEqual(completed, new Array(ATTEMPTS).fill(false));
+
+    // Дать серверу время закрыть файловые дескрипторы после отмены запросов.
+    let after = fdCount();
+    const deadline = Date.now() + 1000;
+    while (after > before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = fdCount();
+    }
+    // <= а не ===: соседний тест файла мог закрыть свой сокет ровно в этот момент, и счётчик
+    // пойдёт вниз – это не утечка. Настоящая утечка добавляет +20.
+    assert.ok(after <= before, `утекло ${after - before} дескрипторов`);
+    // Позитивный случай на 206 (точные байты, Content-Range) для того же serveFile уже
+    // проверен тестом «current rendered preview is token-protected, ranged, and
+    // hash-pinned at request time» выше – не дублируем его здесь; полный 200-запрос
+    // выше в этом тесте покрывает позитивный случай без Range.
+  },
+);
 
 test('current rendered preview refuses a symlink even when its target has registered bytes', async (t) => {
   const fixture = makeReviewProject(t);

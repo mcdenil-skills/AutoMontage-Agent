@@ -36,9 +36,11 @@ npm test
 - Review security: random token на каждом `/api/*` и `/media/*`, same-session Origin для POST,
   read-only `405`, traversal/symlink, oversized body, unknown command, свежий disk state,
   source/asset identity expiry, secure `0600` handoff без token в CLI-логе и его cleanup при
-  `SIGINT`/`SIGTERM` с восстановлением process listeners; реальные subprocess-регрессии прерывают
-  partial upload и actual ffmpeg для прямого CLI, а также import через публичный wrapper, проверяя
-  exit 130/143 только после удаления lease/quarantine и успешный следующий запуск;
+  `SIGINT`/`SIGTERM` с восстановлением process listeners; отменённый Range-запрос к `/media/source`
+  освобождает файловый дескриптор источника вместо утечки до перезапуска сервера; реальные
+  subprocess-регрессии прерывают partial upload и actual ffmpeg для прямого CLI, а также import
+  через публичный wrapper, проверяя exit 130/143 только после удаления lease/quarantine и
+  успешный следующий запуск;
 - Review edit contract: только adjacent boundary и allowlisted image/video b-roll, отсутствие
   global ripple, opaque asset handles, fit/start/audio commands, покадровый clip overrun,
   frame/word timing reasons, межпроцессный project lease, in-memory undo/redo, новая draft-пара
