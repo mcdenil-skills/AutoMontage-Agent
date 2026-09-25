@@ -587,3 +587,20 @@ test('card titles stay bold and the handoff hint sits flush', async ({ page }) =
     .evaluate((node) => [getComputedStyle(node).marginTop, getComputedStyle(node).marginBottom]);
   expect(margins).toEqual(['0px', '0px']);
 });
+
+// document.fonts.check() возвращает true даже для незнакомых семейств в некоторых
+// движках, поэтому проверка ищет настоящий загруженный FontFace с именем Onest, а не
+// только полагается на check(). Кавычки вокруг family снимаем: браузеры отдают либо
+// "Onest", либо Onest в зависимости от того, как шрифт объявлен в @font-face.
+test('the pult loads its own Onest font instead of falling back to a system one', async ({ page }) => {
+  await page.goto(session.url);
+  const onest = await page.evaluate(async () => {
+    await document.fonts.ready;
+    const face = [...document.fonts].find((item) => item.family.replace(/^['"]|['"]$/g, '') === 'Onest');
+    return face ? { family: face.family, status: face.status } : null;
+  });
+  expect(onest).toBeTruthy();
+  expect(onest.status).toBe('loaded');
+  const bodyFont = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
+  expect(bodyFont.replace(/^['"]|['"]$/g, '')).toMatch(/^Onest\b/);
+});

@@ -12,6 +12,7 @@ const {
   requestToken,
   safeTokenEqual,
   serveFile,
+  serveStatic,
 } = require('../scripts/pult/http');
 
 const WINDOWS = process.platform === 'win32';
@@ -150,6 +151,71 @@ test('serveFile: a regular file serves 200, a symlinked final component is rejec
     return new Promise((resolve) => response.on('end', () => resolve(response.statusCode)));
   });
   assert.equal(linkedStatus, 404);
+});
+
+// Мини-сервер поверх serveStatic: как route() в scripts/pult/server.js, отсутствие
+// совпадения в белом списке само по себе не отвечает – это делает вызывающий код.
+function withServeStaticServer(root, pathname) {
+  const server = http.createServer((request, response) => {
+    if (!serveStatic(root, pathname, request, response)) {
+      response.writeHead(404);
+      response.end();
+    }
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      const outgoing = http.request({ host: '127.0.0.1', port, path: '/probe', agent: false });
+      outgoing.on('error', reject);
+      outgoing.on('response', (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => {
+          const result = {
+            status: response.statusCode,
+            type: response.headers['content-type'],
+            body: Buffer.concat(chunks),
+          };
+          server.close(() => resolve(result));
+        });
+      });
+      outgoing.end();
+    });
+  });
+}
+
+test('serveStatic serves a whitelisted file by its real path and rejects a symlink on any directory or the file itself', { skip: WINDOWS && 'символические ссылки требуют прав на Windows' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-http-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  // Позитивный случай: настоящий public/fonts/Onest.ttf под настоящим root.
+  const realRoot = path.join(dir, 'real-root');
+  fs.mkdirSync(path.join(realRoot, 'public', 'fonts'), { recursive: true });
+  fs.writeFileSync(path.join(realRoot, 'public', 'fonts', 'Onest.ttf'), 'font bytes');
+  const ok = await withServeStaticServer(realRoot, '/fonts/Onest.ttf');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.type, 'font/ttf');
+  assert.equal(ok.body.toString('utf8'), 'font bytes');
+
+  // Файл лежит не под public/fonts, а где-то ещё, и подставлен только симлинком.
+  const elsewhere = path.join(dir, 'elsewhere-fonts');
+  fs.mkdirSync(elsewhere, { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'Onest.ttf'), 'font bytes');
+
+  // Негативный случай 1: symlink вместо каталога public/fonts – под подозрением весь
+  // путь до файла, а не только его последний компонент.
+  const linkedDirRoot = path.join(dir, 'linked-dir-root');
+  fs.mkdirSync(path.join(linkedDirRoot, 'public'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(linkedDirRoot, 'public', 'fonts'));
+  const linkedDir = await withServeStaticServer(linkedDirRoot, '/fonts/Onest.ttf');
+  assert.equal(linkedDir.status, 404);
+
+  // Негативный случай 2: сам файл – симлинк на настоящий шрифт в другом месте.
+  const linkedFileRoot = path.join(dir, 'linked-file-root');
+  fs.mkdirSync(path.join(linkedFileRoot, 'public', 'fonts'), { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'Onest.ttf'), path.join(linkedFileRoot, 'public', 'fonts', 'Onest.ttf'));
+  const linkedFile = await withServeStaticServer(linkedFileRoot, '/fonts/Onest.ttf');
+  assert.equal(linkedFile.status, 404);
 });
 
 function statusAndType(filePath) {

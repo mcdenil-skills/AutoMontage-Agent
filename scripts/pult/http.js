@@ -8,11 +8,15 @@ const { parseRange } = require('../review/server');
 
 const BODY_LIMIT = 64 * 1024;
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
+// dir – каталоги относительно root, каждый проверяется на симлинк перед файлом.
 const STATIC_FILES = new Map([
-  ['/', 'index.html'],
-  ['/index.html', 'index.html'],
-  ['/app.js', 'app.js'],
-  ['/styles.css', 'styles.css'],
+  ['/', { dir: ['pult'], file: 'index.html' }],
+  ['/index.html', { dir: ['pult'], file: 'index.html' }],
+  ['/app.js', { dir: ['pult'], file: 'app.js' }],
+  ['/styles.css', { dir: ['pult'], file: 'styles.css' }],
+  // Единственный шрифт страницы: свой Onest вместо недоступного Inter, без ключей CSP –
+  // default-src 'self' уже разрешает файл того же источника.
+  ['/fonts/Onest.ttf', { dir: ['public', 'fonts'], file: 'Onest.ttf' }],
 ]);
 // Только для serveStatic (страница пульта) и JSON-ответов – не для медиа.
 const CONTENT_TYPES = new Map([
@@ -20,6 +24,7 @@ const CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
+  ['.ttf', 'font/ttf'],
 ]);
 // Только для serveFile: пульт отдаёт через него лишь эти медиа, всё остальное – 404.
 const MEDIA_CONTENT_TYPES = new Map([
@@ -141,21 +146,26 @@ function readJsonBody(request, limit = BODY_LIMIT) {
 }
 
 function serveStatic(root, pathname, request, response) {
-  const filename = STATIC_FILES.get(pathname);
-  if (!filename) return false;
+  const entry = STATIC_FILES.get(pathname);
+  if (!entry) return false;
   const head = request.method === 'HEAD';
-  const directory = path.resolve(root, 'pult');
-  const filePath = path.join(directory, filename);
   try {
-    const directoryStat = fs.lstatSync(directory);
+    // Каждый каталог на пути – не только последний – проверяется на симлинк: шрифт
+    // лежит на два уровня глубже страницы (public/fonts/…), и подмена любого из них
+    // не должна тихо подсунуть чужой файл.
+    let directory = path.resolve(root);
+    for (const segment of entry.dir) {
+      directory = path.join(directory, segment);
+      const directoryStat = fs.lstatSync(directory);
+      if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) throw new Error('unsafe static directory');
+    }
+    const filePath = path.join(directory, entry.file);
     const fileStat = fs.lstatSync(filePath);
-    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()
-      || fileStat.isSymbolicLink() || !fileStat.isFile()) throw new Error('unsafe static file');
+    if (fileStat.isSymbolicLink() || !fileStat.isFile()) throw new Error('unsafe static file');
+    send(response, 200, fs.readFileSync(filePath), { 'Content-Type': contentType(filePath) }, head);
   } catch (_) {
     sendError(response, 404, head);
-    return true;
   }
-  send(response, 200, fs.readFileSync(filePath), { 'Content-Type': contentType(filePath) }, head);
   return true;
 }
 

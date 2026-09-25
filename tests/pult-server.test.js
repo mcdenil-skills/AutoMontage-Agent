@@ -10,7 +10,7 @@ const { createOrOpenProject, readProjectManifest } = require('../scripts/project
 const { acceptComment, readComments } = require('../scripts/pult/comments');
 const { startPultServer } = require('../scripts/pult/server');
 const {
-  addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
+  ROOT, addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
 } = require('./helpers/pult-projects');
 
 function fakeCapture(command, args) {
@@ -169,6 +169,23 @@ test('the page loads without a token and carries a strict CSP', async (t) => {
   assert.equal(page.status, 200);
   assert.match(page.headers['content-type'], /text\/html/);
   assert.match(page.headers['content-security-policy'], /default-src 'self'/);
+});
+
+test('the pult serves its own Onest font without a token, and only that exact path', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const fontPath = path.join(ROOT, 'public', 'fonts', 'Onest.ttf');
+  const font = await request(session, '/fonts/Onest.ttf');
+  assert.equal(font.status, 200);
+  assert.equal(font.headers['content-type'], 'font/ttf');
+  assert.match(font.headers['content-security-policy'], /default-src 'self'/);
+  assert.equal(font.headers['x-content-type-options'], 'nosniff');
+  assert.ok(font.body.equals(fs.readFileSync(fontPath)));
+  // Похожие, но не совпадающие в точности пути не должны отдавать ничего лишнего:
+  // другое имя, обход каталога, другой регистр и конечный слеш.
+  for (const pathname of ['/fonts/Other.ttf', '/fonts/../package.json', '/fonts/onest.ttf', '/fonts/Onest.ttf/']) {
+    assert.equal((await request(session, pathname)).status, 404, pathname);
+  }
 });
 
 test('API and media require the session token', async (t) => {
