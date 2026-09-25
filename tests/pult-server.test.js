@@ -134,6 +134,14 @@ function previewFileOf(projectsDir, folder) {
   return path.join(projectsDir, folder, ...manifest.currentPreview.filePath.split('/'));
 }
 
+// JSON.stringify экранирует обратный слэш: на Windows «сырой» projectsDir (одиночные \)
+// никогда не найдётся внутри уже сериализованного JSON-текста, даже если путь реально
+// утёк – ищем и экранированную форму, как она выглядела бы внутри JSON-строки.
+function assertNoPathLeak(text, projectsDir) {
+  assert.ok(!text.includes(projectsDir), 'сырой путь утёк в ответ');
+  assert.ok(!text.includes(JSON.stringify(projectsDir).slice(1, -1)), 'экранированный JSON-путь утёк в ответ');
+}
+
 // Новый полный preview того же черновика – как это делает агент после правки.
 function republishFullPreview(projectsDir, folder, bytes) {
   const projectDir = path.join(projectsDir, folder);
@@ -225,7 +233,7 @@ test('cards list waiting videos first and never expose paths or hashes', async (
   assert.deepEqual(variant.meta, { width: 1080, height: 1920, durationSec: 4 });
   assert.equal(typeof variant.approvalTicket, 'string');
   const text = JSON.stringify(cards);
-  assert.ok(!text.includes(projectsDir));
+  assertNoPathLeak(text, projectsDir);
   assert.doesNotMatch(text, /[a-f0-9]{64}/);
   assert.doesNotMatch(text, /brief\//);
   assert.equal(cards.ready[0].variants[0].approvalTicket, null);
@@ -265,7 +273,7 @@ test('media urls carry a version that changes only when the video file changes',
 
   const text = JSON.stringify((await get(session, '/api/cards')).json);
   assert.doesNotMatch(text, /[a-f0-9]{64}/);
-  assert.ok(!text.includes(projectsDir));
+  assertNoPathLeak(text, projectsDir);
 });
 
 // Подпись «Утверждённый preview – агент собирает финал» опирается на флаг сервера, а не
@@ -493,7 +501,7 @@ test('an engine refusal of a still-current ticket is reported as blocked and lea
   assert.equal((await variantOf(session, 'waiting-clip')).approvalTicket, ticket);
   assert.ok(calls.logs.length > 0);
   assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('brollSrc')));
-  assert.ok(!blocked.body.toString('utf8').includes(projectsDir));
+  assertNoPathLeak(blocked.body.toString('utf8'), projectsDir);
 });
 
 test('an engine failure after the draft changed reports a changed preview', async (t) => {
@@ -613,7 +621,7 @@ test('internal errors never leak absolute paths to the page or the log', async (
   const failed = await get(session, '/api/cards');
   assert.equal(failed.status, 500);
   assert.deepEqual(failed.json, { code: 'INTERNAL', message: 'Внутренняя ошибка пульта' });
-  assert.ok(!failed.body.toString('utf8').includes(projectsDir));
+  assertNoPathLeak(failed.body.toString('utf8'), projectsDir);
   assert.ok(calls.logs.length > 0);
   assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('EACCES')));
 });

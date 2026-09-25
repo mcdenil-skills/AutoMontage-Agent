@@ -158,11 +158,16 @@ Windows-проверку. Import ownership отдельно воспроизво
 повтор разрешён только для identity-проверенных пустых tombstone и quarantine root, а чужой или
 недоказанный остаток должен сохраниться. Отдельная матрица использует NTFS-подобные inode выше
 `2^53`: собственные setup entries очищаются по точному BigInt id, а соседние округляемые id
-сохраняются. Отдельный шаг там же выполняет весь unit-набор пульта роликов
-(`tests/pult-*.test.js` через `(Get-ChildItem tests/pult-*.test.js).FullName`, чтобы pwsh
-раскрыл маску без пайпа) – браузерный `pult-ui.spec.js` в него не входит и остаётся в
-`review-ui`. Локально проверяются команды и YAML; hosted Windows run
-остаётся обязательным pre-merge gate.
+сохраняются. Отдельный шаг там же запускает каждый файл `tests/pult-*.test.js` – это все
+unit-файлы пульта, а не все их случаи: POSIX-only case внутри них (симлинки, chmod, SIGTERM,
+`/dev/fd`) сам пропускает себя через `process.platform === 'win32'`. Node 20 не раскрывает
+маску `--test` сам (это появилось только в Node 21), а pwsh не раскрывает маску для внешней
+команды – список файлов собирает `(Get-ChildItem tests/pult-*.test.js).FullName` без пайпа:
+`scripts/check-release.js` (правило `motion-ci`) отдельно требует, чтобы каждый шаг с
+`node --test` на Windows был одной строкой без `;`, `&`, `|` и обратных кавычек, иначе
+PowerShell может скрыть код выхода нативной команды за пайпом. Браузерный `pult-ui.spec.js`
+в этот шаг не входит и остаётся в `review-ui`. Локально проверяются команды и YAML; hosted
+Windows run остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
 `--frames`, `--max`, `--beatSec`, `--brandLock` и `--reframe` проверяются до ffprobe.

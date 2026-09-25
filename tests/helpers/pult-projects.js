@@ -19,7 +19,10 @@ const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 // registrar – объект с методом after(fn): node:test `t` или обёртка в Playwright.
 function makePultRoot(registrar) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-pult-'));
-  registrar.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  // after() выполняются в порядке регистрации: сервер, поднятый тестом уже внутри base,
+  // регистрирует своё закрытие позже этого rmSync – на Windows файл может ещё быть открыт
+  // сервером в момент удаления. maxRetries/retryDelay переживают короткий EBUSY/EPERM/ENOTEMPTY.
+  registrar.after(() => fs.rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const projectsDir = path.join(base, 'projects');
   fs.mkdirSync(projectsDir);
   return { base, projectsDir };

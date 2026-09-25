@@ -170,10 +170,22 @@ test('an alive pid whose port refuses connections is absent, not busy – remove
   const port = scratch.address().port;
   await new Promise((resolve) => scratch.close(resolve));
   writeInstance(projectsDir, { pid: process.pid, port, token: TOKEN });
+  let checks = 0;
   const started = Date.now();
-  const result = await findRunningInstance(projectsDir);
+  const result = await findRunningInstance(projectsDir, {
+    // Настоящий checkHealth против настоящего закрытого порта: считаем вызовы, чтобы поймать
+    // повторный опрос busyWaitMs, если поведение когда-нибудь регрессирует к busy-wait.
+    check: (p) => {
+      checks += 1;
+      return checkHealth(p);
+    },
+  });
   assert.equal(result, null);
-  assert.ok(Date.now() - started < 1000, 'ECONNREFUSED не должен дожидаться busyWaitMs');
+  assert.equal(checks, 1, 'ECONNREFUSED не должен вызывать повторные попытки busyWaitMs');
+  // Windows подтверждает отказ на localhost только после HEALTH_TIMEOUT_MS (до 3 с на win32,
+  // scripts/pult/instance.js) – граница выше этого таймаута, но далеко ниже 20 с busyWaitMs,
+  // которых при отказе в соединении не должно быть вовсе.
+  assert.ok(Date.now() - started < 5000, 'ECONNREFUSED не должен дожидаться busyWaitMs');
   assert.equal(fs.existsSync(instancePath(projectsDir)), false);
 });
 
