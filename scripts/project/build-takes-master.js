@@ -50,7 +50,7 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
   validateTakeRanges(normalized.ranges, takes);
   const [first] = used;
   // Граница, выбранная по таймингам Whisper, может попасть внутрь слова: Whisper прячет паузы
-  // внутрь соседних слов. Поэтому каждая граница сначала уходит в ближайшую паузу по звуку.
+  // внутрь соседних слов. Поэтому каждая граница сначала уходит в паузу рядом по звуку.
   const analyses = new Map();
   for (const take of used) {
     const levels = readTakeLevelsImpl(take.filePath, { stage: `${take.id} levels` });
