@@ -13,42 +13,89 @@ function formatTime(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+function readNewComments(projectDir) {
+  try {
+    return { comments: readComments(projectDir).filter((comment) => comment.status === 'new'), broken: false };
+  } catch (_) {
+    return { comments: [], broken: true };
+  }
+}
+
 // Собирает входящие по каждой папке ролика: новые правки и утверждения без финала.
 // Битый comments.json нельзя тихо пропускать — правки автора иначе незаметно
 // исчезнут из поля зрения агента, поэтому такая папка тоже попадает в результат
 // с флагом commentsBroken, даже если утверждений в ней нет.
 function buildInbox({ projectsDir }) {
   const byFolder = new Map();
-  for (const entry of scanProjects({ projectsDir }).entries) {
+  const scan = scanProjects({ projectsDir });
+  for (const entry of scan.entries) {
     let item = byFolder.get(entry.folder);
     if (!item) {
-      let comments = [];
-      let commentsBroken = false;
-      try {
-        comments = readComments(path.join(projectsDir, entry.folder)).filter((comment) => comment.status === 'new');
-      } catch (_) {
-        commentsBroken = true;
-      }
+      const { comments, broken } = readNewComments(path.join(projectsDir, entry.folder));
       item = {
-        folder: entry.folder, title: entry.title, approved: [], comments, commentsBroken, currentVideos: new Set(),
+        folder: entry.folder,
+        title: entry.title,
+        approved: [],
+        comments,
+        commentsBroken: broken,
+        passportError: null,
+        currentVideos: new Set(),
       };
       byFolder.set(entry.folder, item);
     }
     if (entry.needsFinal) item.approved.push(entry.briefPath);
     if (entry.video) item.currentVideos.add(`${entry.video.path}\0${entry.video.sha256}`);
   }
+
+  // Паспорт ролика может не читаться (`broken`) или отсутствовать вовсе (`unregistered`):
+  // такая папка не попадает в scan.entries, но правки на диске в ней никуда не делись.
+  // Молча пропускать эти папки значило бы терять текст автора из виду только потому,
+  // что паспорт сломан или его ещё не завели.
+  const passportProblems = [
+    ...scan.broken.map((problem) => ({ folder: problem.folder, passportError: problem.error })),
+    ...scan.unregistered.map((problem) => ({
+      folder: problem.folder,
+      passportError: 'У папки нет паспорта ролика (project.json)',
+    })),
+  ];
+  for (const problem of passportProblems) {
+    if (byFolder.has(problem.folder)) continue;
+    const { comments, broken } = readNewComments(path.join(projectsDir, problem.folder));
+    // Без новых правок и без битого файла правок нечитаемая папка — забота каталога,
+    // а не входящие пульта: не добавлять её, чтобы не шуметь.
+    if (!comments.length && !broken) continue;
+    byFolder.set(problem.folder, {
+      folder: problem.folder,
+      title: problem.folder.normalize('NFC'),
+      approved: [],
+      comments,
+      commentsBroken: broken,
+      passportError: problem.passportError,
+      currentVideos: new Set(),
+    });
+  }
+
   return [...byFolder.values()]
-    .filter((item) => item.comments.length || item.approved.length || item.commentsBroken)
+    .filter((item) => item.comments.length || item.approved.length || item.commentsBroken || item.passportError)
     .map((item) => ({
       folder: item.folder,
       title: item.title,
       approved: item.approved,
       commentsBroken: item.commentsBroken,
+      passportError: item.passportError,
       comments: item.comments.map((comment) => ({
         ...comment,
         outdated: !item.currentVideos.has(`${comment.video.path}\0${comment.video.sha256}`),
       })),
     }));
+}
+
+// Текст правки, название ролика и текст ошибки паспорта попадают прямо в терминал
+// агента как есть. Управляющие байты (ESC, BEL и другие C0/C1) вырезаем до печати:
+// иначе чужой текст в comments.json мог бы вставить ANSI-escape или сменить заголовок
+// терминала. После этого схлопываем пробелы, как и раньше.
+function sanitizeText(value) {
+  return String(value).replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ');
 }
 
 function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
@@ -62,7 +109,10 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
   const lines = ['# Входящие пульта', ''];
   for (const item of items) {
     const dir = path.join(projectsDir, item.folder);
-    lines.push(`## ${item.title} — \`${display(dir)}\``, '');
+    lines.push(`## ${sanitizeText(item.title)} — \`${display(dir)}\``, '');
+    if (item.passportError) {
+      lines.push(`- Паспорт ролика не читается: ${sanitizeText(item.passportError)}. Почини паспорт, затем выполни правки.`);
+    }
     if (item.commentsBroken) {
       lines.push(`- Файл правок повреждён: \`${display(path.join(dir, 'pult', 'comments.json'))}\`. Проверь его и попроси автора повторить правки в пульте.`);
     }
@@ -72,7 +122,7 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
     for (const comment of item.comments) {
       const outdated = comment.outdated ? ' (к прежней версии видео)' : '';
       const frame = comment.frame ? ` Кадр: \`${display(path.join(dir, ...comment.frame.split('/')))}\`.` : '';
-      const text = comment.text.replace(/\s+/g, ' ');
+      const text = sanitizeText(comment.text);
       lines.push(`- Правка \`${comment.id}\` на ${formatTime(comment.timeSec)}${outdated}: «${text}». Видео: \`${comment.video.path}\`.${frame}`);
     }
     lines.push('');

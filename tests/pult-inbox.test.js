@@ -81,3 +81,60 @@ test('a corrupted comments.json is reported instead of silently dropped', (t) =>
   assert.match(text, /## Ролик с правкой — `projects\/waiting`/);
   assert.match(text, /- Правка `c-0001` на 0:14/);
 });
+
+test('a folder with an unreadable project.json still shows its pending edits', (t) => {
+  const { projectsDir, waiting } = withComment(t);
+  // Паспорт битый, но правка на диске никуда не делась — её нельзя терять из виду.
+  fs.writeFileSync(path.join(waiting.projectDir, 'project.json'), '{ not valid json');
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(text, /## waiting — `projects\/waiting`/);
+  assert.match(
+    text,
+    /- Паспорт ролика не читается: Паспорт ролика не читается\. Почини паспорт, затем выполни правки\./,
+  );
+  assert.match(text, /- Правка `c-0001` на 0:14/);
+});
+
+test('a folder without a project.json at all still shows its pending edits', (t) => {
+  const { projectsDir, waiting } = withComment(t);
+  fs.rmSync(path.join(waiting.projectDir, 'project.json'));
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.match(text, /## waiting — `projects\/waiting`/);
+  assert.match(
+    text,
+    /- Паспорт ролика не читается: У папки нет паспорта ролика \(project\.json\)\. Почини паспорт, затем выполни правки\./,
+  );
+  assert.match(text, /- Правка `c-0001` на 0:14/);
+});
+
+test('a passport-broken folder without any comments file is not inbox noise', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const dir = path.join(projectsDir, 'silent');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'project.json'), '{ not valid json');
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.equal(text, 'Во входящих пульта пусто.');
+});
+
+test('comment text is stripped of terminal control characters, plain text stays intact', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const project = addDraftProject(projectsDir, { folder: 'esc', name: 'Эскейп' });
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === 'esc');
+  addComment(project.projectDir, {
+    timeSec: 1,
+    text: 'Текст \u001b[31mRED\u001b[0m \u0007 \u001b]0;title\u0007 конец',
+    video: entry.video,
+  }, { id: () => 'c-0002' });
+  addComment(project.projectDir, {
+    timeSec: 2,
+    text: 'Обычный текст без сюрпризов',
+    video: entry.video,
+  }, { id: () => 'c-0003' });
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.ok(!text.includes('\u001b'), 'escape-последовательности не должны попадать в терминал');
+  assert.ok(!text.includes('\u0007'), 'символ BEL не должен попадать в терминал');
+  assert.match(text, /Текст/);
+  assert.match(text, /RED/);
+  assert.match(text, /конец/);
+  assert.match(text, /Обычный текст без сюрпризов/);
+});
