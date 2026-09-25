@@ -11,6 +11,7 @@ const { startPultServer } = require('../scripts/pult/server');
 // отрендеренного проекта: рендер v01 остаётся в Истории как прошлая версия.
 const {
   addDraftProject, addLegacyFolder, addSecondRevision, approveDraft, makePultRoot,
+  publishDraftWithoutPreview,
 } = require('./helpers/pult-projects');
 
 let session;
@@ -551,6 +552,30 @@ test('a background approval does not change the label while watching History, bu
   await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
   await expect(page.locator('.history-bar')).toBeHidden();
   await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
+});
+
+// A3, третий сценарий из формулировки задачи: агент опубликовал новую ревизию brief, но ещё
+// не собрал под неё preview – старый файл на диске больше не относится к текущему brief.
+test('a brief revision published without a new preview marks the label stale', async ({ page }) => {
+  let built;
+  await restartWith((dir) => {
+    built = addDraftProject(dir, {
+      folder: 'stale-preview', name: 'Ждём новый preview', previewBytes: playableVideoBytes,
+    });
+  });
+  await openCard(page, 'Ждём новый preview');
+  await expect(page.locator('.player__label')).toHaveText('Preview на проверку');
+  const player = page.locator('[data-player]');
+  await waitForPlayerMetadata(page);
+  await player.evaluate((video) => { video.pultMarker = 'kept'; });
+
+  publishDraftWithoutPreview(built.projectDir, 'Ждём новый preview');
+  await backgroundRefresh(page);
+
+  await expect(page.locator('.player__label')).toHaveText('Preview устарел – агент готовит новый');
+  // Файл на диске не менялся – плеер остался тем же элементом.
+  await expect(player).toHaveCount(1);
+  expect(await player.evaluate((video) => video.pultMarker)).toBe('kept');
 });
 
 test('deleting an edit while watching History keeps approval locked', async ({ page }) => {

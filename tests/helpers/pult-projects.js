@@ -157,9 +157,27 @@ function unresolvedBrollScenes() {
 // что и фикстура addDraftProject({ approve: true }), но для проекта, который тест уже открыл
 // в пульте (карточку в браузере). workspace всегда перечитываем заново: approveBrief сверяет
 // его manifest с тем, что реально лежит на диске, а объект, который вернул addDraftProject,
-// к этому моменту устарел.
+// к этому моменту мог устареть.
 function approveDraft(projectDir, draftJsonPath) {
   return approveBrief(reopen(projectDir), draftJsonPath, { confirmPreviewViewed: true });
+}
+
+// Публикует новую ревизию brief БЕЗ нового preview – ровно та ситуация, из-за которой видео
+// устаревает («Preview устарел – агент готовит новый»): движок ещё не отдал файл под новую
+// версию, а preview на диске остался от прежнего brief.
+function publishDraftWithoutPreview(projectDir, name) {
+  const workspace = reopen(projectDir);
+  const brief = {
+    version: 1,
+    status: 'draft',
+    source: workspace.sourcePath,
+    theme: 'lesson-neutral',
+    title: name,
+    output: { aspect: 'horizontal', width: 320, height: 180, fps: 25, durationInFrames: 100 },
+    corrections: [],
+    scenes: [{ scene: 'fullscreen', start: 0, end: 4, caption: 'ЕЩЁ' }],
+  };
+  return publishBriefRevision(workspace, { brief, markdown: `# ${name} v.next` });
 }
 
 function addLegacyFolder(projectsDir, folder, { card = null, files = {} } = {}) {
@@ -181,6 +199,7 @@ module.exports = {
   addSecondRevision,
   approveDraft,
   makePultRoot,
+  publishDraftWithoutPreview,
   sha256,
   unresolvedBrollScenes,
 };

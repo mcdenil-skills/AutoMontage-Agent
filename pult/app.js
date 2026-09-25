@@ -745,7 +745,9 @@ function syncDetail(card) {
   if (videoLabel) {
     const freshLabel = videoLabelFor(variant);
     videoLabel.dataset.currentLabel = freshLabel;
-    if (!historyShown()) videoLabel.textContent = freshLabel;
+    // Сравниваем перед записью: textContent = то же значение всё равно снимает выделение
+    // текста в браузере, а фоновый опрос идёт каждые 20 секунд без всякой реальной смены.
+    if (!historyShown() && videoLabel.textContent !== freshLabel) videoLabel.textContent = freshLabel;
   }
   const badge = document.querySelector('[data-variant-status]');
   const next = document.querySelector('[data-variant-next]');
