@@ -88,8 +88,16 @@ function snapTakeRanges(ranges, { fps, takes }) {
       if (range.startFrame < other.range.endFrame && other.range.startFrame < range.endFrame) {
         if (raw.start >= otherRaw.end) {
           range.startFrame = other.range.endFrame;
+          // Кусок, которому достался общий кадр, "запрашивает" и его, иначе слово на стыке
+          // выпадет из обоих кусков.
+          other.range.requestedEnd = Math.max(
+            other.range.requestedEnd, frameToSeconds(other.range.endFrame, rate),
+          );
         } else {
           range.endFrame = other.range.startFrame;
+          other.range.requestedStart = Math.min(
+            other.range.requestedStart, frameToSeconds(other.range.startFrame, rate),
+          );
         }
         if (range.endFrame <= range.startFrame) {
           throw new Error(`ranges[${index}] is shorter than one frame after snapping`);
@@ -134,17 +142,22 @@ function dropOutsideRequested(words, range) {
   return words.filter((word) => word.e > range.requestedStart && word.s < range.requestedEnd);
 }
 
-// Whisper на тишине иногда «слышит» слова («Продолжение следует»). На краях куска такие слова
-// лежат целиком в паузе: их убираем с начала и с конца куска, слова внутри куска не трогаем.
+// Whisper на тишине иногда «слышит» слова («Продолжение следует») или растягивает конец
+// соседнего слова в паузу. Слово у края куска убираем, если его часть внутри куска лежит
+// в тишине (галлюцинация Whisper или растянутое в паузу соседнее слово); слова внутри куска
+// не трогаем. Проверяем не весь исходный отрезок слова у Whisper, а только его часть внутри
+// куска - иначе слово, которое лишь краем заходит в паузу на границе, никогда не признается
+// тихим целиком и застревает в субтитрах.
 function trimSilentEdgeWords(words, range, isSilent) {
   if (!Array.isArray(words) || typeof isSilent !== 'function') return words;
+  const clip = (word) => ({ ...word, s: Math.max(word.s, range.start), e: Math.min(word.e, range.end) });
   const inside = words
     .filter((word) => word.e > range.start && word.s < range.end)
     .sort((left, right) => left.s - right.s || left.e - right.e);
   let first = 0;
   let last = inside.length - 1;
-  while (first <= last && isSilent(inside[first])) first += 1;
-  while (last >= first && isSilent(inside[last])) last -= 1;
+  while (first <= last && isSilent(clip(inside[first]))) first += 1;
+  while (last >= first && isSilent(clip(inside[last]))) last -= 1;
   return inside.slice(first, last + 1);
 }
 

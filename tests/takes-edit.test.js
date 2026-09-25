@@ -269,3 +269,57 @@ test('silent words at the edges of a piece are dropped, silent words inside stay
   ]]]), 25, { isSilentWord: (takeId, word) => takeId === 'take-01' && silent.has(word.w) });
   assert.deepEqual(words.map((word) => word.w), ['пока', 'и', 'всё']);
 });
+
+test('a word at an off-grid touching joint is kept once by the piece that keeps the shared frame', () => {
+  const ranges = snapTakeRanges([
+    { take: 'take-01', start: 2, end: 3.42, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 3.42, end: 5, beat: 'B', reason: 'y' },
+  ], { fps: 25, takes });
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'до', s: 3, e: 3.42 },
+    { w: 'и', s: 3.42, e: 3.43 },
+    { w: 'после', s: 3.5, e: 4 },
+  ]]]), 25);
+  assert.deepEqual(words.map((word) => word.w), ['до', 'и', 'после']);
+});
+
+test('a word at an off-grid touching joint is kept once when the earlier piece is listed second', () => {
+  const ranges = snapTakeRanges([
+    { take: 'take-01', start: 3.42, end: 5, beat: 'B', reason: 'y' },
+    { take: 'take-01', start: 2, end: 3.42, beat: 'A', reason: 'x' },
+  ], { fps: 25, takes });
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'до', s: 3, e: 3.41 },
+    { w: 'а', s: 3.41, e: 3.42 },
+    { w: 'после', s: 3.5, e: 4 },
+  ]]]), 25);
+  assert.deepEqual(words.map((word) => word.w), ['а', 'после', 'до']);
+});
+
+test('a word stretched from before the piece into a leading pause is trimmed', () => {
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 3.48, end: 5, beat: 'B', reason: 'x' }],
+    { fps: 25, takes },
+  );
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'эксперта?', s: 3, e: 3.54 },
+    { w: 'И', s: 3.54, e: 4.12 },
+  ]]]), 25, {
+    isSilentWord: (takeId, word) => takeId === 'take-01' && word.s >= 3.45 && word.e <= 3.54,
+  });
+  assert.deepEqual(words.map((word) => word.w), ['И']);
+});
+
+test('a word stretched from the piece into a trailing pause is trimmed', () => {
+  const ranges = snapTakeRanges(
+    [{ take: 'take-01', start: 1, end: 5.28, beat: 'A', reason: 'x' }],
+    { fps: 25, takes },
+  );
+  const words = remapTakeRangesTranscript(ranges, new Map([['take-01', [
+    { w: 'навыку', s: 4.8, e: 5.22 },
+    { w: 'да', s: 5.24, e: 5.6 },
+  ]]]), 25, {
+    isSilentWord: (takeId, word) => takeId === 'take-01' && word.s >= 5.23 && word.e <= 5.31,
+  });
+  assert.deepEqual(words.map((word) => word.w), ['навыку']);
+});
