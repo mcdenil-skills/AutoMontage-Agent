@@ -174,6 +174,10 @@ ffmpeg filter script удаляется через `finally` и при успе�
 и FFmpeg 9 в `PATH`; Linux CI добавляет FFmpeg 6.x. Контракт дублей закрывают
 `tests/takes-edit.test.js`, `tests/takes-master.test.js`, `tests/project-takes.test.js` и
 `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
+`tests/take-pauses.test.js` закрывает уровни, порог паузы, выбор точки разреза, общие стыки и
+чтение звука на оси `trim` (в том числе MPEG-TS с поздним звуком);
+`tests/takes-master-media.test.js` проверяет на настоящем FFmpeg, что граница внутри звучания
+уходит в паузу и окно стыка тихое.
 `tests/trim-media-real.test.js` также проверяет дубль с неровными таймстемпами (целое число
 кадров после склейки), а `tests/takes-master-media.test.js` проверяет дубль, у которого видео
 начинается позже звука, и дубль, взятый назад во времени; оба файла проверены на FFmpeg 6.1,

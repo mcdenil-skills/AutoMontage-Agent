@@ -181,6 +181,12 @@ Brief замораживает исходник, тему, аспект, раз�
 оси, что и `trim`. При пересчёте слов слово, попавшее в кусок меньше чем на кадр, отбрасывается,
 если его середина вне куска, а слово с `e <= s` после округления удаляется. `takes-pack.js` режет
 фразы по концу предложения или по паузе, потому что Whisper прячет паузы внутрь слов.
+`scripts/project/take-pauses.js` читает уровень звука каждого дубля окнами по 10 мс на той же оси,
+что и `trim` (первая звуковая дорожка, видео остаётся в пустом выводе, иначе у MPEG-TS FFmpeg
+пересчитывает начало по звуку), и до кадрового выравнивания ставит каждую границу куска в паузу,
+найденную не дальше 0.25 с от неё: у края куска остаётся до 0.1 с тишины и не меньше 0.04 с до
+речи, а стык соседних кусков одного дубля режется в одной точке. Слова целиком вне запрошенного
+диапазона и слова, чья часть внутри куска лежит в тишине на его краю, в транскрипт не переносятся.
 
 Draft имеет отдельную непередаваемую в final возможность: `scripts/preview.js` принимает только
 текущий зарегистрированный draft, выбирает `ReelScenes` или `MotionReel` по `briefs[].kind`
@@ -672,7 +678,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Пользовательский CLI | `scripts/cli.js`, `scripts/doctor.js` |
 | Оркестрация и процессы | `scripts/build.js`, `scripts/env.js`, `scripts/process.js`, `scripts/media-probe.js`, `scripts/source-timing.js` |
 | Папки и версии роликов | `scripts/project/workspace.js`, `scripts/project/build-context.js` |
-| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/trim-media.js` |
+| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/project/take-pauses.js`, `scripts/trim-media.js` |
 | Транскрипция и субтитры | `scripts/transcribe.py`, `scripts/build-captions.js` |
 | Lesson brief | `scripts/gen-brief.js`, `scripts/lesson/*` |
 | Локальная проверка | `scripts/review/*`, `review/*` |
