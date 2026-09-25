@@ -101,9 +101,10 @@ test('a pause too short for both margins puts the cut near its middle, not next 
 });
 
 test('a pause cut never drops a short word between the pause and the edge', () => {
-  // Пауза 2.00-2.10, слово «да» 2.10-2.25, провал 40 мс, дальше речь с 2.29.
+  // Пауза 2.00-2.10, слово «да» 2.10-2.25, провал 40 мс, дальше речь с 2.29. 2.25 – ровно конец
+  // слова, 2.245 – вне сетки уровней, внутри последнего окна слова.
   const analysis = analyzeLevels(levelsWithPauses([[2, 2.1], [2.25, 2.29]]));
-  for (const end of [2.26, 2.28, 2.3]) {
+  for (const end of [2.245, 2.25, 2.26, 2.28, 2.3]) {
     assert.equal(findPauseCut(analysis, end, 'end', { fps: 25 }), null, String(end));
     assert.equal(findPauseCut(analysis, end, 'joint', { fps: 25 }), null, String(end));
     const result = snapRangesToPauses(
@@ -119,6 +120,7 @@ test('a pause cut never drops the first word after a short gap', () => {
   // Речь до 2.00, провал 30 мс, «И» 2.03-2.15, пауза 2.15-2.25, дальше речь.
   const analysis = analyzeLevels(levelsWithPauses([[2, 2.03], [2.15, 2.25]]));
   assert.equal(findPauseCut(analysis, 2.03, 'start', { fps: 25 }), null);
+  assert.equal(findPauseCut(analysis, 2.035, 'start', { fps: 25 }), null);
 });
 
 test('a pause cut never brings back a filler the agent cut off', () => {

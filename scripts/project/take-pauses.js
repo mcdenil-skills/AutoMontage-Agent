@@ -104,10 +104,10 @@ function clamp(value, low, high) {
 function crossesOnlyCutSound(analysis, time, run) {
   const sound = (index) => index >= 0 && index < analysis.levels.length
     && analysis.levels[index] >= analysis.thresholdDb;
-  const at = Math.floor(time / analysis.frameSec + 1e-9);
+  // По другую сторону границы звучать должно целое окно уровней, даже если граница вне их сетки.
   const [first, last] = run.end <= time
-    ? [Math.round(run.end / analysis.frameSec), at]
-    : [at - 1, Math.round(run.start / analysis.frameSec) - 1];
+    ? [Math.round(run.end / analysis.frameSec), Math.ceil(time / analysis.frameSec - 1e-9)]
+    : [Math.floor(time / analysis.frameSec + 1e-9) - 1, Math.round(run.start / analysis.frameSec) - 1];
   for (let index = first; index <= last; index += 1) {
     if (!sound(index)) return false;
   }
