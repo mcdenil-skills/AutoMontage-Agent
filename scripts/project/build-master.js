@@ -9,7 +9,7 @@ const { configureMediaToolPath } = require('../env');
 const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
 const { runTool } = require('../process');
 const { collectWords } = require('../tighten');
-const { runTrim } = require('../trim-media');
+const { runSegmentsTrim, runTrim } = require('../trim-media');
 const {
   normalizeSourceMetadata,
   projectRelative,
@@ -17,6 +17,8 @@ const {
   remapTranscriptWords,
   roundedTime,
 } = require('./source-revision');
+const { buildTakesMaster } = require('./build-takes-master');
+const { isTakesEdit } = require('./takes-edit');
 const { readProjectManifest, resolveProjectPath } = require('./workspace');
 
 const validateSchema = new Ajv({ allErrors: true }).compile(sourceEditSchema);
@@ -82,6 +84,13 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
   const edit = JSON.parse(fileSystem.readFileSync(editAbsolute, 'utf8'));
   const editRelative = projectRelative(workspace.dir, editAbsolute);
   const source = normalizeSourceMetadata(manifest.source);
+  if (isTakesEdit(edit)) {
+    return buildTakesMaster({ workspace, edit, editRelative, source }, {
+      ...publishDependencies,
+      probeMediaPathImpl,
+      runSegmentsTrimImpl: dependencies.runSegmentsTrimImpl || runSegmentsTrim,
+    });
+  }
   const sourcePath = resolveProjectPath(workspace.dir, source.localPath, {
     label: 'active source path', fileSystem, mustExist: true, type: 'file',
   });
@@ -152,7 +161,12 @@ function main(argv = process.argv.slice(2)) {
     const result = buildMaster(parseMasterOptions(argv));
     console.log(`✅ source revision: ${result.revision}`);
     console.log(`   duration: ${result.duration.toFixed(2)} sec`);
-    console.log(`   removed: ${result.removedDuration.toFixed(2)} sec`);
+    if (result.kind === 'takes') {
+      console.log(`   takes: ${result.takes.join(', ')}`);
+      console.log(`   ranges: ${result.ranges.length}`);
+    } else {
+      console.log(`   removed: ${result.removedDuration.toFixed(2)} sec`);
+    }
     console.log(`   transcript: ${result.transcriptPath}`);
   } catch (error) {
     console.error(`❌ master отменён: ${error.message}`);
