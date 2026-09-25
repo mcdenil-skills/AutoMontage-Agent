@@ -128,14 +128,27 @@ function crossesOnlyCutSound(analysis, time, run) {
   return far > crossed;
 }
 
+// Уровни не видят границу двух слов, склеенных без паузы. Поэтому пройденный разрезом звук не должен
+// содержать середину слова Whisper: это то же правило середины, что у слов на стыке. Иначе короткое
+// слово куска, склеенное с вырезанным соседом, пропало бы («Не работает» → «работает»). Оба края
+// промежутка входят в проверку, а середина слова внутри самой паузы разрез не останавливает.
+function crossesWordMiddle(words, from, to) {
+  return words.some((word) => {
+    const middle = (word.s + word.e) / 2;
+    return middle >= from - 1e-9 && middle <= to + 1e-9;
+  });
+}
+
 // Сторону паузы выбирает сам звук, а не тип края и не привычка Whisper растягивать слова: граница
 // в звуке уходит в паузу через меньшую часть этого звука (crossesOnlyCutSound), граница в паузе
 // остаётся в ней. Конец куска оставляет около PAUSE_LEAD_SEC тишины после своей речи, начало –
 // перед своей, а общий разрез двух соседних кусков одного дубля ('joint') встаёт у края паузы,
 // ближнего к стыку. Без доступной паузы граница остаётся на месте. Точка ставится на границу
-// видеокадра внутри паузы.
+// видеокадра внутри паузы. Слова Whisper дубля (words, время дубля) дополнительно закрывают паузу,
+// путь к которой проходит через середину слова (crossesWordMiddle).
 function findPauseCut(analysis, time, edge, {
   fps,
+  words = null,
   searchSec = PAUSE_SEARCH_SEC,
   leadSec = PAUSE_LEAD_SEC,
 } = {}) {
@@ -144,6 +157,11 @@ function findPauseCut(analysis, time, edge, {
   const rate = frameRateFromFps(fps);
   const frameRate = rate.numerator / rate.denominator;
   const minPause = Math.max(MIN_PAUSE_SEC, 1 / frameRate);
+  // Пройденный звук лежит между паузой и границей: от конца паузы до границы или от границы до
+  // начала паузы.
+  const crossesWord = (candidate) => Boolean(words) && (candidate.end <= time
+    ? crossesWordMiddle(words, candidate.end, time)
+    : crossesWordMiddle(words, time, candidate.start));
   // Доступна не больше чем одна пауза: граница в паузе достаёт только её (путь к другой лежит через
   // тишину), граница в провале короче паузы – ни одной, а граница в звуке – только паузу со стороны
   // меньшей части этого звука: правило середины не пускает через большую часть, а путь дальше лежит
@@ -155,7 +173,8 @@ function findPauseCut(analysis, time, edge, {
       distance: time < candidate.start ? candidate.start - time : Math.max(0, time - candidate.end),
     }))
     .find((candidate) => candidate.distance <= searchSec + 1e-9
-      && (candidate.distance === 0 || crossesOnlyCutSound(analysis, time, candidate)));
+      && (candidate.distance === 0
+        || (crossesOnlyCutSound(analysis, time, candidate) && !crossesWord(candidate))));
   if (!run) return null;
   const length = run.end - run.start;
   const margin = Math.min(MIN_MARGIN_SEC, length / 2);
@@ -196,7 +215,7 @@ function assertNoRawOverlap(ranges) {
 // Конец одного куска и начало другого куска того же дубля в одной точке – один разрез.
 // Если сдвиг схлопывает кусок или создаёт новое пересечение, кусок и его соседи по стыку
 // возвращаются к исходным границам.
-function snapRangesToPauses(ranges, { takes, analyses, fps }) {
+function snapRangesToPauses(ranges, { takes, analyses, fps, wordsByTake = null }) {
   assertNoRawOverlap(ranges);
   const frameDuration = 1 / fps;
   // Стык: конец одного куска и начало другого куска того же дубля в одной точке или с зазором
@@ -217,6 +236,7 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
     const analysis = analyses.get(range.take);
     if (!analysis) return { ...range };
     const take = takes.get(range.take);
+    const words = wordsByTake ? wordsByTake.get(range.take) || null : null;
     const next = { ...range };
     for (const edge of ['start', 'end']) {
       const from = range[edge];
@@ -226,8 +246,8 @@ function snapRangesToPauses(ranges, { takes, analyses, fps }) {
       if (atFileEdge) continue;
       const joint = jointTime.get(`${index}:${edge}`);
       let to = joint === undefined
-        ? findPauseCut(analysis, from, edge, { fps })
-        : findPauseCut(analysis, joint, 'joint', { fps });
+        ? findPauseCut(analysis, from, edge, { fps, words })
+        : findPauseCut(analysis, joint, 'joint', { fps, words });
       // Пауза за пределами кадров дубля не годится: обрезка по краю вернула бы разрез в речь.
       if (to !== null && (to < (take.usableStart || 0) - 1e-9 || to > take.duration + 1e-9)) to = null;
       if (to === null) {

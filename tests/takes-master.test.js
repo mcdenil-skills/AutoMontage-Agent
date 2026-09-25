@@ -275,6 +275,37 @@ test('takes master moves cuts into pauses, drops silent edge words and reports j
   ]);
 });
 
+test('takes master keeps a short word glued to a cut neighbour and prints its edge', (t) => {
+  // «Не» склеен с вырезанным «работает» без паузы: слова дубля не дают разрезу уйти через «Не».
+  const fixture = setupTakes(t);
+  fs.writeFileSync(path.join(fixture.dir, 'transcript', 'takes', 'take-02.json'), `${JSON.stringify([{
+    start: 0,
+    end: 10,
+    text: 'x',
+    words: [{ w: 'это.', s: 1.4, e: 2 }, { w: 'Не', s: 2.1, e: 2.22 }, { w: 'работает', s: 2.22, e: 2.8 }],
+  }], null, 2)}\n`);
+  const editPath = writeEdit(fixture.dir, {
+    ranges: [{ take: 'take-02', start: 1.02, end: 2.22, beat: 'HOOK', reason: 'это. Не' }],
+  });
+  const calls = [];
+  const result = buildMaster({ projectDir: fixture.dir, editPath }, masterDependencies(calls, {
+    readTakeLevelsImpl: () => levelsWithPauses([[2, 2.1], [2.8, 3.1]]),
+    // Мастер длиной ровно в собранные куски: проверяем решение о паузе, а не длину файла.
+    probeVideoImpl(filename) {
+      if (!path.basename(filename).startsWith('.source-v')) {
+        return { width: 1920, height: 1080, fps: 25, duration: 10 };
+      }
+      const [, trim] = calls.find(([stage]) => stage === 'trim');
+      const duration = trim.segments.reduce((sum, segment) => sum + segment.end - segment.start, 0);
+      return { width: 1920, height: 1080, fps: 25, duration };
+    },
+  }));
+  assert.ok(takesSummaryLines(result).includes('   no pause near: ranges[0].end 2.22'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(
+    path.join(fixture.dir, 'transcript', 'words-v02.json'), 'utf8',
+  ))[0].words.map((word) => word.w), ['это.', 'Не']);
+});
+
 test('master summary lists final ranges, joints and every pause decision', () => {
   assert.deepEqual(takesSummaryLines({
     takes: ['take-02', 'take-01'],

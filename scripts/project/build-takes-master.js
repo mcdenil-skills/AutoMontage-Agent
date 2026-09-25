@@ -56,8 +56,7 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
     const levels = readTakeLevelsImpl(take.filePath, { stage: `${take.id} levels` });
     if (levels && levels.levels.length) analyses.set(take.id, analyzeLevels(levels));
   }
-  const paused = snapRangesToPauses(normalized.ranges, { takes, analyses, fps: first.fps });
-  const ranges = snapTakeRanges(paused.ranges, { fps: first.fps, takes });
+  // Слова нужны уже поиску паузы: границу двух слов без паузы между ними уровни не видят.
   const wordsByTake = new Map(used.map((take) => {
     try {
       return [take.id, collectWords(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8')))];
@@ -67,6 +66,8 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
       throw error;
     }
   }));
+  const paused = snapRangesToPauses(normalized.ranges, { takes, analyses, fps: first.fps, wordsByTake });
+  const ranges = snapTakeRanges(paused.ranges, { fps: first.fps, takes });
   const words = remapTakeRangesTranscript(ranges, wordsByTake, first.fps, {
     isSilentWord: (takeId, word) => analyses.has(takeId)
       && isSilentSpan(analyses.get(takeId), word.s, word.e),

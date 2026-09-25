@@ -173,9 +173,64 @@ test('an edge inside a word still crosses the rest of that word into the pause',
   // Пауза 3.45-3.54 коротка для отступов с обеих сторон, поэтому конец встаёт у её конца.
   const head = analyzeLevels(levelsWithPauses([[3.45, 3.54], [3.74, 3.9]], { duration: 5 }));
   assert.equal(findPauseCut(head, 3.57, 'end', { fps: 25 }), 3.52);
+  // Слова живой пробы не мешают: середины «эксперта?» и «Если» лежат вне пройденного звука.
+  const headWords = [{ w: 'эксперта?', s: 2.98, e: 3.57 }, { w: 'Если', s: 3.57, e: 3.9 }];
+  assert.equal(findPauseCut(head, 3.57, 'end', { fps: 25, words: headWords }), 3.52);
   // Начало куска попало в хвост прошлого слова: разрез уходит вперёд в паузу после него.
   const tail = analyzeLevels(levelsWithPauses([[68.75, 69.18]], { duration: 70 }));
   assert.equal(findPauseCut(tail, 68.66, 'start', { fps: 25 }), 69.08);
+  // Whisper растянул «И» на паузу: середина слова внутри паузы разрез не останавливает.
+  const tailWords = [{ w: 'тебя.', s: 68.36, e: 68.66 }, { w: 'И', s: 68.66, e: 69.24 }];
+  assert.equal(findPauseCut(tail, 68.66, 'start', { fps: 25, words: tailWords }), 69.08);
+});
+
+// «это.» 1.40-2.00, пауза 2.00-2.10, «Не» 2.10-2.22 и «работает» 2.22-2.80 звучат без паузы между
+// ними, дальше пауза 2.80-3.00.
+function gluedNot() {
+  return {
+    analysis: analyzeLevels(levelsWithPauses([[2, 2.1], [2.8, 3]])),
+    words: [{ w: 'это.', s: 1.4, e: 2 }, { w: 'Не', s: 2.1, e: 2.22 }, { w: 'работает', s: 2.22, e: 2.8 }],
+  };
+}
+
+test('Whisper words stop an end cut inside a short word glued to the next one', () => {
+  // Уровни не видят границу склеенных слов: без слов конец куска точно на этой границе уходит через
+  // «Не» в паузу, и смысл меняется на обратный. Середина «Не» в пройденном звуке это запрещает.
+  const { analysis, words } = gluedNot();
+  assert.equal(findPauseCut(analysis, 2.22, 'end', { fps: 25 }), 2.04);
+  assert.equal(findPauseCut(analysis, 2.22, 'end', { fps: 25, words }), null);
+  assert.equal(findPauseCut(analysis, 2.22, 'joint', { fps: 25, words }), null);
+});
+
+test('Whisper words stop a start cut inside a short word glued to the previous one', () => {
+  // Зеркально: «повтор» 1.30-2.00 склеен с «и» 2.00-2.10, дальше пауза 2.10-2.25. Начало куска в
+  // 2.00 без слов ушло бы через «и» в паузу.
+  const analysis = analyzeLevels(levelsWithPauses([[1.2, 1.3], [2.1, 2.25]]));
+  const words = [{ w: 'повтор', s: 1.3, e: 2 }, { w: 'и', s: 2, e: 2.1 }, { w: 'дальше', s: 2.25, e: 2.8 }];
+  assert.equal(findPauseCut(analysis, 2, 'start', { fps: 25 }), 2.16);
+  assert.equal(findPauseCut(analysis, 2, 'start', { fps: 25, words }), null);
+});
+
+test('ranges pass the words of their take to the pause search of edges and joints', () => {
+  // Слова дубля доходят до поиска паузы и у отдельного края, и у общего разреза стыка: граница
+  // между «Не» и «работает» остаётся на месте и печатается как граница без паузы.
+  const { analysis, words } = gluedNot();
+  const analyses = new Map([['take-01', analysis]]);
+  const wordsByTake = new Map([['take-01', words]]);
+  const single = snapRangesToPauses(
+    [{ take: 'take-01', start: 0, end: 2.22, beat: 'A', reason: 'x' }],
+    { takes: twoTakes(), analyses, fps: 25, wordsByTake },
+  );
+  assert.deepEqual(single.ranges.map((range) => [range.start, range.end]), [[0, 2.22]]);
+  assert.deepEqual(single.adjustments, [{ index: 0, edge: 'end', from: 2.22, to: 2.22, reason: 'no-pause' }]);
+  const joint = snapRangesToPauses([
+    { take: 'take-01', start: 0, end: 2.22, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 2.22, end: 3, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses, fps: 25, wordsByTake });
+  assert.deepEqual(joint.ranges.map((range) => [range.start, range.end]), [[0, 2.22], [2.22, 3]]);
+  assert.deepEqual(joint.adjustments.map(({ index, edge, reason }) => [index, edge, reason]), [
+    [0, 'end', 'no-pause'], [1, 'start', 'no-pause'],
+  ]);
 });
 
 test('a short dip blocks the pause behind it and the midpoint lets the other side through', () => {
