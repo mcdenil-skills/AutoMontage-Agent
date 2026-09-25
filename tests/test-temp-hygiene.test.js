@@ -12,6 +12,7 @@ const ROOT = path.resolve(__dirname, '..');
 // Файлы, которые раньше оставляли мусор в os.tmpdir() (#31).
 const HYGIENE_FILES = [
   'tests/release-hygiene.test.js',
+  'tests/review-media-import.test.js',
 ];
 
 test('affected test files leave nothing behind in their temporary directory', (t) => {
@@ -35,8 +36,8 @@ test('affected test files leave nothing behind in their temporary directory', (t
     timeout: 10 * 60_000,
   });
 
-  const output = [result.error, result.signal, result.stdout, result.stderr]
-    .filter(Boolean).join('\n').slice(-4000);
+  const output = [result.error, result.signal, `${result.stdout}\n${result.stderr}`.slice(-4000)]
+    .filter(Boolean).join('\n');
   assert.equal(result.status, 0, output);
   // Пустой прогон тоже даёт status 0 и пустую папку; файл без тестов считается одним pass.
   const passed = Number(/^# pass (\d+)$/m.exec(result.stdout)?.[1] ?? 0);
