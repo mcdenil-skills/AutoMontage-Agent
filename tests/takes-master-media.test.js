@@ -12,6 +12,7 @@ const {
 } = require('./helpers/media-fixtures');
 const { buildMaster } = require('../scripts/project/build-master');
 const { addTakes } = require('../scripts/project/takes');
+const { analyzeLevels, readTakeLevels } = require('../scripts/project/take-pauses');
 const { createOrOpenProject, readProjectManifest } = require('../scripts/project/workspace');
 
 function streams(file) {
@@ -185,4 +186,77 @@ test('real takes master stays in sync with a late-video take and a take reused b
   );
   assert.ok(Math.abs(Number(video.duration) - 2.96) < 0.02, video.duration);
   assert.equal(result.ranges[0].start, 0.04);
+});
+
+test('real takes master moves cuts inside speech into the nearest pause', { timeout: 180_000 }, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
+    t.skip('real pause cuts require ffmpeg, ffprobe and libx264');
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-takes-pauses-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = path.join(root, 'take1.mp4');
+  const second = path.join(root, 'take2.mp4');
+  // Тон вместо речи: take1 звучит 0-1.0 и 1.3-2.5 с, take2 звучит 0-0.8 и с 1.2 с.
+  runFixture('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', "aevalsrc='if(lt(t,1)+between(t,1.3,2.5),0.3*sin(2*PI*440*t),0)':s=48000:d=3",
+    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', first,
+  ], root);
+  runFixture('ffmpeg', [
+    '-y', '-v', 'error',
+    '-f', 'lavfi', '-i', 'smptebars=s=160x90:r=25:d=3',
+    '-f', 'lavfi', '-i', "aevalsrc='if(lt(t,0.8)+gte(t,1.2),0.3*sin(2*PI*660*t),0)':s=48000:d=3",
+    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', second,
+  ], root);
+  const workspace = createOrOpenProject({
+    projectDir: path.join(root, 'project'), name: 'Pause cuts', sourcePath: first,
+  });
+  const takeWords = {
+    'source.mp4': [
+      { w: 'один', s: 0.2, e: 0.9 },
+      { w: 'Продолжение', s: 1.02, e: 1.08 },
+    ],
+    'take-02.mp4': [{ w: 'три', s: 1.3, e: 1.9 }],
+  };
+  addTakes({ projectDir: workspace.dir, files: [second] }, {
+    transcribeImpl: ({ videoPath }) => [{
+      start: 0, end: 3, text: 'x', words: takeWords[path.basename(videoPath)],
+    }],
+  });
+  fs.writeFileSync(path.join(workspace.dir, 'edit', 'v02-takes.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'takes',
+    sourceRevision: 1,
+    ranges: [
+      { take: 'take-01', start: 0, end: 1.36, beat: 'HOOK', reason: 'конец внутри второго тона' },
+      { take: 'take-02', start: 0.75, end: 2, beat: 'CTA', reason: 'начало внутри первого тона' },
+    ],
+  }, null, 2)}\n`);
+
+  const result = buildMaster({ projectDir: workspace.dir, editPath: 'edit/v02-takes.json' });
+
+  const moved = (index, edge) => result.pauseAdjustments
+    .find((item) => item.index === index && item.edge === edge && item.reason === 'pause');
+  assert.ok(moved(0, 'end') && moved(0, 'end').to >= 1 && moved(0, 'end').to <= 1.3, JSON.stringify(result.pauseAdjustments));
+  assert.ok(moved(1, 'start') && moved(1, 'start').to >= 0.8 && moved(1, 'start').to <= 1.2, JSON.stringify(result.pauseAdjustments));
+  const [pieceOne, pieceTwo] = result.ranges;
+  const expectedFrames = Math.round(pieceOne.end * 25) + Math.round((pieceTwo.end - pieceTwo.start) * 25);
+  const probe = spawnSync('ffprobe', [
+    '-v', 'error', '-count_frames',
+    '-show_entries', 'stream=codec_type,nb_read_frames,duration', '-of', 'json', result.sourcePath,
+  ], { encoding: 'utf8' });
+  assert.equal(probe.status, 0, probe.stderr);
+  const output = JSON.parse(probe.stdout).streams;
+  const video = output.find((stream) => stream.codec_type === 'video');
+  const audio = output.find((stream) => stream.codec_type === 'audio');
+  assert.equal(Number(video.nb_read_frames), expectedFrames);
+  assert.ok(Math.abs(Number(audio.duration) - Number(video.duration)) < 0.02, `${audio.duration} vs ${video.duration}`);
+  const [joint] = result.joints;
+  const levels = analyzeLevels(readTakeLevels(result.sourcePath));
+  const around = levels.levels.slice(Math.round((joint - 0.1) * 100), Math.round((joint + 0.08) * 100));
+  assert.ok(Math.max(...around) < -60, `joint ${joint}: ${Math.max(...around)} dB`);
+  const words = JSON.parse(fs.readFileSync(result.transcriptPath, 'utf8'))[0].words;
+  assert.deepEqual(words.map((word) => word.w), ['один', 'три']);
 });
