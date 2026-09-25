@@ -1,0 +1,530 @@
+'use strict';
+
+const SECTION_TITLES = { waiting: 'Ждёт меня', working: 'В работе', ready: 'Готов' };
+const STATUS_LABELS = { waiting: 'Ждёт меня', working: 'В работе', ready: 'Готов' };
+const VIDEO_LABELS = {
+  final: 'Финальная версия',
+  preview: 'Preview на проверку',
+  'stale-preview': 'Preview устарел — агент готовит новый',
+};
+// Показываем, когда видео есть на диске, но пульт не умеет отдать его браузеру
+// (legacy-форматы вроде .mkv/.avi) — «Показать в папке» при этом остаётся рабочим.
+const VIDEO_UNSUPPORTED_LABEL = 'Этот формат не проигрывается в пульте — откройте в папке';
+const REFRESH_MS = 20000;
+
+const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null };
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function mediaUrl(url) {
+  const parsed = new URL(url, window.location.origin);
+  parsed.searchParams.set('token', token);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+async function api(pathname, { method = 'GET', body } = {}) {
+  const response = await fetch(pathname, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok) throw new Error((payload && payload.message) || 'Запрос не выполнен');
+  return payload;
+}
+
+function notify(message, tone = 'info') {
+  const notice = document.querySelector('[data-notice]');
+  notice.textContent = message;
+  notice.dataset.tone = tone;
+  notice.hidden = !message;
+}
+
+function button(label, handler, className = 'secondary') {
+  const node = el('button', className, label);
+  node.type = 'button';
+  node.addEventListener('click', async () => {
+    node.disabled = true;
+    try {
+      await handler();
+    } catch (error) {
+      notify(error.message, 'error');
+    } finally {
+      node.disabled = false;
+    }
+  });
+  return node;
+}
+
+function formatClock(seconds) {
+  if (!Number.isFinite(seconds)) return '';
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function formatAspect(meta) {
+  if (!meta) return '';
+  const ratio = meta.width / meta.height;
+  const known = [['9:16', 9 / 16], ['16:9', 16 / 9], ['1:1', 1], ['4:5', 4 / 5]];
+  const match = known.find(([, value]) => Math.abs(ratio - value) < 0.02);
+  return match ? match[0] : `${meta.width}×${meta.height}`;
+}
+
+function formatDate(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+function pluralVariants(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} вариант`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} варианта`;
+  return `${count} вариантов`;
+}
+
+function allCards() {
+  const data = state.data;
+  return data ? [...data.waiting, ...data.working, ...data.ready, ...data.archive] : [];
+}
+
+// NFC + нижний регистр с обеих сторон: имена папок на macOS бывают в NFD (например,
+// «й» как «и» + отдельный значок), а человек печатает в обычной, NFC-раскладке —
+// без нормализации визуально одинаковые слова не совпадали бы при поиске.
+function normalizeText(text) {
+  return text.normalize('NFC').toLowerCase();
+}
+
+function matches(card) {
+  const query = normalizeText(state.query.trim());
+  if (!query) return true;
+  return [card.title, ...card.variants.map((variant) => variant.variantLabel)]
+    .some((text) => normalizeText(text).includes(query));
+}
+
+// Самый срочный вариант карточки — по нему рисуем лицо карточки в списке и его же
+// открываем первым, а не первый по алфавиту порядку вкладок (card.variants).
+function leadVariant(card) {
+  return card.variants.find((variant) => variant.key === card.leadKey) || card.variants[0];
+}
+
+function cardFacts(card) {
+  const lead = leadVariant(card);
+  const facts = [formatAspect(lead.meta), lead.meta ? formatClock(lead.meta.durationSec) : '']
+    .filter(Boolean)
+    .join(' · ');
+  return card.variants.length > 1 ? [facts, pluralVariants(card.variants.length)].filter(Boolean).join(' · ') : facts;
+}
+
+function renderCard(card) {
+  const node = el('button', `card card--${card.status}`);
+  node.type = 'button';
+  node.dataset.cardId = card.id;
+  const thumb = el('div', 'card__thumb');
+  const lead = leadVariant(card);
+  if (lead.thumbUrl) {
+    const image = el('img');
+    image.alt = '';
+    image.loading = 'lazy';
+    image.src = mediaUrl(lead.thumbUrl);
+    image.addEventListener('error', () => image.remove());
+    thumb.append(image);
+  }
+  const body = el('div', 'card__body');
+  const meta = el('p', 'card__meta');
+  meta.append(
+    el('span', `badge badge--${card.status}`, STATUS_LABELS[card.status]),
+    el('span', '', formatDate(card.updatedAt)),
+    el('span', '', cardFacts(card)),
+  );
+  body.append(el('h3', 'card__title', card.title), meta, el('p', 'card__next', card.nextStep));
+  node.append(thumb, body);
+  node.addEventListener('click', () => openCard(card.id));
+  return node;
+}
+
+function renderGrid(cards, section) {
+  const grid = el('div', 'grid');
+  grid.dataset.section = section;
+  cards.forEach((card) => grid.append(renderCard(card)));
+  return grid;
+}
+
+function renderFolderList(items, section, describe) {
+  const list = el('ul', 'plain-list');
+  list.dataset.section = section;
+  for (const item of items) {
+    const row = el('li', 'plain-list__row');
+    row.append(
+      el('span', '', describe(item)),
+      button('Показать в папке', () => api('/api/reveal', { method: 'POST', body: { folder: item.folder } }), 'link-button'),
+    );
+    list.append(row);
+  }
+  return list;
+}
+
+function renderList() {
+  const view = document.querySelector('[data-view="list"]');
+  view.replaceChildren();
+  const data = state.data;
+  if (!data) return;
+  if (state.tab === 'main') {
+    let shown = 0;
+    for (const key of ['waiting', 'working', 'ready']) {
+      const cards = data[key].filter(matches);
+      if (!cards.length) continue;
+      shown += cards.length;
+      const section = el('section', 'section');
+      section.append(el('h2', 'section__title', `${SECTION_TITLES[key]} (${cards.length})`), renderGrid(cards, key));
+      view.append(section);
+    }
+    if (!shown) {
+      view.append(el('p', 'empty', state.query ? 'Ничего не найдено.' : 'Роликов пока нет. Попросите агента смонтировать первый.'));
+    }
+  } else if (state.tab === 'archive') {
+    const cards = data.archive.filter(matches);
+    view.append(cards.length ? renderGrid(cards, 'archive') : el('p', 'empty', 'Архив пуст.'));
+  } else if (state.tab === 'unregistered') {
+    view.append(
+      el('p', 'hint', 'У этих папок нет паспорта ролика. Попросите агента: «заведи паспорт для папки …».'),
+      renderFolderList(data.unregistered, 'unregistered', (item) => `${data.projectsLabel}/${item.folder}`),
+    );
+  } else if (state.tab === 'broken') {
+    view.append(renderFolderList(data.broken, 'broken', (item) => `${data.projectsLabel}/${item.folder} — ${item.error}`));
+  }
+}
+
+function updateTabs() {
+  const data = state.data;
+  for (const key of ['archive', 'unregistered', 'broken']) {
+    document.querySelector(`[data-count="${key}"]`).textContent = String(data[key].length);
+    if (key !== 'archive') document.querySelector(`[data-tab="${key}"]`).hidden = data[key].length === 0;
+  }
+}
+
+function currentCard() {
+  return allCards().find((card) => card.id === state.openCardId) || null;
+}
+
+function currentVariant(card) {
+  return card.variants.find((variant) => variant.key === state.variantKey) || card.variants[0];
+}
+
+function openCard(cardId) {
+  state.openCardId = cardId;
+  const card = currentCard();
+  state.variantKey = card ? leadVariant(card).key : null;
+  document.querySelector('[data-view="list"]').hidden = true;
+  document.querySelector('[data-view="detail"]').hidden = false;
+  renderDetail();
+}
+
+function closeCard() {
+  state.openCardId = null;
+  state.variantKey = null;
+  document.querySelector('[data-view="detail"]').hidden = true;
+  document.querySelector('[data-view="detail"]').replaceChildren();
+  document.querySelector('[data-view="list"]').hidden = false;
+  renderList();
+}
+
+function actionsBlock(card, variant) {
+  const box = el('div', 'actions');
+  box.append(button('Показать в папке', () => api('/api/reveal', { method: 'POST', body: { key: variant.key } })));
+  if (variant.reviewable) {
+    box.append(button('Открыть проверку монтажа', async () => {
+      await api('/api/review', { method: 'POST', body: { key: variant.key } });
+      notify('Проверка монтажа открывается в отдельном окне.');
+    }));
+  }
+  box.append(button(card.archived ? 'Вернуть из архива' : 'В архив', async () => {
+    await api('/api/archive', { method: 'POST', body: { cardId: card.id, archived: !card.archived } });
+    notify(card.archived ? 'Ролик вернулся из архива.' : 'Ролик убран в архив. Папка не тронута.');
+    await refresh();
+    closeCard();
+  }));
+  const phrase = `Продолжи ролик «${card.title}» в ${state.data.projectsLabel}/${variant.folder}: выполни automontage inbox и обработай входящие.`;
+  const field = el('input', 'phrase');
+  field.readOnly = true;
+  field.value = phrase;
+  field.dataset.agentPhrase = '';
+  field.setAttribute('aria-label', 'Фраза для агента');
+  const copyStatus = el('span', 'copy-status');
+  copyStatus.dataset.copyStatus = '';
+  const copy = button('Скопировать для агента', async () => {
+    try {
+      await navigator.clipboard.writeText(phrase);
+    } catch (_) {
+      field.select();
+      document.execCommand('copy');
+    }
+    copyStatus.textContent = 'Скопировано — вставьте в чат с агентом';
+  }, 'primary');
+  box.append(field, copy, copyStatus);
+  return box;
+}
+
+function approveBlock(variant) {
+  const box = el('div', 'approve');
+  if (!variant.approvable) {
+    box.hidden = true;
+    return box;
+  }
+  box.append(el('h3', '', 'Утверждение'));
+  const label = el('label', 'check');
+  const checkbox = el('input');
+  checkbox.type = 'checkbox';
+  checkbox.dataset.viewed = '';
+  label.append(checkbox, el('span', '', 'Я посмотрел preview целиком'));
+  const approve = el('button', 'primary', 'Утверждаю');
+  approve.type = 'button';
+  approve.disabled = true;
+  checkbox.addEventListener('change', () => { approve.disabled = !checkbox.checked; });
+  approve.addEventListener('click', async () => {
+    approve.disabled = true;
+    try {
+      await api('/api/approve', {
+        method: 'POST',
+        body: { key: variant.key, ticket: variant.approvalTicket, confirmPreviewViewed: true },
+      });
+      notify('Утверждено. Скопируйте фразу для агента — он соберёт финал и проверит его.');
+      await refresh();
+    } catch (error) {
+      notify(error.message, 'error');
+      approve.disabled = !checkbox.checked;
+    }
+  });
+  box.append(label, approve);
+  return box;
+}
+
+async function loadComments(variant, list, video) {
+  const { comments } = await api(`/api/comments?key=${encodeURIComponent(variant.key)}`);
+  list.replaceChildren();
+  if (!comments.length) {
+    list.append(el('li', 'hint', 'Правок пока нет.'));
+    return;
+  }
+  for (const comment of comments) {
+    const item = el('li', `comment comment--${comment.status}`);
+    const jump = el('button', 'link-button', formatClock(comment.timeSec));
+    jump.type = 'button';
+    jump.addEventListener('click', () => {
+      video.currentTime = comment.timeSec;
+      video.pause();
+    });
+    item.append(jump);
+    if (comment.frameUrl) {
+      const frame = el('img', 'comment__frame');
+      frame.alt = '';
+      frame.src = mediaUrl(comment.frameUrl);
+      item.append(frame);
+    }
+    item.append(
+      el('p', 'comment__text', comment.text),
+      el('span', 'comment__status', comment.status === 'new' ? 'ждёт агента' : 'принята агентом'),
+    );
+    if (comment.status === 'new') {
+      item.append(button('Удалить', async () => {
+        await api('/api/comments/delete', { method: 'POST', body: { key: variant.key, id: comment.id } });
+        await loadComments(variant, list, video);
+        await refresh({ keepDetail: true });
+      }, 'link-button'));
+    }
+    list.append(item);
+  }
+}
+
+function commentsBlock(variant, video) {
+  const box = el('div', 'comments');
+  box.append(el('h3', '', 'Правки'));
+  if (!variant.video) {
+    box.append(el('p', 'hint', 'Правки можно оставить, когда появится видео.'));
+    return box;
+  }
+  const time = el('span', 'comment-time', 'на 0:00');
+  const text = el('textarea');
+  text.rows = 3;
+  text.maxLength = 1000;
+  text.placeholder = 'Что поправить в этом месте?';
+  text.dataset.commentText = '';
+  text.setAttribute('aria-label', 'Текст правки');
+  const syncTime = () => { time.textContent = `на ${formatClock(video.currentTime || 0)}`; };
+  video.addEventListener('timeupdate', syncTime);
+  video.addEventListener('seeked', syncTime);
+  text.addEventListener('focus', () => video.pause());
+  const list = el('ul', 'comment-list');
+  list.dataset.commentList = '';
+  const save = el('button', 'primary', 'Добавить правку');
+  save.type = 'button';
+  save.addEventListener('click', async () => {
+    if (!text.value.trim()) {
+      notify('Напишите, что поправить.', 'error');
+      return;
+    }
+    save.disabled = true;
+    try {
+      await api('/api/comments', {
+        method: 'POST',
+        body: { key: variant.key, timeSec: video.currentTime || 0, text: text.value },
+      });
+      text.value = '';
+      await loadComments(variant, list, video);
+      notify('Правка сохранена. Когда закончите, скопируйте фразу для агента.');
+      await refresh({ keepDetail: true });
+    } catch (error) {
+      notify(error.message, 'error');
+    } finally {
+      save.disabled = false;
+    }
+  });
+  const form = el('div', 'comment-form');
+  form.append(time, text, save);
+  box.append(form, list);
+  loadComments(variant, list, video).catch((error) => notify(error.message, 'error'));
+  return box;
+}
+
+function renderDetail() {
+  const view = document.querySelector('[data-view="detail"]');
+  view.replaceChildren();
+  const card = currentCard();
+  if (!card) {
+    closeCard();
+    return;
+  }
+  const variant = currentVariant(card);
+  const back = el('button', 'link-button', '← Все ролики');
+  back.type = 'button';
+  back.addEventListener('click', closeCard);
+  view.append(back, el('h2', 'detail__title', card.title));
+  if (card.variants.length > 1) {
+    const tabs = el('div', 'variant-tabs');
+    for (const option of card.variants) {
+      const tab = el('button', 'variant-tab', option.variantLabel);
+      tab.type = 'button';
+      tab.setAttribute('aria-pressed', String(option.key === variant.key));
+      tab.addEventListener('click', () => {
+        state.variantKey = option.key;
+        renderDetail();
+      });
+      tabs.append(tab);
+    }
+    view.append(tabs);
+  }
+  const layout = el('div', 'detail');
+  const playerColumn = el('div', 'detail__player');
+  const video = el('video', 'player');
+  video.controls = true;
+  video.preload = 'metadata';
+  video.dataset.player = '';
+  if (variant.video) video.src = mediaUrl(variant.video.url);
+  let videoLabelText;
+  if (variant.video) {
+    videoLabelText = VIDEO_LABELS[variant.video.kind];
+  } else if (variant.videoUnsupported) {
+    videoLabelText = VIDEO_UNSUPPORTED_LABEL;
+  } else {
+    videoLabelText = 'Видео пока нет';
+  }
+  const videoLabel = el('p', 'player__label', videoLabelText);
+  playerColumn.append(video, videoLabel);
+  if (variant.history.length) {
+    const history = el('ul', 'history');
+    history.hidden = true;
+    for (const item of variant.history) {
+      const row = el('li');
+      const open = el('button', 'link-button', item.label);
+      open.type = 'button';
+      open.addEventListener('click', () => {
+        video.src = mediaUrl(item.url);
+        videoLabel.textContent = item.label;
+      });
+      row.append(open);
+      history.append(row);
+    }
+    const toggle = el('button', 'secondary', `История (${variant.history.length})`);
+    toggle.type = 'button';
+    toggle.addEventListener('click', () => { history.hidden = !history.hidden; });
+    playerColumn.append(toggle, history);
+  }
+  const side = el('div', 'detail__side');
+  const badge = el('p', `badge badge--${variant.status}`, STATUS_LABELS[variant.status]);
+  badge.dataset.variantStatus = '';
+  const next = el('p', 'detail__next', variant.nextStep);
+  next.dataset.variantNext = '';
+  side.append(badge, next, approveBlock(variant), commentsBlock(variant, video), actionsBlock(card, variant));
+  layout.append(playerColumn, side);
+  view.append(layout);
+}
+
+async function refresh({ keepDetail = false } = {}) {
+  try {
+    state.data = await api('/api/cards');
+  } catch (error) {
+    notify(error.message, 'error');
+    return;
+  }
+  updateTabs();
+  if (!state.openCardId) {
+    renderList();
+    return;
+  }
+  const card = currentCard();
+  if (!card) {
+    closeCard();
+    return;
+  }
+  if (!keepDetail) {
+    renderDetail();
+    return;
+  }
+  const variant = currentVariant(card);
+  const badge = document.querySelector('[data-variant-status]');
+  const next = document.querySelector('[data-variant-next]');
+  if (badge) {
+    badge.textContent = STATUS_LABELS[variant.status];
+    badge.className = `badge badge--${variant.status}`;
+  }
+  if (next) next.textContent = variant.nextStep;
+}
+
+async function init() {
+  if (!token) {
+    notify('Нет ключа доступа. Откройте пульт значком или командой automontage pult.', 'error');
+    return;
+  }
+  document.querySelector('[data-search]').addEventListener('input', (event) => {
+    state.query = event.target.value;
+    if (!state.openCardId) renderList();
+  });
+  document.querySelectorAll('[data-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      state.tab = tab.dataset.tab;
+      document.querySelectorAll('[data-tab]').forEach((other) => {
+        other.setAttribute('aria-pressed', String(other === tab));
+      });
+      closeCard();
+    });
+  });
+  await refresh();
+  setInterval(() => { refresh({ keepDetail: true }); }, REFRESH_MS);
+}
+
+init();
