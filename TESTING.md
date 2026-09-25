@@ -167,6 +167,17 @@ Windows-проверку. Import ownership отдельно воспроизво
 FPS, bitrate и resolution имеют конечные диапазоны, а пути остаются отдельными argv.
 `tighten.js` и `cut-pauses.js` дополнительно валидируют word/keep intervals; временный
 ffmpeg filter script удаляется через `finally` и при успешном, и при аварийном завершении.
+`trim-media.js` выбирает форму filter script по версии FFmpeg: `-/filter_complex` для 7+ и
+неизвестных git-сборок, `-filter_complex_script` для 6.x. `tests/trim-media-real.test.js` и
+`tests/takes-master-media.test.js` запускают настоящий FFmpeg на сгенерированных роликах и
+пропускаются без `ffmpeg`, `ffprobe` или `libx264`. Перед изменением склейки прогони их с FFmpeg 7
+и FFmpeg 9 в `PATH`; Linux CI добавляет FFmpeg 6.x. Контракт дублей закрывают
+`tests/takes-edit.test.js`, `tests/takes-master.test.js`, `tests/project-takes.test.js` и
+`tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
+`tests/trim-media-real.test.js` также проверяет дубль с неровными таймстемпами (целое число
+кадров после склейки), а `tests/takes-master-media.test.js` проверяет дубль, у которого видео
+начинается позже звука, и дубль, взятый назад во времени; оба файла проверены на FFmpeg 6.1,
+7.1 и 9.0.
 Chunk-render проверяет positive integer `totalFrames/--chunk`, рендерит part во временный
 соседний MP4 и публикует его rename только после успешного Remotion exit.
 Resume cache v2 адресуется SHA-256 от composition, канонизированных props, source/audio

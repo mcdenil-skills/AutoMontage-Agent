@@ -63,6 +63,9 @@ Review: `automontage master --project-dir <проект> --edit edit/vNN-source.
 новую source/transcript-ревизию, но не переписывает монтажный лист. Поэтому после неё сначала
 подготовь draft для активной source revision, и только затем открывай браузер.
 
+Монтаж из нескольких дублей устроен так же: `automontage master` с `edit/vNN-takes.json`
+выпускает новую source revision до draft, поэтому Review открывается уже по собранному исходнику.
+
 Чтобы назначать фото или видео через окно, в draft должна быть хотя бы одна сцена типа `broll`.
 Review не меняет тип сцены и не превращает обычную сцену в b-roll.
 

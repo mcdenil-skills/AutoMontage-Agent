@@ -1,6 +1,6 @@
 # Архитектура AutoMontage-Agent
 
-Актуально на 2026-09-08. Документ описывает существующий код, а не будущую дорожную карту.
+Актуально на 2026-09-25. Документ описывает существующий код, а не будущую дорожную карту.
 
 ## 1. Назначение и границы
 
@@ -75,7 +75,8 @@ absolute/Windows/traversal-варианты, проверяет `lstat` кажд
 компонента outdir и финала, включая dangling link, создаёт отсутствующие родители по одному,
 подтверждает `realpath` containment и копирует в непредсказуемый exclusive/no-follow temp.
 Атомарный `rename` публикует temp вместо прямой записи через статическую ссылку назначения.
-Единственное исключение – `source.originalPath`: это provenance исходника, а не workspace-путь.
+Исключения – `source.originalPath` и `takes[].originalPath`: это provenance исходника и дублей,
+а не workspace-пути.
 
 `project.json` записывается через непредсказуемый соседний temp, открытый с exclusive и
 no-follow flags там, где платформа их поддерживает. Temp-файл проверяется как regular file,
@@ -105,8 +106,9 @@ descriptor-relative `openat`-аналог. Такая конкурентная �
 ```mermaid
 flowchart LR
   A["Неизменяемый оригинал"] --> B["Транскрипт с таймкодами"]
-  A --> M["Опциональный source-edit"]
+  A --> M["Опциональный source-edit или takes-edit"]
   B --> M
+  T["Дубли: input/takes + transcript/takes"] --> M
   M --> N["Versioned master + remapped transcript"]
   N --> C["Словарь + LLM-проруф"]
   B --> C
@@ -158,6 +160,24 @@ Brief замораживает исходник, тему, аспект, раз�
 Оригинал и история immutable; manifest переключается последним и очищает только устаревший
 `currentPreview`. Draft не переписывается автоматически: новая режиссура должна явно зафиксировать
 новую source revision.
+
+Монтаж из нескольких дублей использует ту же границу. `scripts/project/takes.js` импортирует
+дубли в `input/takes/`, расшифровывает каждый в `transcript/takes/take-NN.json` и регистрирует их в
+`project.json.takes`; первым дублем становится исходный файл проекта. `scripts/project/takes-pack.js`
+печатает фразы всех дублей для выбора. `edit/vNN-takes.json` (`schema/takes-edit.schema.json`)
+перечисляет куски в порядке смысла. `scripts/project/build-takes-master.js` проверяет, что дубли
+совпадают по FPS и размеру кадра с учётом поворота и имеют звук, выравнивает границы по кадрам,
+собирает куски одним FFmpeg filter graph через `runSegmentsTrim()` и публикует результат тем же
+`publishSourceRevision()` из `scripts/project/source-revision.js`, что и обычный source-edit.
+`scripts/trim-media.js` выбирает `-/filter_complex` для FFmpeg 7+ и `-filter_complex_script` для 6.x.
+Видео каждого куска проходит `fps` до и после `trim`, поэтому дубли с плавающей частотой кадров
+дают целое число кадров, а FFmpeg 7 записывает длительность пакетов. Кусок не начинается раньше,
+чем начались оба потока дубля: `probeMediaPath()` читает `start_time` по пути файла, а не через
+`pipe:0`, иначе фрагментированный MP4 и MPEG-TS теряют длительность. Дубль, взятый назад во
+времени, открывается отдельным входом FFmpeg, чтобы общий декодер не держал кадры в памяти.
+Звук для Whisper извлекается с `aresample=first_pts=0`, поэтому слова дубля стоят на той же оси,
+что и `trim`. `takes-pack.js` режет фразы по концу предложения или по паузе, потому что Whisper
+прячет паузы внутрь слов.
 
 Draft имеет отдельную непередаваемую в final возможность: `scripts/preview.js` принимает только
 текущий зарегистрированный draft, выбирает `ReelScenes` или `MotionReel` по `briefs[].kind`
@@ -648,6 +668,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Пользовательский CLI | `scripts/cli.js`, `scripts/doctor.js` |
 | Оркестрация и процессы | `scripts/build.js`, `scripts/env.js`, `scripts/process.js`, `scripts/media-probe.js`, `scripts/source-timing.js` |
 | Папки и версии роликов | `scripts/project/workspace.js`, `scripts/project/build-context.js` |
+| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/trim-media.js` |
 | Транскрипция и субтитры | `scripts/transcribe.py`, `scripts/build-captions.js` |
 | Lesson brief | `scripts/gen-brief.js`, `scripts/lesson/*` |
 | Локальная проверка | `scripts/review/*`, `review/*` |
@@ -677,7 +698,11 @@ symlink; symlink прерывает построение cache key.
 - Локальный batch index – игнорируемый сводный указатель на независимые project workspace; он не
   заменяет их manifest, не является release asset и не попадает в Git.
 - `project.json` – журнал относительных project-путей, статусов brief и рендеров. Только
-  `source.originalPath` хранит исторический абсолютный путь исходника.
+  `source.originalPath` и `takes[].originalPath` хранят исторические абсолютные
+  пути исходника и дублей.
+- `input/takes/take-NN.<ext>` и `transcript/takes/take-NN.json` – неизменяемые копии дублей и их
+  локальные транскрипты; `edit/vNN-source.json` и `edit/vNN-takes.json` – входы `automontage master`,
+  а `input/source-vNN.mp4` и `transcript/words-vNN.json` – опубликованные source revisions.
 - `assets/broll/images|video/<uuid>/` – immutable normalized master и bounded `asset.json`;
   `previews/broll/<uuid>.webm` – браузерный video proxy. Review показывает их только через
   token-protected opaque routes.
