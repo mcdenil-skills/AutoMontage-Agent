@@ -113,8 +113,8 @@ button, input, textarea { font: inherit; color: inherit; }
 .detail__side .badge { align-self: flex-start; }
 .detail__next { margin: 0; font-size: 1.05rem; }
 
-.actions, .approve, .comments { display: flex; flex-direction: column; gap: 0.6rem; padding: 1rem; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
-.actions h3, .approve h3, .comments h3 { margin: 0; font-size: 1rem; }
+.actions, .agent-handoff, .approve, .comments { display: flex; flex-direction: column; gap: 0.6rem; padding: 1rem; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
+.actions h3, .agent-handoff h3, .approve h3, .comments h3 { margin: 0; font-size: 1rem; }
 .check { display: flex; gap: 0.5rem; align-items: center; }
 .phrase { width: 100%; padding: 0.5rem; font-size: 0.85rem; font-family: inherit; resize: vertical; background: hsl(var(--card-raised)); border: 1px solid hsl(var(--border)); border-radius: 0.5rem; }
 .copy-status { font-size: 0.85rem; color: hsl(var(--teal)); }

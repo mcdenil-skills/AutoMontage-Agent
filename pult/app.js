@@ -300,9 +300,11 @@ function closeCard() {
   renderList();
 }
 
+// Обычные действия с папкой — не имеют отношения к агенту, поэтому больше не живут под
+// заголовком «Передать агенту» (см. agentHandoffBlock).
 function actionsBlock(card, variant) {
   const box = el('div', 'actions');
-  box.append(el('h3', '', 'Передать агенту'));
+  box.append(el('h3', '', 'Действия'));
   box.append(button('Показать в папке', () => api('/api/reveal', { method: 'POST', body: { key: variant.key } })));
   if (variant.reviewable) {
     box.append(button('Открыть проверку монтажа', async () => {
@@ -312,10 +314,19 @@ function actionsBlock(card, variant) {
   }
   box.append(button(card.archived ? 'Вернуть из архива' : 'В архив', async () => {
     await api('/api/archive', { method: 'POST', body: { cardId: card.id, archived: !card.archived } });
-    notify(card.archived ? 'Ролик вернулся из архива.' : 'Ролик убран в архив. Папка не тронута.');
+    // closeCard() сам чистит уведомление — успех показываем уже после него, иначе человек
+    // не успевает прочитать «Папка не тронута» до того, как строка станет пустой.
     await refresh();
     closeCard();
+    notify(card.archived ? 'Ролик вернулся из архива.' : 'Ролик убран в архив. Папка не тронута.');
   }));
+  return box;
+}
+
+// Ровно то, что нужно скопировать и передать агенту, отдельно от обычных действий с папкой.
+function agentHandoffBlock(card, variant) {
+  const box = el('div', 'agent-handoff');
+  box.append(el('h3', '', 'Передать агенту'));
   box.append(el('p', 'hint', 'Скопируйте фразу и вставьте её в чат с агентом.'));
   const phrase = `Продолжи ролик «${card.title}» в ${state.data.projectsLabel}/${variant.folder}: выполни automontage inbox и обработай входящие.`;
   const field = el('textarea', 'phrase');
@@ -614,7 +625,7 @@ function renderDetail() {
   next.dataset.variantNext = '';
   approveBox = approveBlock(variant);
   commentsBox = commentsBlock(variant, video);
-  side.append(badge, next, approveBox, commentsBox, actionsBlock(card, variant));
+  side.append(badge, next, approveBox, commentsBox, actionsBlock(card, variant), agentHandoffBlock(card, variant));
   layout.append(playerColumn, side);
   view.append(layout);
 }

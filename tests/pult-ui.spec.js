@@ -370,3 +370,20 @@ test('copy for agent puts the phrase on the real clipboard', async ({ page, cont
     'Продолжи ролик «Перфекционизм — тормоз» в projects/waiting-clip: выполни automontage inbox и обработай входящие.',
   );
 });
+
+test('the agent handoff box holds only the phrase, not the plain actions', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  const handoff = page.locator('.agent-handoff', { has: page.locator('h3', { hasText: 'Передать агенту' }) });
+  await expect(handoff.locator('[data-agent-phrase]')).toBeVisible();
+  await expect(handoff.locator('button', { hasText: 'В архив' })).toHaveCount(0);
+  await expect(handoff.locator('button', { hasText: 'Показать в папке' })).toHaveCount(0);
+  const actions = page.locator('.actions', { has: page.locator('h3', { hasText: 'Действия' }) });
+  await expect(actions.locator('button', { hasText: 'Показать в папке' })).toBeVisible();
+  await expect(actions.locator('button', { hasText: 'В архив' })).toBeVisible();
+});
+
+test('archiving keeps the success notice visible after closing the card', async ({ page }) => {
+  await openCard(page, 'Готовый ролик');
+  await page.locator('button', { hasText: 'В архив' }).click();
+  await expect(page.locator('[data-notice]')).toContainText('Папка не тронута');
+});
