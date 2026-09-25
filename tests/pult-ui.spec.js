@@ -373,6 +373,25 @@ test('archiving keeps the success notice visible after closing the card', async 
   await expect(page.locator('[data-notice]')).toContainText('Папка не тронута');
 });
 
+// Task A/C доводки пульта (DECISIONS.md D-030): нажатие «Утверждаю» на архивной карточке
+// само возвращает её из архива, поэтому не должно оставлять человека на пустеющей вкладке
+// «Архив» – «← Все ролики» обязана вести туда, где карточка теперь показана.
+test('approving an archived card returns it from the archive to the main list', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  await page.locator('button', { hasText: 'В архив' }).click();
+  await page.click('[data-tab="archive"]');
+  await expect(page.locator('[data-count="archive"]')).toHaveText('1');
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  await expect(page.locator('[data-view="detail"]')).toBeVisible();
+  await page.check('[data-viewed]');
+  await page.locator('button', { hasText: 'Утверждаю' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview – агент собирает финал');
+  await expect(page.locator('[data-count="archive"]')).toHaveText('0');
+  await page.locator('button', { hasText: '← Все ролики' }).click();
+  await expect(page.locator('[data-section="working"]')).toContainText('Перфекционизм');
+});
+
 // --- Карточка остаётся в синхроне с агентом ---
 
 // Фоновое обновление – ровно тот вызов, который пульт делает по 20-секундному таймеру.

@@ -1,7 +1,28 @@
 const { STATUS_ORDER } = require('./status');
 
+// Утверждение возвращает карточку из архива (Task A этой доводки, см. server.js и
+// DECISIONS.md D-030), но пользователь может убрать её в архив уже ПОСЛЕ утверждения –
+// обратный порядок действий. Тогда обычная надпись status.js «Утверждено – агент собирает
+// финал» вводила бы в заблуждение: выглядит так, будто агент уже занят, хотя по правилу
+// AGENTS.md он ждёт отдельной просьбы. Текст определён ровно в одном месте – здесь.
+const ARCHIVED_NEEDS_FINAL_NEXT_STEP = 'Утверждено, в архиве – агент соберёт финал по вашей просьбе';
+
 function cardIdFor(entry) {
   return entry.group ? `group:${entry.group.id}` : `folder:${entry.folder}`;
+}
+
+// Структурное условие вместо сравнения со строкой APPROVED_NEXT_STEP: needsFinal у status.js
+// не зависит от новых правок, а невыполненная правка должна оставить «Ждёт агента: …» –
+// это именно та ветка status.js, где nextStep становится APPROVED_NEXT_STEP.
+function isApprovedWaitingForFinal(variant) {
+  return Boolean(variant.needsFinal) && !variant.pendingComments;
+}
+
+// Копия варианта с честной надписью, если карточка архивная и вариант ждёт финала без новых
+// правок; никогда не меняет entry из scan – его читают и другие карточки той же папки.
+function archivedVariant(variant, archived) {
+  if (!archived || !isApprovedWaitingForFinal(variant)) return variant;
+  return { ...variant, nextStep: ARCHIVED_NEEDS_FINAL_NEXT_STEP, archivedNeedsFinal: true };
 }
 
 function byUrgency(left, right) {
@@ -15,7 +36,9 @@ function buildCards(scan, { archived = [] } = {}) {
   for (const entry of scan.entries) {
     const id = cardIdFor(entry);
     if (!groups.has(id)) groups.set(id, []);
-    groups.get(id).push(entry);
+    // Переопределение – до сборки карточки: nextStep карточки (ниже) читает его прямо из
+    // lead.nextStep, поэтому честная надпись должна попасть в variants раньше, чем прочитается.
+    groups.get(id).push(archivedVariant(entry, archivedIds.has(id)));
   }
   const cards = [...groups].map(([id, variants]) => {
     const status = variants
@@ -46,4 +69,4 @@ function buildCards(scan, { archived = [] } = {}) {
   };
 }
 
-module.exports = { buildCards, cardIdFor };
+module.exports = { ARCHIVED_NEEDS_FINAL_NEXT_STEP, buildCards, cardIdFor };

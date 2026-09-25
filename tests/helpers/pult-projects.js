@@ -24,7 +24,7 @@ function makePultRoot(registrar) {
   // закрыт – maxRetries/retryDelay тут не ждут его закрытия (синхронный rmSync блокирует event
   // loop, так что закрытие сервера всё равно не могло бы произойти за это время), они переживают
   // только внешних держателей хендлов (антивирус, дочерние процессы). Если сервер и правда мешает
-  // удалению, порядок cleanup нужно менять отдельно (см. `_progress.md`).
+  // удалению, порядок cleanup нужно менять отдельной задачей.
   registrar.after(() => fs.rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const projectsDir = path.join(base, 'projects');
   fs.mkdirSync(projectsDir);

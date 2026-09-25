@@ -59,3 +59,77 @@ test('unregistered and broken folders are passed through', () => {
   assert.deepEqual(sections.unregistered, [{ folder: 'research' }]);
   assert.deepEqual(sections.broken, [{ folder: 'old', error: 'Паспорт ролика не читается' }]);
 });
+
+// Утверждение возвращает карточку из архива (Task B), но её можно снова убрать в архив уже
+// после утверждения – тогда «Утверждено – агент собирает финал» из status.js вводило бы в
+// заблуждение: выглядело бы так, будто агент уже занят, хотя он ждёт отдельной просьбы
+// (см. AGENTS.md, «Пульт роликов», и DECISIONS.md D-030). Условие структурное: needsFinal и
+// нет невыполненных правок – ровно та ветка status.js, которая производит этот nextStep.
+test('an archived card that is approved and waiting for its final gets an honest next step', () => {
+  const sections = buildCards(scan([
+    entry({
+      folder: 'archived-final',
+      status: 'working',
+      nextStep: 'Утверждено – агент собирает финал',
+      needsFinal: true,
+      pendingComments: 0,
+    }),
+  ]), { archived: ['folder:archived-final'] });
+  const card = sections.archive[0];
+  assert.equal(card.nextStep, 'Утверждено, в архиве – агент соберёт финал по вашей просьбе');
+  assert.equal(card.variants[0].nextStep, 'Утверждено, в архиве – агент соберёт финал по вашей просьбе');
+  assert.equal(card.variants[0].archivedNeedsFinal, true);
+});
+
+test('the same approved-without-final card, not archived, keeps the plain next step', () => {
+  const sections = buildCards(scan([
+    entry({
+      folder: 'plain-final',
+      status: 'working',
+      nextStep: 'Утверждено – агент собирает финал',
+      needsFinal: true,
+      pendingComments: 0,
+    }),
+  ]));
+  const card = sections.working[0];
+  assert.equal(card.nextStep, 'Утверждено – агент собирает финал');
+  assert.equal(card.variants[0].archivedNeedsFinal, undefined);
+});
+
+// Новая правка после утверждения – новая работа автора (см. AGENTS.md): архив не должен
+// подменить «Ждёт агента: …» честной надписью про финал, которую агент пока даже не начал.
+test('an archived card with a pending edit keeps "waiting for the agent", not the archived-final text', () => {
+  const sections = buildCards(scan([
+    entry({
+      folder: 'archived-edit',
+      status: 'working',
+      nextStep: 'Ждёт агента: 1 правка',
+      needsFinal: true,
+      pendingComments: 1,
+    }),
+  ]), { archived: ['folder:archived-edit'] });
+  const card = sections.archive[0];
+  assert.equal(card.nextStep, 'Ждёт агента: 1 правка');
+  assert.equal(card.variants[0].archivedNeedsFinal, undefined);
+});
+
+// Карточка группы (Task 15) должна получить ту же честную надпись, с префиксом варианта –
+// nextStep карточки читает её прямо из lead.nextStep, поэтому переопределение должно случиться
+// до сборки карточки, а не после.
+test('an archived group card prefixes the honest next step with the variant label', () => {
+  const group = { id: 'archived-group', title: 'Архивная тема' };
+  const sections = buildCards(scan([
+    entry({
+      folder: 'variant-a',
+      group,
+      variantLabel: 'Вариант А',
+      status: 'working',
+      nextStep: 'Утверждено – агент собирает финал',
+      needsFinal: true,
+      pendingComments: 0,
+    }),
+    entry({ folder: 'variant-b', group, variantLabel: 'Вариант Б' }),
+  ]), { archived: ['group:archived-group'] });
+  const card = sections.archive[0];
+  assert.equal(card.nextStep, 'Вариант А: Утверждено, в архиве – агент соберёт финал по вашей просьбе');
+});

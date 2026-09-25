@@ -290,6 +290,19 @@ function currentCard() {
   return allCards().find((card) => card.id === state.openCardId) || null;
 }
 
+// Утверждение возвращает архивную карточку из архива (Task B доводки пульта, D-030): если
+// человек как раз смотрит открытую карточку через вкладку «Архив», а она там больше не лежит,
+// «← Все ролики» должна вести туда, где карточка теперь показана, а не на опустевший архив.
+// aria-pressed обновляем тем же способом, что и клик по вкладке.
+function syncArchiveTab() {
+  if (state.tab !== 'archive' || !state.openCardId) return;
+  if (state.data.archive.some((card) => card.id === state.openCardId)) return;
+  state.tab = 'main';
+  document.querySelectorAll('[data-tab]').forEach((tab) => {
+    tab.setAttribute('aria-pressed', String(tab.dataset.tab === 'main'));
+  });
+}
+
 function currentVariant(card) {
   return card.variants.find((variant) => variant.key === state.variantKey) || card.variants[0];
 }
@@ -444,10 +457,12 @@ function videoLabelFor(variant) {
   if (variant.video) {
     // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране – уже
     // утверждённый preview, а не тот, что «ждёт проверки», даже если после утверждения
-    // человек оставил новую правку.
-    return variant.needsFinal && variant.video.kind === 'preview'
-      ? 'Утверждённый preview – агент собирает финал'
-      : VIDEO_LABELS[variant.video.kind];
+    // человек оставил новую правку. archivedNeedsFinal (buildCards на сервере) – та же
+    // ситуация, но карточку убрали в архив уже после утверждения: подпись должна честно
+    // сказать, что финал ждёт отдельной просьбы, а не то, что агент уже занят им.
+    if (variant.video.kind !== 'preview') return VIDEO_LABELS[variant.video.kind];
+    if (variant.archivedNeedsFinal) return 'Утверждённый preview – в архиве, финал по вашей просьбе';
+    return variant.needsFinal ? 'Утверждённый preview – агент собирает финал' : VIDEO_LABELS[variant.video.kind];
   }
   if (variant.videoUnsupported) return VIDEO_UNSUPPORTED_LABEL;
   return 'Видео пока нет';
@@ -785,6 +800,7 @@ async function refresh({ keepDetail = false } = {}) {
   // остаются на месте: их убирает только следующее действие.
   if (refreshErrorShown) notify('');
   updateTabs();
+  syncArchiveTab();
   if (!state.openCardId) {
     // lastCardsJson обновляет сам renderList – при каждой настоящей отрисовке списка.
     if (JSON.stringify(state.data) !== lastCardsJson) renderList();

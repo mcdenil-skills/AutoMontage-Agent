@@ -5,7 +5,7 @@ const { createHmac, randomBytes } = require('node:crypto');
 
 const { approveBrief, createOrOpenProject, resolveProjectPath } = require('../project/workspace');
 const { startReviewServer } = require('../review/server');
-const { buildCards } = require('./cards');
+const { buildCards, cardIdFor } = require('./cards');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalog');
 const { addComment, deleteComment, readComments } = require('./comments');
 const { hashFile } = require('./files');
@@ -206,6 +206,10 @@ async function startPultServer({
       approvalTicket: playable ? approvalTicket(entry) : null,
       // Утверждённый brief ещё без финала: на экране – тот самый утверждённый preview.
       needsFinal: Boolean(entry.needsFinal),
+      // Карточку убрали в архив уже после утверждения (buildCards, Task B доводки пульта):
+      // подпись плеера должна сказать честно, что финал ждёт отдельной просьбы, а не то,
+      // что агент уже занят им.
+      archivedNeedsFinal: Boolean(entry.archivedNeedsFinal),
       video: playable ? { kind: entry.video.kind, url: `/media/video?${versioned}` } : null,
       videoUnsupported: Boolean(videoFile) && !playable,
       thumbUrl: videoFile ? `/media/thumb?${versioned}` : null,
@@ -429,6 +433,17 @@ async function startPultServer({
         // это временно, в отличие от отказа по самому черновику.
         if (error && error.code === ENGINE_MANIFEST_CONFLICT) throw projectBusy();
         throw new PultRequestError(422, 'APPROVAL_BLOCKED', APPROVAL_BLOCKED_MESSAGE);
+      }
+      // Утверждение прошло: если карточка лежала в архиве, само нажатие «Утверждаю» и есть
+      // просьба пользователя собрать финал (AGENTS.md, «Пульт роликов», DECISIONS.md D-030) –
+      // возвращаем её из архива, чтобы входящие агента увидели обычную строку «Утверждено»,
+      // а не пометку «в архиве». setArchived ничего не пишет, если id и так не в архиве.
+      // Отказ здесь не должен превратить уже случившееся утверждение в ошибку – только лог,
+      // как и другие внутренние сбои этого маршрута.
+      try {
+        setArchived(resolvedProjectsDir, cardIdFor(entry), false);
+      } catch (error) {
+        logger.error(`Пульт: не удалось вернуть карточку из архива после утверждения (${errorName(error)})`);
       }
       sendJson(response, 201, { ok: true });
       return;

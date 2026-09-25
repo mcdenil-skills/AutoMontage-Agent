@@ -8,7 +8,9 @@ const path = require('node:path');
 const { planPreview, publishCurrentPreview } = require('../scripts/project/preview-workspace');
 const { createOrOpenProject, readProjectManifest } = require('../scripts/project/workspace');
 const { acceptComment, readComments } = require('../scripts/pult/comments');
+const { buildInbox, formatInbox } = require('../scripts/pult/inbox');
 const { startPultServer } = require('../scripts/pult/server');
+const { readPultState } = require('../scripts/pult/state');
 const {
   ROOT, addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
 } = require('./helpers/pult-projects');
@@ -635,6 +637,86 @@ test('archive hides a card without touching its folder', async (t) => {
   assert.equal(cards.ready.length, 0);
   assert.ok(fs.existsSync(path.join(projectsDir, 'ready-clip', 'project.json')));
   assert.equal((await post(session, '/api/archive', { cardId: '../x', archived: true })).status, 400);
+});
+
+// Task B доводки пульта (DECISIONS.md D-030): нажатие «Утверждаю» на архивной карточке –
+// это и есть просьба пользователя собрать финал, поэтому само утверждение возвращает
+// карточку из архива, а не оставляет пометку «в архиве» в входящих агента.
+test('approving an archived waiting card returns it from the archive', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });
+  assert.deepEqual((await get(session, '/api/cards')).json.archive.map((card) => card.id), ['folder:waiting-clip']);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const approved = await approve(session, 'waiting-clip', ticket);
+  assert.equal(approved.status, 201);
+  const cards = (await get(session, '/api/cards')).json;
+  assert.deepEqual(cards.archive, []);
+  assert.deepEqual(readPultState(projectsDir).archived, []);
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir });
+  assert.match(text, /- Утверждено: `brief\/v\d{2}-approved\.lesson\.json`\. Собери финал и проведи полный QA\./);
+  assert.doesNotMatch(text, /в архиве/);
+});
+
+// Отказ утверждения (например, протухший билет) не должен тихо вернуть карточку из архива –
+// пользователь её туда убрал сознательно, а утверждения не случилось.
+test('a refused approval leaves the archived card archived', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });
+  const stale = await approve(session, 'waiting-clip', 'x'.repeat(43));
+  assert.equal(stale.status, 409);
+  assert.deepEqual((await get(session, '/api/cards')).json.archive.map((card) => card.id), ['folder:waiting-clip']);
+  assert.deepEqual(readPultState(projectsDir).archived, ['folder:waiting-clip']);
+});
+
+// Варианты одной темы делят id карточки group:<id> (см. cardIdFor) – утверждение любого
+// варианта должно вернуть из архива всю карточку темы, а не только утверждённый вариант.
+test('approving one variant of an archived group card returns the whole card from the archive', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const group = { id: 'tema-y', title: 'Тема Y' };
+  addDraftProject(projectsDir, {
+    folder: 'tema-y-original',
+    name: 'Тема Y – оригинал',
+    card: { version: 1, group, variantLabel: 'Оригинал' },
+  });
+  addDraftProject(projectsDir, {
+    folder: 'tema-y-hook1',
+    name: 'Тема Y – хук 1',
+    card: { version: 1, group, variantLabel: 'Хук 1' },
+  });
+  const { session } = await startTest(t, projectsDir);
+  await post(session, '/api/archive', { cardId: 'group:tema-y', archived: true });
+  assert.deepEqual((await get(session, '/api/cards')).json.archive.map((card) => card.id), ['group:tema-y']);
+  const ticket = (await variantOf(session, 'tema-y-original')).approvalTicket;
+  const approved = await approve(session, 'tema-y-original', ticket);
+  assert.equal(approved.status, 201);
+  const cards = (await get(session, '/api/cards')).json;
+  assert.deepEqual(cards.archive, []);
+  assert.deepEqual(readPultState(projectsDir).archived, []);
+});
+
+// Отказ движка вернуть карточку из архива не должен испортить уже случившееся утверждение
+// (порядок: сначала approve, потом un-archive) – только лог, без пути в сообщении.
+test('a failing un-archive after a successful approval still returns success and only logs the error', { skip: process.platform === 'win32' }, async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session, calls } = await startTest(t, projectsDir);
+  await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const pultDir = path.join(projectsDir, '.pult');
+  fs.chmodSync(pultDir, 0o500);
+  let approved;
+  try {
+    approved = await approve(session, 'waiting-clip', ticket);
+  } finally {
+    fs.chmodSync(pultDir, 0o700);
+  }
+  assert.equal(approved.status, 201);
+  assert.ok(approvedBriefs(projectsDir, 'waiting-clip').length > 0);
+  assert.ok(calls.logs.some((line) => line.includes('не удалось вернуть карточку из архива')));
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir)));
+  const cards = (await get(session, '/api/cards')).json;
+  assert.deepEqual(cards.archive.map((card) => card.id), ['folder:waiting-clip']);
 });
 
 test('reveal opens the file manager at the video or folder', async (t) => {
