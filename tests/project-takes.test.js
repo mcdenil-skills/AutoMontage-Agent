@@ -294,3 +294,53 @@ test('a leftover transcript file from an interrupted run is rejected before tran
   );
   assert.deepEqual(transcribed, []);
 });
+
+test('a concurrent takes add fails on the project lock instead of reporting the running import as leftovers', (t) => {
+  const fixture = makeProject(t);
+  const third = path.join(fixture.root, 'take3-concurrent.mp4');
+  fs.writeFileSync(third, 'TAKE-THREE');
+
+  const bTranscribed = [];
+  let concurrentError = null;
+  let callCount = 0;
+
+  const { deps: aDeps } = fakes({
+    transcribeImpl({ videoPath }) {
+      callCount += 1;
+      if (callCount === 2) {
+        // A уже скопировал take-02 и держит замок, расшифровывая его; B стартует импорт того же проекта.
+        const { deps: bDeps } = fakes({
+          transcribeImpl({ videoPath: bVideoPath }) {
+            bTranscribed.push(path.basename(bVideoPath));
+            return [{ start: 0, end: 1, text: 'слово', words: [{ w: 'слово', s: 0.2, e: 0.6 }] }];
+          },
+        });
+        try {
+          addTakes({ projectDir: fixture.dir, files: [third] }, bDeps);
+        } catch (error) {
+          concurrentError = error;
+        }
+      }
+      return [{ start: 0, end: 1, text: 'слово', words: [{ w: 'слово', s: 0.2, e: 0.6 }] }];
+    },
+  });
+
+  const result = addTakes({ projectDir: fixture.dir, files: [fixture.second] }, aDeps);
+
+  assert.ok(concurrentError, 'the concurrent import should have failed');
+  assert.equal(concurrentError.code, 'PROJECT_MANIFEST_CONFLICT');
+  assert.doesNotMatch(concurrentError.message, /leftover files/);
+  assert.deepEqual(bTranscribed, []);
+
+  assert.deepEqual(result.takes.map((take) => take.id), ['take-01', 'take-02']);
+  const manifest = readProjectManifest(fixture.dir);
+  assert.deepEqual(manifest.takes.map((take) => take.id), ['take-01', 'take-02']);
+  assert.equal(fs.existsSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov')), true);
+  assert.equal(fs.readFileSync(path.join(fixture.dir, 'input', 'takes', 'take-02.mov'), 'utf8'), 'TAKE-TWO');
+});
+
+test('addTakes lets collectWords reject a non-array transcript instead of crashing', (t) => {
+  const fixture = makeProject(t);
+  const { deps } = fakes({ transcribeImpl: () => ({}) });
+  assert.throws(() => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps), /массивом сегментов/);
+});

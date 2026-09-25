@@ -64,13 +64,17 @@ function assertCompatibleTakes(takes) {
 }
 
 // transcribe.py округляет время слов до 0.01 с, и faster-whisper отдаёт слова нулевой длины.
-// Слово не теряем: даём ему 0.01 с.
+// Слово не теряем: даём ему 0.01 с. Растянутое слово может на 10 мс наехать на следующее –
+// это безвредно для потребителей (текст и субтитры не завязаны на точный стык слов).
 function normalizeWordTimings(segments) {
+  if (!Array.isArray(segments)) return segments;
   return segments.map((segment) => {
+    if (!segment || typeof segment !== 'object') return segment;
     if (!Array.isArray(segment.words)) return { ...segment };
     return {
       ...segment,
       words: segment.words.map((word) => {
+        if (!word || typeof word !== 'object') return word;
         const start = Number(word.s);
         const end = Number(word.e);
         if (Number.isFinite(start) && start >= 0 && end === start) {
@@ -214,11 +218,6 @@ function addTakes({
   ensureProjectDirectory(dir, 'input/takes', fileSystem);
   ensureProjectDirectory(dir, 'transcript/takes', fileSystem);
 
-  const leftovers = findLeftoverTakeFiles(dir, planned, fileSystem);
-  if (leftovers.length) {
-    throw new Error(`leftover files from an interrupted takes add; remove them and retry: ${leftovers.join(', ')}`);
-  }
-
   const workspace = { dir, manifest };
   const created = [];
   // Коммит манифеста уже прошёл: ошибка освобождения замка не должна стирать зарегистрированные файлы.
@@ -227,6 +226,12 @@ function addTakes({
     return withProjectMutation(workspace, (transaction) => {
       const current = transaction.manifest.takes || [];
       if (current.length !== existing.length) throw new Error('takes changed before registration');
+      // Проверяем хвосты уже под замком: до него чужой активный импорт виден как "хвост"
+      // своих же файлов, которые тот всё ещё легитимно пишет.
+      const leftovers = findLeftoverTakeFiles(dir, planned, fileSystem);
+      if (leftovers.length) {
+        throw new Error(`leftover files from an interrupted takes add; remove them and retry: ${leftovers.join(', ')}`);
+      }
       const entries = [];
       for (const take of planned) {
         if (take.copyFrom) {
