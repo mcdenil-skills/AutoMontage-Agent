@@ -240,3 +240,122 @@
 - [ ] **Step 6: Готово.** PR открыт, CI зелёный. PR в `main` не вливать.
   - Записать номер PR и результат CI в дневник проекта.
   - Локальный `_progress.md` существует только на время незавершённой работы: перенести из него в дневник то, что ещё нужно, и удалить файл.
+
+---
+
+## Дополнение 2026-09-26: слияние PR #27 после релиза 1.8.0
+
+Владелец решил: сначала выходит релиз 1.8.0 из параллельной сессии (пульт и утечка в Review), потом вливается PR #27, и дубли попадают в следующую версию.
+
+**Факты (проверено 2026-09-26):**
+- **R1.** `origin/main` = `c118d3f` (Merge PR #29 `release/v1.8.0`). Тег `v1.8.0` стоит на нём, `package.json` 1.8.0. Релиз опубликован и помечен Latest. CI на `main` зелёный 5/5. Тег `v1.7.0` поставлен на `c5aefda`, цепочка тегов 1.5-1.8 сплошная.
+- **R2.** `git merge-tree --write-tree HEAD origin/main` не даёт конфликтов, но git молча кладёт наши пять записей CHANGELOG внутрь `## [1.8.0]`. Релизная ветка вставила заголовок `## [1.8.0] - 2026-09-25` сразу под `## [Unreleased]`.
+- **R3.** После релиза `main` изменил `CHANGELOG.md`, `README.md`, `SECURITY.md`, `TESTING.md`, `package.json`, `package-lock.json`, `scripts/review/server.js`, `tests/release-hygiene.test.js` и `tests/review-server-security.test.js`. Всё это сливается автоматически.
+
+### Task 5: Влить релиз в ветку, вернуть записи в `[Unreleased]`, влить PR #27
+
+**Files:** Modify `CHANGELOG.md` (только верх файла), merge-коммит.
+
+- [ ] **Step 0: Закоммитить это дополнение плана** (иначе Step 1 увидит грязное дерево):
+  ```bash
+  git add docs/superpowers/plans/2026-09-25-takes-merge-and-pr.md
+  git commit -m "docs: plan merging PR #27 after the 1.8.0 release" --trailer "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  ```
+
+- [ ] **Step 1: Слить без коммита.**
+  ```bash
+  git fetch origin --tags
+  git merge-base --is-ancestor v1.8.0 origin/main && echo "release in main"
+  git status --short                        # пусто
+  git merge --no-ff --no-commit origin/main  # ожидается: без конфликтов
+  ```
+  Любой конфликт – остановиться и дополнить план.
+
+- [ ] **Step 2: Собрать CHANGELOG заново.** Взять CHANGELOG из `origin/main` и вставить после строки `## [Unreleased]` и пустой строки блок ниже (файл `<scratch>/unreleased-takes.md`, дословно, с пустой строкой в конце):
+  ```markdown
+  ### Добавлено
+
+  - Монтаж из нескольких дублей одного ролика: `automontage takes add` импортирует дубли и локально
+    расшифровывает каждый, `automontage takes pack` выдаёт сводку фраз для выбора, а
+    `automontage master` с `edit/vNN-takes.json` собирает лучшие куски разных дублей в новую
+    immutable source revision с пересчитанными словами. Навык `reel-turnkey` выбирает дубль для
+    каждого смыслового блока и показывает выбор в пакете preview.
+  - `automontage master` для дублей сам ищет паузу в звуке не дальше 0.25 с от каждой границы куска
+    и ставит разрез в неё, не перескакивая через другое слово, печатает итоговые куски, время стыков и
+    границы без паузы рядом; слова-галлюцинации Whisper в тишине на краях кусков не попадают в
+    транскрипт. Навык `reel-turnkey` собирает тем же маршрутом один ролик из разных записей по
+    сценарию.
+
+  ### Исправлено
+
+  - `automontage master`, `--tighten` и вырезание пауз снова работают с FFmpeg 9: filter script
+    передаётся через `-/filter_complex` для FFmpeg 7+ и через `-filter_complex_script` для 6.x.
+  - `automontage master` принимает исходник с метаданными поворота: ожидаемый размер результата
+    учитывает автоповорот FFmpeg.
+  - `automontage master` больше не удаляет опубликованную source revision, если после записи
+    `project.json` не удалось снять блокировку проекта (например, EPERM на Windows), хотя команда
+    всё равно сообщит ошибку снятия блокировки.
+
+  ```
+  Команда:
+  ```bash
+  node -e '
+  const fs=require("fs");const {execFileSync}=require("child_process");
+  const base=execFileSync("git",["show","origin/main:CHANGELOG.md"],{encoding:"utf8"});
+  const block=fs.readFileSync(process.argv[1],"utf8");
+  const marker="## [Unreleased]\n\n";
+  if(base.split(marker).length!==2) throw new Error("expected exactly one Unreleased marker");
+  fs.writeFileSync("CHANGELOG.md",base.replace(marker,marker+block));' <scratch>/unreleased-takes.md
+  ```
+
+- [ ] **Step 3: Проверить CHANGELOG.**
+  ```bash
+  diff <(git show origin/main:CHANGELOG.md | sed -n '/^## \[1.8.0\]/,$p') <(sed -n '/^## \[1.8.0\]/,$p' CHANGELOG.md) && echo "1.8.0 section untouched"
+  git diff origin/main -- CHANGELOG.md | grep '^-' | grep -v '^---' | wc -l   # 0: из релиза ничего не удалено
+  sed -n '/^## \[Unreleased\]/,/^## \[1.8.0\]/p' CHANGELOG.md | grep -c '^- '   # 5 наших записей
+  grep -c '^## \[Unreleased\]' CHANGELOG.md                                    # 1
+  ```
+  Пять наших записей из автослияния внутри `[1.8.0]` исчезают сами: весь раздел берётся из `origin/main`.
+
+- [ ] **Step 4: Коммит слияния.**
+  ```bash
+  git add CHANGELOG.md
+  git commit --no-edit --trailer "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  ```
+  Hook (privacy + Gitleaks) должен пройти.
+
+- [ ] **Step 5: Проверить слитое дерево.**
+  - `PATH="/opt/homebrew/opt/ffmpeg-full/bin:$PATH" npm test`: `fail 0`.
+  - `PATH="/opt/homebrew/opt/ffmpeg@6/bin:$PATH" npm test`: `fail 0`, копия Linux CI.
+  - Настоящие тесты дублей на FFmpeg 7 (команда из Task 2 Step 3): `fail 0`, `skipped 0`.
+  - `npm run test:review-ui`: все зелёные. После релиза менялся `scripts/review/server.js`.
+  - `npm run check:privacy && npm run check:release && npm run check:release -- --base origin/main`: все passed.
+  - Длинное тире: `git diff origin/main...HEAD | grep '^+' | grep -c "$(printf '\342\200\224')"` = 0.
+
+- [ ] **Step 6: Push и CI.**
+  - Выполнить Task 4 Step 0. Если `main not moved` не напечатано, повторить Task 5 Steps 1-5, а не Task 1: новый merge-коммит и CHANGELOG из нового `origin/main`. Если Step 3 покажет в `[Unreleased]` больше 5 записей, значит, main добавил свои: остановиться и дополнить план. Затем `git push origin feat/multi-take-master`.
+  - Дождаться CI на новом head командами из Task 4 Step 4. `RUN_ID` брать по коммиту: иначе `--limit 1` сразу после push вернёт прошлый зелёный прогон `ce82789`.
+    ```bash
+    R=mcdenil-skills/AutoMontage-Agent
+    RUN_ID=$(gh run list --repo $R --branch feat/multi-take-master --event pull_request --workflow ci.yml --commit "$(git rev-parse HEAD)" --limit 1 --json databaseId --jq '.[0].databaseId')
+    ```
+    Пустой `RUN_ID` значит, что прогон ещё не зарегистрирован: подождать минуту и повторить. Ожидается 5/5, а на Windows 9 настоящих тестов `ok` без `# SKIP`.
+  - Если CI красный – Task 4 Step 5.
+
+- [ ] **Step 7: Влить PR #27** merge-коммитом, как #26, #28 и #29. Ветку не удалять.
+  ```bash
+  R=mcdenil-skills/AutoMontage-Agent
+  gh pr view 27 --repo $R --json mergeable,mergeStateStatus --jq '"\(.mergeable) \(.mergeStateStatus)"'   # MERGEABLE CLEAN
+  gh pr merge 27 --repo $R --merge --match-head-commit "$(git rev-parse HEAD)"
+  ```
+  `UNKNOWN` значит, что GitHub ещё считает: повторить через несколько секунд. `main` не защищён, правила «ветка должна быть актуальной» нет, поэтому `CLEAN` зависит только от конфликтов и статуса проверок. `--match-head-commit` не даст влить что-то, кроме проверенного коммита.
+
+- [ ] **Step 8: Проверить `main` после слияния.**
+  ```bash
+  R=mcdenil-skills/AutoMontage-Agent
+  git fetch origin && git merge-base --is-ancestor HEAD origin/main && echo "PR in main"
+  MAIN_RUN=$(gh run list --repo $R --branch main --workflow ci.yml --event push --commit "$(git rev-parse origin/main)" --limit 1 --json databaseId --jq '.[0].databaseId')
+  gh run watch "$MAIN_RUN" --repo $R --exit-status
+  ```
+  Пустой `MAIN_RUN` значит, что прогон ещё не зарегистрирован: подождать минуту и повторить. Без `--commit` команда вернула бы прошлый зелёный прогон релиза `c118d3f`.
+  Ожидается CI 5/5 на `main`. Записать итог в дневник проекта. Релиз 1.9.0 делать только по отдельной просьбе владельца.
