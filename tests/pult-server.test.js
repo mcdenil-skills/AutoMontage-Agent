@@ -199,7 +199,7 @@ test('cards list waiting videos first and never expose paths or hashes', async (
   assert.deepEqual(cards.unregistered, [{ folder: 'research' }]);
   assert.equal(cards.projectsLabel, 'projects');
   const variant = waitingVariant(cards);
-  assert.match(variant.video.url, /^\/media\/video\?key=waiting-clip$/);
+  assert.match(variant.video.url, /^\/media\/video\?key=waiting-clip&v=[A-Za-z0-9_-]{16}$/);
   assert.deepEqual(variant.meta, { width: 1080, height: 1920, durationSec: 4 });
   assert.equal(typeof variant.approvalTicket, 'string');
   const text = JSON.stringify(cards);
@@ -207,6 +207,54 @@ test('cards list waiting videos first and never expose paths or hashes', async (
   assert.doesNotMatch(text, /[a-f0-9]{64}/);
   assert.doesNotMatch(text, /brief\//);
   assert.equal(cards.ready[0].variants[0].approvalTicket, null);
+});
+
+// Адрес видео раньше состоял только из ключа: новый preview приходил по тому же URL, и
+// открытая страница продолжала показывать старый файл. Метка v меняется вместе с файлом.
+test('media urls carry a version that changes only when the video file changes', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const versionOf = (url) => new URL(url, 'http://127.0.0.1').searchParams.get('v');
+
+  const first = await variantOf(session, 'waiting-clip');
+  const v1 = versionOf(first.video.url);
+  assert.match(v1, /^[A-Za-z0-9_-]{16}$/);
+  assert.equal(versionOf(first.thumbUrl), v1);
+  // Файл не менялся — метка та же, иначе фоновое обновление перерисовывало бы плеер зря.
+  assert.equal(versionOf((await variantOf(session, 'waiting-clip')).video.url), v1);
+  // Маршрут медиа выбирает файл только по ключу: метку он не проверяет.
+  const served = await request(session, first.video.url, { token: session.token, queryToken: true });
+  assert.equal(served.status, 200);
+  assert.equal(served.body.toString('utf8'), 'preview waiting-clip');
+
+  republishFullPreview(projectsDir, 'waiting-clip', 'preview после правки');
+  const republished = await variantOf(session, 'waiting-clip');
+  const v2 = versionOf(republished.video.url);
+  assert.match(v2, /^[A-Za-z0-9_-]{16}$/);
+  assert.notEqual(v2, v1);
+  assert.equal(versionOf(republished.thumbUrl), v2);
+
+  // У финала в паспорте нет SHA-256 — версию даёт сам файл (размер и время изменения).
+  const readyBefore = versionOf((await variantOf(session, 'ready-clip')).video.url);
+  assert.equal(versionOf((await variantOf(session, 'ready-clip')).video.url), readyBefore);
+  const manifest = readProjectManifest(path.join(projectsDir, 'ready-clip'));
+  fs.writeFileSync(path.join(projectsDir, 'ready-clip', ...manifest.final.split('/')), 'final ready-clip, пересобран');
+  assert.notEqual(versionOf((await variantOf(session, 'ready-clip')).video.url), readyBefore);
+
+  const text = JSON.stringify((await get(session, '/api/cards')).json);
+  assert.doesNotMatch(text, /[a-f0-9]{64}/);
+  assert.ok(!text.includes(projectsDir));
+});
+
+// Подпись «Утверждённый preview — агент собирает финал» опирается на флаг сервера, а не
+// на разбор текста следующего шага.
+test('cards say whether a variant still waits for its final', async (t) => {
+  const projectsDir = await standardRoot(t);
+  addDraftProject(projectsDir, { folder: 'approved-clip', name: 'Утверждён', approve: true });
+  const { session } = await startTest(t, projectsDir);
+  assert.equal((await variantOf(session, 'approved-clip')).needsFinal, true);
+  assert.equal((await variantOf(session, 'waiting-clip')).needsFinal, false);
+  assert.equal((await variantOf(session, 'ready-clip')).needsFinal, false);
 });
 
 test('media streams the current video with byte ranges', async (t) => {
@@ -319,7 +367,7 @@ test('a legacy video in a format the pult cannot play is marked unsupported but 
   assert.equal(variant.video, null);
   assert.equal(variant.meta, null);
   assert.equal(variant.videoUnsupported, true);
-  assert.equal(variant.thumbUrl, '/media/thumb?key=archive-cut%230');
+  assert.match(variant.thumbUrl, /^\/media\/thumb\?key=archive-cut%230&v=[A-Za-z0-9_-]{16}$/);
   const thumb = await request(session, variant.thumbUrl, { token: session.token, queryToken: true });
   assert.equal(thumb.status, 200);
   assert.match(thumb.headers['content-type'], /image\/jpeg/);

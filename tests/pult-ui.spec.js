@@ -7,6 +7,7 @@ const { test, expect } = require('playwright/test');
 
 const { createHash } = require('node:crypto');
 
+const { acceptComment, readComments } = require('../scripts/pult/comments');
 const { startPultServer } = require('../scripts/pult/server');
 const ws = require('../scripts/project/workspace');
 const pw = require('../scripts/project/preview-workspace');
@@ -17,7 +18,9 @@ const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 // Публикует ВТОРОЙ черновик и preview поверх уже утверждённого и отрендеренного проекта:
 // ролик возвращается в «Ждёт меня», а рендер v01 остаётся в Истории как прошлая версия —
 // нужен тесту A4 (просмотр Истории на карточке, которую всё ещё можно утвердить и править).
-function addSecondRevision(projectDir, name) {
+// previewBytes — содержимое нового preview: по умолчанию текст, а там, где тесту нужно
+// реально перематывать плеер, — настоящее видео.
+function addSecondRevision(projectDir, name, previewBytes = 'preview v2') {
   let workspace = ws.createOrOpenProject({ projectDir });
   const brief = {
     version: 1,
@@ -37,7 +40,7 @@ function addSecondRevision(projectDir, name) {
     range: { kind: 'full', fromSec: 0, toSec: 4 },
   });
   const staged = path.join(workspace.dir, 'previews', 'stage-v2.mp4');
-  fs.writeFileSync(staged, 'preview v2');
+  fs.writeFileSync(staged, previewBytes);
   pw.publishCurrentPreview(workspace, plan, staged, {
     width: 160, height: 90, fps: 25, generatedAt: '2026-09-21T10:05:00.000Z',
   });
@@ -53,12 +56,22 @@ const registrar = { after: (fn) => cleanups.push(fn) };
 // собственные ширина/высота, и только с ними браузер способен воспроизвести баг A1
 // (растянутая карточка) и проверить его исправление.
 let verticalThumbBytes;
+// Настоящий 15-секундный ролик (VP8, как в review-ui.spec.js): его можно перемотать на
+// 12-ю секунду и проверить, на какой секунде сохранилась правка.
+let playableVideoBytes;
 
 test.beforeAll(() => {
   const tmp = path.join(os.tmpdir(), `pult-ui-thumb-${process.pid}.jpg`);
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=gray:s=180x320', '-frames:v', '1', tmp], { stdio: 'ignore' });
   verticalThumbBytes = fs.readFileSync(tmp);
   fs.rmSync(tmp, { force: true });
+  const clip = path.join(os.tmpdir(), `pult-ui-clip-${process.pid}.webm`);
+  execFileSync('ffmpeg', [
+    '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=gray:s=160x90:r=5:d=15',
+    '-c:v', 'libvpx', '-b:v', '30k', '-an', clip,
+  ], { stdio: 'ignore' });
+  playableVideoBytes = fs.readFileSync(clip);
+  fs.rmSync(clip, { force: true });
 });
 
 function fakeCapture(command, args) {
@@ -297,6 +310,10 @@ test('a legacy .mkv variant shows the unsupported-format label', async ({ page }
   // вместо него теперь пустая заглушка, а не элемент [data-player].
   await expect(page.locator('[data-player]')).toHaveCount(0);
   await expect(page.locator('.player--empty')).toBeVisible();
+  // Подпись живёт внутри пустой заглушки, а не висит под чёрным прямоугольником.
+  await expect(page.locator('.player--empty .player__label')).toHaveText(
+    'Этот формат не проигрывается в пульте — откройте в папке',
+  );
   await expect(page.locator('button', { hasText: 'Показать в папке' })).toBeVisible();
   await expect(page.locator('.comments')).toContainText(
     'Этот формат не проигрывается в пульте — правку можно описать словами агенту.',
@@ -386,4 +403,206 @@ test('archiving keeps the success notice visible after closing the card', async 
   await openCard(page, 'Готовый ролик');
   await page.locator('button', { hasText: 'В архив' }).click();
   await expect(page.locator('[data-notice]')).toContainText('Папка не тронута');
+});
+
+// --- Карточка остаётся в синхроне с агентом ---
+
+// Фоновое обновление — ровно тот вызов, который пульт делает по 20-секундному таймеру.
+// page.evaluate дожидается его конца, поэтому проверки «ничего не изменилось» не гадают
+// по времени. Там, где важен сам таймер, тест крутит его через page.clock.
+const backgroundRefresh = (page) => page.evaluate(() => refresh({ keepDetail: true }));
+
+async function waitForPlayerMetadata(page) {
+  await page.locator('[data-player]').evaluate((video) => new Promise((resolve) => {
+    if (video.readyState >= 1) {
+      resolve();
+      return;
+    }
+    video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+  }));
+}
+
+async function seekPlayer(page, seconds) {
+  await page.locator('[data-player]').evaluate((video, time) => new Promise((resolve) => {
+    video.addEventListener('seeked', () => resolve(), { once: true });
+    video.currentTime = time;
+  }), seconds);
+}
+
+async function addEdit(page, text) {
+  await page.fill('[data-comment-text]', text);
+  await page.locator('button', { hasText: 'Добавить правку' }).click();
+  await expect(page.locator('[data-comment-list]')).toContainText(text);
+}
+
+function historyFixture(folder, name, previewBytes) {
+  return (dir) => {
+    const built = addDraftProject(dir, { folder, name, approve: true, final: true });
+    addSecondRevision(built.projectDir, name, previewBytes);
+  };
+}
+
+test('after returning from History an edit is saved at the second on screen', async ({ page }) => {
+  await restartWith(historyFixture('history-seek', 'Правка после старой версии', playableVideoBytes));
+  await openCard(page, 'Правка после старой версии');
+  const player = page.locator('[data-player]');
+  await waitForPlayerMetadata(page);
+  await seekPlayer(page, 5);
+  await player.evaluate((video) => { video.pultMarker = 'first'; });
+  await page.locator('button', { hasText: 'История' }).click();
+  await page.locator('.history button').first().click();
+  await expect(page.locator('.history-bar')).toBeVisible();
+  await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
+  await expect(page.locator('.history-bar')).toBeHidden();
+  // Один <video> на всю карточку: правки, переходы к таймкоду и пауза при вводе
+  // привязаны к нему, поэтому История меняет только src, а не сам элемент.
+  await expect(player).toHaveCount(1);
+  expect(await player.evaluate((video) => video.pultMarker)).toBe('first');
+  await waitForPlayerMetadata(page);
+  await seekPlayer(page, 12.3);
+  await expect(page.locator('.comment-time')).toHaveText('на 0:12');
+  await addEdit(page, 'Титр на двенадцатой секунде');
+  await expect(page.locator('[data-comment-list] .comment').first().locator('button').first()).toHaveText('0:12');
+  const saved = await page.evaluate(() => api('/api/comments?key=history-seek')
+    .then((body) => body.comments.map((comment) => comment.timeSec)));
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toBeCloseTo(12.3, 0);
+});
+
+test('a new preview after the agent takes an edit reloads the player and says so', async ({ page }) => {
+  const projectDir = path.join(projectsDir, 'waiting-clip');
+  await page.clock.install();
+  await openCard(page, 'Перфекционизм');
+  const player = page.locator('[data-player]');
+  const oldSrc = await player.getAttribute('src');
+  await addEdit(page, 'Сделай титр крупнее');
+  await expect(page.locator('.approve')).toBeHidden();
+  await page.fill('[data-comment-text]', 'ещё пишу…');
+  await player.evaluate((video) => { video.pultMarker = 'old'; });
+  // Пока на сервере ничего не менялось, фоновое обновление не трогает ни плеер, ни черновик.
+  await backgroundRefresh(page);
+  expect(await player.evaluate((video) => video.pultMarker)).toBe('old');
+  await expect(page.locator('[data-comment-text]')).toHaveValue('ещё пишу…');
+
+  // Агент принял правку и опубликовал новый preview.
+  for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
+  addSecondRevision(projectDir, 'Перфекционизм — тормоз');
+  // Срабатывает настоящий 20-секундный таймер пульта, а не прямой вызов refresh.
+  await page.clock.fastForward(20_000);
+
+  await expect(page.locator('[data-notice]')).toHaveText('Появилась новая версия видео — посмотрите её перед утверждением.');
+  const freshUrl = await page.evaluate(() => api('/api/cards').then((cards) => [...cards.waiting, ...cards.working]
+    .flatMap((card) => card.variants)
+    .find((variant) => variant.key === 'waiting-clip').video.url));
+  const freshVersion = new URL(freshUrl, 'http://127.0.0.1').searchParams.get('v');
+  expect(freshVersion).toMatch(/^[A-Za-z0-9_-]{16}$/);
+  await expect(player).toHaveAttribute('src', new RegExp(`[?&]v=${freshVersion}(&|$)`));
+  expect(await player.getAttribute('src')).not.toBe(oldSrc);
+  await expect(page.locator('[data-comment-text]')).toHaveValue('ещё пишу…');
+  await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
+  await expect(page.locator('.approve')).toBeVisible();
+  await expect(page.locator('[data-viewed]')).not.toBeChecked();
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeDisabled();
+});
+
+test('a card drawn without an approval ticket announces when one appears', async ({ page }) => {
+  const projectDir = path.join(projectsDir, 'waiting-clip');
+  await openCard(page, 'Перфекционизм');
+  await addEdit(page, 'Правка до повторного открытия');
+  // Открываем карточку заново: теперь она нарисована, пока утверждать было нельзя.
+  await page.locator('button', { hasText: '← Все ролики' }).click();
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
+  await expect(page.locator('.approve')).toBeHidden();
+  // Агент принял правку, не пересобирая preview: тот же файл снова можно утвердить —
+  // но блок не должен появиться молча.
+  for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
+  await backgroundRefresh(page);
+  await expect(page.locator('[data-notice]')).toHaveText('Preview теперь можно утвердить — посмотрите его целиком перед утверждением.');
+  await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
+  await expect(page.locator('.approve')).toBeVisible();
+  await expect(page.locator('[data-viewed]')).not.toBeChecked();
+});
+
+test('deleting an edit while watching History keeps approval locked', async ({ page }) => {
+  await restartWith(historyFixture('history-delete', 'Удаляю правку в Истории'));
+  await openCard(page, 'Удаляю правку в Истории');
+  await addEdit(page, 'Правка при просмотре старой версии');
+  await expect(page.locator('.approve')).toBeHidden();
+  await page.locator('button', { hasText: 'История' }).click();
+  await page.locator('.history button').first().click();
+  await expect(page.locator('.history-bar')).toBeVisible();
+  await page.locator('[data-comment-list] button', { hasText: 'Удалить' }).click();
+  await expect(page.locator('[data-comment-list]')).toContainText('Правок пока нет.');
+  // Блок утверждения вернулся — но человек всё ещё смотрит старую версию.
+  await expect(page.locator('.approve')).toBeVisible();
+  await page.check('[data-viewed]');
+  await expect(page.locator('.history-bar')).toBeVisible();
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeDisabled();
+  await expect(page.locator('button', { hasText: 'Добавить правку' })).toBeDisabled();
+  await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
+  await expect(page.locator('button', { hasText: 'Утверждаю' })).toBeEnabled();
+  await expect(page.locator('button', { hasText: 'Добавить правку' })).toBeEnabled();
+});
+
+test('the list redraws when the server returns to an earlier state', async ({ page }) => {
+  const projectDir = path.join(projectsDir, 'waiting-clip');
+  await openCard(page, 'Перфекционизм');
+  await addEdit(page, 'Правка для списка');
+  await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
+  await page.locator('button', { hasText: '← Все ролики' }).click();
+  const card = page.locator('.card', { hasText: 'Перфекционизм' });
+  await expect(card.locator('.card__next')).toHaveText('Ждёт агента: 1 правка');
+  // Агент принял правку, не пересобирая preview: данные сервера снова те же, что при
+  // первой отрисовке списка, — но на экране сейчас другой список, и его нужно обновить.
+  for (const comment of readComments(projectDir)) acceptComment(projectDir, comment.id);
+  await backgroundRefresh(page);
+  await expect(card.locator('.card__next')).toHaveText('Посмотрите preview и утвердите');
+});
+
+test('a background refresh clears only its own error, never the author\'s', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  const notice = page.locator('[data-notice]');
+  await page.route('**/api/cards', (route) => route.abort());
+  await backgroundRefresh(page);
+  await expect(notice).toHaveText('Пульт не отвечает — откройте его снова значком «Пульт роликов».');
+  await page.unroute('**/api/cards');
+  await backgroundRefresh(page);
+  await expect(notice).toBeHidden();
+  await page.locator('button', { hasText: 'Добавить правку' }).click();
+  await expect(notice).toHaveText('Напишите, что поправить.');
+  await backgroundRefresh(page);
+  await expect(notice).toHaveText('Напишите, что поправить.');
+});
+
+test('an approved preview keeps its label even while an edit waits for the agent', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  await page.check('[data-viewed]');
+  await page.locator('button', { hasText: 'Утверждаю' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено — агент собирает финал');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview — агент собирает финал');
+  await addEdit(page, 'Ещё одна мысль после утверждения');
+  await page.locator('button', { hasText: '← Все ролики' }).click();
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Ждёт агента: 1 правка');
+  await expect(page.locator('.player__label')).toHaveText('Утверждённый preview — агент собирает финал');
+});
+
+test('a video that is not there yet is announced inside the empty player', async ({ page }) => {
+  await restartWith((dir) => {
+    addDraftProject(dir, { folder: 'no-preview', name: 'Ещё без видео', preview: false });
+  });
+  await openCard(page, 'Ещё без видео');
+  await expect(page.locator('[data-player]')).toHaveCount(0);
+  await expect(page.locator('.player--empty .player__label')).toHaveText('Видео пока нет');
+});
+
+test('card titles stay bold and the handoff hint sits flush', async ({ page }) => {
+  await page.goto(session.url);
+  const weight = await page.locator('.card__title').first().evaluate((node) => getComputedStyle(node).fontWeight);
+  expect(weight).toBe('600');
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  const margins = await page.locator('.agent-handoff .hint')
+    .evaluate((node) => [getComputedStyle(node).marginTop, getComputedStyle(node).marginBottom]);
+  expect(margins).toEqual(['0px', '0px']);
 });

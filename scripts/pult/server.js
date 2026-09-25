@@ -93,6 +93,9 @@ async function startPultServer({
   const resolvedProjectsDir = path.resolve(projectsDir);
   const mediaOptions = captureImpl ? { captureImpl } : {};
   const ticketSecret = randomBytes(32);
+  // Отдельный секрет для меток версии медиа: метка видна в URL, поэтому она не должна
+  // совпадать ни с одним билетом утверждения и не выдаёт ни хеша, ни пути, ни mtime.
+  const mediaVersionSecret = randomBytes(32);
   const reviewSessions = new Map();
   const reviewStarts = new Map();
   let closing = false;
@@ -139,6 +142,27 @@ async function startPultServer({
       .digest('base64url');
   }
 
+  // Метка версии видео для URL: адрес `?key=…` одинаков для старого и нового preview, и
+  // открытая страница не узнала бы о новом файле. Метка меняется вместе с файлом (SHA-256
+  // из паспорта, а у финала и legacy-видео без хеша — размер и время изменения) и
+  // остаётся прежней, пока файл тот же. Маршрут медиа её не проверяет: файл по-прежнему
+  // выбирается только ключом.
+  function mediaVersion(entry, videoFile) {
+    let fingerprint = entry.video.sha256 || '';
+    if (!fingerprint) {
+      try {
+        const stat = fs.statSync(videoFile);
+        fingerprint = `${stat.size}:${stat.mtimeMs}`;
+      } catch (_) {
+        fingerprint = 'missing';
+      }
+    }
+    return createHmac('sha256', mediaVersionSecret)
+      .update(`${entry.key}\0${entry.video.path}\0${fingerprint}`)
+      .digest('base64url')
+      .slice(0, 16);
+  }
+
   // У legacy-папки несколько вариантов делят один comments.json — каждому свои правки.
   function variantComments(entry) {
     const comments = readComments(projectDirOf(entry));
@@ -167,6 +191,7 @@ async function startPultServer({
     // Видео, которое пульт не может отдать браузеру (нет файла или формат вроде .mkv),
     // нельзя ни посмотреть, ни утвердить. Обложку ffmpeg всё равно сделает.
     const playable = Boolean(videoFile) && isServableMedia(videoFile);
+    const versioned = videoFile ? `${query}&v=${mediaVersion(entry, videoFile)}` : query;
     return {
       key: entry.key,
       folder: entry.folder,
@@ -179,9 +204,11 @@ async function startPultServer({
       reviewable: entry.reviewable,
       approvable: entry.approvable && playable,
       approvalTicket: playable ? approvalTicket(entry) : null,
-      video: playable ? { kind: entry.video.kind, url: `/media/video?${query}` } : null,
+      // Утверждённый brief ещё без финала: на экране — тот самый утверждённый preview.
+      needsFinal: Boolean(entry.needsFinal),
+      video: playable ? { kind: entry.video.kind, url: `/media/video?${versioned}` } : null,
       videoUnsupported: Boolean(videoFile) && !playable,
-      thumbUrl: videoFile ? `/media/thumb?${query}` : null,
+      thumbUrl: videoFile ? `/media/thumb?${versioned}` : null,
       meta: playable ? probeMedia(resolvedProjectsDir, videoFile, mediaOptions) : null,
       history: entry.history.map((item, index) => ({ label: item.label, url: `/media/history?${query}&index=${index}` })),
     };

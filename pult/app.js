@@ -14,10 +14,18 @@ const REFRESH_MS = 20000;
 
 const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
 const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null };
-// Снимок последних /api/cards, для которых список уже перерисован — фоновый опрос
-// каждые 20 с не должен пересобирать DOM и сбрасывать фокус/скролл, если ничего не
-// изменилось на сервере.
+// Снимок /api/cards, по которому список нарисован на экране сейчас (его обновляет сам
+// renderList) — фоновый опрос каждые 20 с не должен пересобирать DOM и сбрасывать
+// фокус/скролл, если ничего не изменилось на сервере.
 let lastCardsJson = null;
+// Что показано в открытой карточке на момент её полной отрисовки: по этим значениям
+// фоновое обновление решает, хватит ли лёгкой замены блоков или человеку нужно увидеть
+// новую версию целиком. videoUrl несёт метку версии файла (v=…), поэтому новый preview
+// меняет его даже по тому же ключу.
+const shownDetail = { key: '', videoUrl: '', ticket: '' };
+// true, пока в строке уведомлений висит ошибка, поставленная самим refresh: успешный
+// опрос убирает только её, а не ошибки действий человека.
+let refreshErrorShown = false;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -68,6 +76,8 @@ async function api(pathname, { method = 'GET', body } = {}) {
 }
 
 function notify(message, tone = 'info') {
+  // Любое новое уведомление заменяет ошибку опроса — дальше это уже не её строка.
+  refreshErrorShown = false;
   const notice = document.querySelector('[data-notice]');
   notice.textContent = message;
   notice.dataset.tone = tone;
@@ -222,6 +232,10 @@ function renderList() {
   const view = document.querySelector('[data-view="list"]');
   view.replaceChildren();
   const data = state.data;
+  // Запоминаем данные именно этой отрисовки: список рисуют и closeCard(), и поиск, и
+  // вкладки. Иначе после возврата из карточки опрос сравнивал бы свежие данные со
+  // старым снимком и мог пропустить перерисовку устаревшего списка.
+  lastCardsJson = data ? JSON.stringify(data) : null;
   if (!data) return;
   if (state.tab === 'main') {
     let shown = 0;
@@ -409,7 +423,28 @@ function approveBlock(variant) {
   return box;
 }
 
-async function loadComments(variant, list, video) {
+// Режим Истории читается и применяется по текущему DOM, а не по ссылкам, запомненным при
+// отрисовке: фоновое обновление заменяет блок утверждения новым, и старая ссылка вела бы
+// в уже удалённый элемент.
+function historyShown() {
+  const bar = document.querySelector('[data-view="detail"] .history-bar');
+  return Boolean(bar && !bar.hidden);
+}
+
+function applyHistoryMode(active) {
+  document.querySelectorAll('[data-view="detail"] .approve, [data-view="detail"] .comments').forEach((box) => {
+    if (typeof box.setHistoryMode === 'function') box.setHistoryMode(active);
+  });
+}
+
+function replaceApproveBlock(box, variant) {
+  const fresh = approveBlock(variant);
+  box.replaceWith(fresh);
+  // Человек всё ещё смотрит старую версию из Истории — новый блок тоже заблокирован.
+  if (historyShown()) fresh.setHistoryMode(true);
+}
+
+async function loadComments(variant, list, getVideo) {
   const { comments } = await api(`/api/comments?key=${encodeURIComponent(variant.key)}`);
   list.replaceChildren();
   if (!comments.length) {
@@ -421,6 +456,8 @@ async function loadComments(variant, list, video) {
     const jump = el('button', 'link-button', formatClockFloor(comment.timeSec));
     jump.type = 'button';
     jump.addEventListener('click', () => {
+      const video = getVideo();
+      if (!video) return;
       video.currentTime = comment.timeSec;
       video.pause();
     });
@@ -438,7 +475,7 @@ async function loadComments(variant, list, video) {
     if (comment.status === 'new') {
       item.append(button('Удалить', async () => {
         await api('/api/comments/delete', { method: 'POST', body: { key: variant.key, id: comment.id } });
-        await loadComments(variant, list, video);
+        await loadComments(variant, list, getVideo);
         await refresh({ keepDetail: true });
       }, 'link-button'));
     }
@@ -446,7 +483,10 @@ async function loadComments(variant, list, video) {
   }
 }
 
-function commentsBlock(variant, video) {
+// getVideo — не сам <video>, а способ получить текущий плеер карточки в момент действия:
+// правка берёт секунду, переход к таймкоду и пауза при вводе всегда обращаются к плееру,
+// который сейчас на экране.
+function commentsBlock(variant, getVideo) {
   const box = el('div', 'comments');
   box.append(el('h3', '', 'Правки'));
   if (!variant.video) {
@@ -464,10 +504,22 @@ function commentsBlock(variant, video) {
   text.placeholder = 'Что поправить в этом месте?';
   text.dataset.commentText = '';
   text.setAttribute('aria-label', 'Текст правки');
-  const syncTime = () => { time.textContent = `на ${formatClockFloor(video.currentTime || 0)}`; };
-  video.addEventListener('timeupdate', syncTime);
-  video.addEventListener('seeked', syncTime);
-  text.addEventListener('focus', () => video.pause());
+  const currentSecond = () => {
+    const video = getVideo();
+    return video ? video.currentTime || 0 : 0;
+  };
+  const syncTime = () => { time.textContent = `на ${formatClockFloor(currentSecond())}`; };
+  // У варианта с видео плеер создаётся до этого блока и живёт, пока открыта карточка:
+  // История и «Вернуться к текущей» меняют ему только src, поэтому слушатели не теряются.
+  const player = getVideo();
+  if (player) {
+    player.addEventListener('timeupdate', syncTime);
+    player.addEventListener('seeked', syncTime);
+  }
+  text.addEventListener('focus', () => {
+    const video = getVideo();
+    if (video) video.pause();
+  });
   const list = el('ul', 'comment-list');
   list.dataset.commentList = '';
   // secondary — амбер оставлен только двум по-настоящему решающим кнопкам («Утверждаю»,
@@ -483,10 +535,10 @@ function commentsBlock(variant, video) {
     try {
       await api('/api/comments', {
         method: 'POST',
-        body: { key: variant.key, timeSec: video.currentTime || 0, text: text.value },
+        body: { key: variant.key, timeSec: currentSecond(), text: text.value },
       });
       text.value = '';
-      await loadComments(variant, list, video);
+      await loadComments(variant, list, getVideo);
       notify('Правка сохранена. Когда закончите, скопируйте фразу для агента.');
       await refresh({ keepDetail: true });
     } catch (error) {
@@ -498,7 +550,7 @@ function commentsBlock(variant, video) {
   const form = el('div', 'comment-form');
   form.append(time, text, save);
   box.append(form, list);
-  loadComments(variant, list, video).catch((error) => notify(error.message, 'error'));
+  loadComments(variant, list, getVideo).catch((error) => notify(error.message, 'error'));
   box.setHistoryMode = (active) => { save.disabled = active; };
   return box;
 }
@@ -533,57 +585,68 @@ function renderDetail() {
   const layout = el('div', 'detail');
   const playerColumn = el('div', 'detail__player');
   const playerSlot = el('div', 'player-slot');
+  const videoLabel = el('p', 'player__label');
   playerColumn.append(playerSlot);
-  // video остаётся null, пока в слоте не настоящий <video> (например, легаси .mkv или
-  // ролик без preview) — dead-плеер без источника выглядел рабочим, но не проигрывал ничего.
+  // Один <video> на всю открытую карточку: правки берут из него секунду, переходы к
+  // таймкоду и пауза при вводе обращаются к нему же. История и «Вернуться к текущей»
+  // меняют только src — новый элемент оставил бы блок правок с отсоединённым плеером.
+  // video остаётся null, пока в слоте заглушка (легаси .mkv или ролик без preview):
+  // мёртвый плеер без источника выглядел рабочим, но не проигрывал ничего.
   let video = null;
-  function showVideo(url) {
-    playerSlot.replaceChildren();
-    video = el('video', 'player');
-    video.controls = true;
-    video.preload = 'metadata';
-    video.dataset.player = '';
+  const getVideo = () => video;
+  function showVideo(url, label) {
+    if (!video) {
+      video = el('video', 'player');
+      video.controls = true;
+      video.preload = 'metadata';
+      video.dataset.player = '';
+      playerSlot.replaceChildren(video);
+      // Под настоящим плеером подпись стоит отдельной строкой, а не внутри заглушки.
+      playerSlot.after(videoLabel);
+    }
     video.src = url;
-    playerSlot.append(video);
+    videoLabel.textContent = label;
   }
-  function showPlaceholder() {
-    playerSlot.replaceChildren(el('div', 'player player--empty'));
+  function showPlaceholder(label) {
+    if (video) {
+      // Отпускаем загрузку файла, который больше не показываем.
+      video.removeAttribute('src');
+      video.load();
+    }
     video = null;
+    const placeholder = el('div', 'player player--empty');
+    videoLabel.textContent = label;
+    placeholder.append(videoLabel);
+    playerSlot.replaceChildren(placeholder);
   }
 
   let videoLabelText;
   if (variant.video) {
-    // Сразу после утверждения ролик ещё «В работе» (агент собирает финал), но видео на
-    // экране — уже утверждённый preview, а не тот, что «ждёт проверки».
-    if (variant.video.kind === 'preview' && variant.status === 'working' && !variant.nextStep.startsWith('Ждёт агента')) {
-      videoLabelText = 'Утверждённый preview — агент собирает финал';
-    } else {
-      videoLabelText = VIDEO_LABELS[variant.video.kind];
-    }
+    // Утверждённый brief ещё без финала (флаг сервера needsFinal): на экране — уже
+    // утверждённый preview, а не тот, что «ждёт проверки», даже если после утверждения
+    // человек оставил новую правку.
+    videoLabelText = variant.needsFinal && variant.video.kind === 'preview'
+      ? 'Утверждённый preview — агент собирает финал'
+      : VIDEO_LABELS[variant.video.kind];
   } else if (variant.videoUnsupported) {
     videoLabelText = VIDEO_UNSUPPORTED_LABEL;
   } else {
     videoLabelText = 'Видео пока нет';
   }
-  if (variant.video) showVideo(mediaUrl(variant.video.url)); else showPlaceholder();
-  const videoLabel = el('p', 'player__label', videoLabelText);
-  playerColumn.append(videoLabel);
+  function showCurrent() {
+    if (variant.video) showVideo(mediaUrl(variant.video.url), videoLabelText);
+    else showPlaceholder(videoLabelText);
+  }
+  showCurrent();
 
-  // approveBox/commentsBox назначаются ниже, но замыкания истории читают их только по
-  // клику — к тому моменту renderDetail уже отработает целиком, и обе переменные будут
-  // присвоены (порядок объявления здесь не важен, важен порядок исполнения).
-  let approveBox;
-  let commentsBox;
   const historyBar = el('div', 'history-bar');
   historyBar.hidden = true;
   const backToCurrent = el('button', 'link-button', 'Вернуться к текущей');
   backToCurrent.type = 'button';
   backToCurrent.addEventListener('click', () => {
-    if (variant.video) showVideo(mediaUrl(variant.video.url)); else showPlaceholder();
-    videoLabel.textContent = videoLabelText;
+    showCurrent();
     historyBar.hidden = true;
-    approveBox.setHistoryMode(false);
-    commentsBox.setHistoryMode(false);
+    applyHistoryMode(false);
   });
   historyBar.append(el('span', 'history-bar__text', 'Вы смотрите прежнюю версию'), backToCurrent);
   playerColumn.append(historyBar);
@@ -598,13 +661,11 @@ function renderDetail() {
       open.addEventListener('click', () => {
         // Рендеры Истории — всегда обычный mp4 (см. renderHistory в catalog.js), поэтому
         // тут всегда показываем настоящее видео, даже если текущий вариант — плейсхолдер.
-        showVideo(mediaUrl(item.url));
-        videoLabel.textContent = item.label;
+        showVideo(mediaUrl(item.url), item.label);
         // Кадр из Истории уже не текущий: правку по нему добавить нельзя (агент увидит
         // не тот таймкод), а утверждение всегда привязано именно к текущему preview.
         historyBar.hidden = false;
-        approveBox.setHistoryMode(true);
-        commentsBox.setHistoryMode(true);
+        applyHistoryMode(true);
       });
       row.append(open);
       history.append(row);
@@ -623,11 +684,71 @@ function renderDetail() {
   badge.dataset.variantStatus = '';
   const next = el('p', 'detail__next', variant.nextStep);
   next.dataset.variantNext = '';
-  approveBox = approveBlock(variant);
-  commentsBox = commentsBlock(variant, video);
-  side.append(badge, next, approveBox, commentsBox, actionsBlock(card, variant), agentHandoffBlock(card, variant));
+  side.append(
+    badge,
+    next,
+    approveBlock(variant),
+    commentsBlock(variant, getVideo),
+    actionsBlock(card, variant),
+    agentHandoffBlock(card, variant),
+  );
   layout.append(playerColumn, side);
   view.append(layout);
+  shownDetail.key = variant.key;
+  shownDetail.videoUrl = variant.video ? variant.video.url : '';
+  shownDetail.ticket = variant.approvalTicket || '';
+}
+
+// Полная перерисовка карточки без потери недописанной правки: человек мог печатать её,
+// когда агент прислал новую версию.
+function rerenderDetailKeepingDraft() {
+  const field = document.querySelector('[data-comment-text]');
+  const draft = field ? field.value : '';
+  renderDetail();
+  const fresh = document.querySelector('[data-comment-text]');
+  if (fresh && draft) fresh.value = draft;
+}
+
+// Фоновое обновление открытой карточки. Перерисовываем целиком только когда человеку
+// действительно нужно заново посмотреть ролик; всё остальное — точечные замены, чтобы
+// не сбрасывать плеер, фокус и недописанную правку каждые 20 секунд.
+function syncDetail(card) {
+  const variant = currentVariant(card);
+  if (variant.key !== shownDetail.key) {
+    // Открытого варианта больше нет — показываем тот, что остался.
+    renderDetail();
+    return;
+  }
+  const freshVideoUrl = variant.video ? variant.video.url : '';
+  const freshTicket = variant.approvalTicket || '';
+  if (freshVideoUrl !== shownDetail.videoUrl) {
+    // Агент опубликовал новый файл: старый в плеере утверждать нельзя, его ещё не видели.
+    // Если видео, наоборот, пропало, заглушка сама скажет «Видео пока нет».
+    rerenderDetailKeepingDraft();
+    if (freshVideoUrl) notify('Появилась новая версия видео — посмотрите её перед утверждением.');
+    return;
+  }
+  const badge = document.querySelector('[data-variant-status]');
+  const next = document.querySelector('[data-variant-next]');
+  if (badge) {
+    badge.textContent = STATUS_LABELS[variant.status];
+    badge.className = `badge badge--${variant.status}`;
+  }
+  if (next) next.textContent = variant.nextStep;
+  // Видео то же, но билет утверждения мог измениться: новая правка убирает возможность
+  // утвердить, удаление правки — возвращает тот же билет для того же preview.
+  const approveBox = document.querySelector('[data-view="detail"] .approve');
+  if (!approveBox) return;
+  const shownTicket = approveBox.dataset.ticket || '';
+  if (freshTicket === shownTicket) return;
+  if (!freshTicket || freshTicket === shownDetail.ticket) {
+    replaceApproveBlock(approveBox, variant);
+    return;
+  }
+  // Билет, которого карточка при отрисовке не видела, — ролик изменился иначе, чем
+  // правкой человека. Показываем карточку заново, а не подменяем блок молча.
+  rerenderDetailKeepingDraft();
+  notify('Preview теперь можно утвердить — посмотрите его целиком перед утверждением.');
 }
 
 async function refresh({ keepDetail = false } = {}) {
@@ -635,17 +756,17 @@ async function refresh({ keepDetail = false } = {}) {
     state.data = await api('/api/cards');
   } catch (error) {
     notify(error.message, 'error');
+    refreshErrorShown = true;
     return;
   }
-  // Сервер снова ответил — прежняя ошибка («Failed to fetch», 409 и т.п.) больше не
-  // актуальна. Успешные подсказки (тон не 'error') это не трогает.
-  const notice = document.querySelector('[data-notice]');
-  if (notice.dataset.tone === 'error') notify('');
+  // Сервер снова ответил — ошибка, которую поставил прошлый неудачный опрос, больше не
+  // актуальна. Ошибки и подсказки действий человека («Напишите, что поправить» и т.п.)
+  // остаются на месте: их убирает только следующее действие.
+  if (refreshErrorShown) notify('');
   updateTabs();
   if (!state.openCardId) {
-    const json = JSON.stringify(state.data);
-    if (json !== lastCardsJson) renderList();
-    lastCardsJson = json;
+    // lastCardsJson обновляет сам renderList — при каждой настоящей отрисовке списка.
+    if (JSON.stringify(state.data) !== lastCardsJson) renderList();
     return;
   }
   const card = currentCard();
@@ -657,30 +778,7 @@ async function refresh({ keepDetail = false } = {}) {
     renderDetail();
     return;
   }
-  const variant = currentVariant(card);
-  const badge = document.querySelector('[data-variant-status]');
-  const next = document.querySelector('[data-variant-next]');
-  if (badge) {
-    badge.textContent = STATUS_LABELS[variant.status];
-    badge.className = `badge badge--${variant.status}`;
-  }
-  if (next) next.textContent = variant.nextStep;
-  // Билет утверждения мог устареть между фоновыми обновлениями: новая правка убирает
-  // возможность утвердить, удаление правки — возвращает, а новый preview меняет билет
-  // на другой непустой. Лёгкое обновление badge/next этого не замечает — досверяем отдельно.
-  const approveBox = document.querySelector('.approve');
-  if (approveBox) {
-    const previousTicket = approveBox.dataset.ticket || '';
-    const freshTicket = variant.approvalTicket || '';
-    if (previousTicket !== freshTicket) {
-      if (!previousTicket || !freshTicket) {
-        approveBox.replaceWith(approveBlock(variant));
-      } else {
-        renderDetail();
-        notify('Появилась новая версия preview — посмотрите её перед утверждением.');
-      }
-    }
-  }
+  syncDetail(card);
 }
 
 async function init() {
