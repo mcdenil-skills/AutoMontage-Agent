@@ -372,9 +372,10 @@ manifest на source revision 2 и сбрасывает только устар�
 ```
 
 `automontage master --project-dir <проект> --edit edit/v02-takes.json` собирает куски в новую
-source revision. Границы выравниваются по кадрам автоматически; дубли должны совпадать по FPS и
-размеру кадра и иметь звук. Дальше маршрут тот же, но draft, Review, preview, утверждение и
-final работают с новой source revision: в `source` draft указывай абсолютный путь к активному
+source revision. Границы выравниваются по кадрам автоматически; дубли должны совпадать по FPS,
+размеру кадра и соотношению сторон пикселя и иметь звук. Дальше маршрут тот же, но draft,
+Review, preview, утверждение и final работают с новой source revision: в `source` draft
+указывай абсолютный путь к активному
 `source.localPath` из `project.json` (например `<project-dir>/input/source-v02.mp4`), а во входе
 `scripts/build.js` тот же файл (`projects/<id>/input/source-v02.mp4`), иначе build остановится с
 ошибкой «нельзя рендерить утверждённый brief с видео другого исходника».

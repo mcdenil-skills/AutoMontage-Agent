@@ -166,9 +166,10 @@ Brief замораживает исходник, тему, аспект, раз�
 `project.json.takes`; первым дублем становится исходный файл проекта. `scripts/project/takes-pack.js`
 печатает фразы всех дублей для выбора. `edit/vNN-takes.json` (`schema/takes-edit.schema.json`)
 перечисляет куски в порядке смысла. `scripts/project/build-takes-master.js` проверяет, что дубли
-совпадают по FPS и размеру кадра с учётом поворота и имеют звук, выравнивает границы по кадрам,
-собирает куски одним FFmpeg filter graph через `runSegmentsTrim()` и публикует результат тем же
-`publishSourceRevision()` из `scripts/project/source-revision.js`, что и обычный source-edit.
+совпадают по FPS, размеру кадра с учётом поворота и соотношению сторон пикселя и имеют звук,
+выравнивает границы по кадрам, собирает куски одним FFmpeg filter graph через `runSegmentsTrim()`
+и публикует результат тем же `publishSourceRevision()` из `scripts/project/source-revision.js`,
+что и обычный source-edit.
 `scripts/trim-media.js` выбирает `-/filter_complex` для FFmpeg 7+ и `-filter_complex_script` для 6.x.
 Видео каждого куска проходит `fps` до и после `trim`, поэтому дубли с плавающей частотой кадров
 дают целое число кадров, а FFmpeg 7 записывает длительность пакетов. Кусок не начинается раньше,
