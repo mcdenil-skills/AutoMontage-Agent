@@ -29,6 +29,9 @@ function help() {
                                       [--project-dir <новая-папка>], затем preview и утверждение
   automontage doctor                  проверить окружение (что доустановить)
   automontage review --project-dir .  открыть локальную проверку монтажного листа
+  automontage pult                    открыть «Пульт роликов» со всеми роликами
+  automontage pult --install-shortcut создать значок пульта (macOS/Windows)
+  automontage inbox                   правки и утверждения из пульта для агента
   automontage preview --project-dir . --brief brief/v01-draft.lesson.json
                                       собрать настоящий Remotion-предпросмотр draft
   automontage master --project-dir . --edit edit/v02-source.json
@@ -115,6 +118,17 @@ if (argv[0] === 'master') {
       stdio: 'inherit', cwd: process.cwd(), shell: false,
     });
   } catch (e) { process.exit(e.status || 1); }
+  process.exit(0);
+}
+
+// пульт роликов и входящие агента: отдельные скрипты, аргументы не попадают в build.js
+if (argv[0] === 'pult' || argv[0] === 'inbox') {
+  const script = argv[0] === 'pult' ? 'cli.js' : 'inbox.js';
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'pult', script), ...argv.slice(1)], {
+      stdio: 'inherit', cwd: process.cwd(), shell: false,
+    });
+  } catch (error) { process.exit(error.status || 1); }
   process.exit(0);
 }
 
