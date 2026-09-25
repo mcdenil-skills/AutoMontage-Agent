@@ -109,15 +109,17 @@ test('real takes master stays in sync with a late-video take and a take reused b
     '-y', '-v', 'error',
     '-itsoffset', '0.04', '-f', 'lavfi', '-i', 'smptebars=s=160x90:r=25:d=3',
     '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:d=3',
-    '-ac', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', second,
+    // -fps_mode passthrough keeps the encoder from filling the itsoffset gap with a duplicated
+    // first frame: without it, some ffmpeg builds (constant-frame-rate MP4 output by default,
+    // e.g. 6.1.x) synthesize a frame at 0-0.04 and the video stream start_time comes back 0,
+    // silently erasing the leading gap this fixture exists to exercise.
+    '-ac', '2', '-fps_mode', 'passthrough', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', second,
   ], root);
 
   // Документируем форму фикстуры: -itsoffset на видео-входе должен дать видео с более поздним
-  // start_time, чем у звука. Если конкретная сборка ffmpeg собрала файл иначе, пропускаем тест,
-  // а не проверяем числа, которые эта фикстура не гарантирует.
-  const secondStreams = streams(second);
-  const secondVideo = secondStreams.find((stream) => stream.codec_type === 'video');
-  const secondAudio = secondStreams.find((stream) => stream.codec_type === 'audio');
+  // start_time, чем у звука. Отсутствие ffmpeg/ffprobe/libx264 уже отловлено skip'ом выше;
+  // если сама фикстура вышла другой формы на установленном инструментарии, это ошибка
+  // окружения и должна валиться явной проверкой, а не тихим пропуском (см. TESTING.md).
   const secondProbe = spawnSync('ffprobe', [
     '-v', 'error',
     '-show_entries', 'stream=codec_type,start_time',
@@ -125,13 +127,20 @@ test('real takes master stays in sync with a late-video take and a take reused b
   ], { encoding: 'utf8' });
   assert.equal(secondProbe.status, 0, secondProbe.stderr);
   const secondStartTimes = JSON.parse(secondProbe.stdout).streams;
-  const secondVideoStart = Number(secondStartTimes.find((stream) => stream.codec_type === 'video').start_time);
-  const secondAudioStart = Number(secondStartTimes.find((stream) => stream.codec_type === 'audio').start_time);
-  if (Math.abs(secondVideoStart - 0.04) > 0.005 || Math.abs(secondAudioStart) > 0.005) {
-    t.skip(`take2 fixture does not have the expected leading video gap (video start ${secondVideoStart}, audio start ${secondAudioStart})`);
-    return;
-  }
-  assert.ok(secondVideo && secondAudio, 'take2 must have both a video and an audio stream');
+  const secondVideoStream = secondStartTimes.find((stream) => stream.codec_type === 'video');
+  const secondAudioStream = secondStartTimes.find((stream) => stream.codec_type === 'audio');
+  assert.ok(secondVideoStream, 'take2 fixture must have a video stream');
+  assert.ok(secondAudioStream, 'take2 fixture must have an audio stream');
+  const secondVideoStart = Number(secondVideoStream.start_time);
+  const secondAudioStart = Number(secondAudioStream.start_time);
+  assert.ok(
+    Math.abs(secondVideoStart - 0.04) <= 0.005,
+    `take2 video start_time expected ~0.04, got ${secondVideoStart}`,
+  );
+  assert.ok(
+    Math.abs(secondAudioStart) <= 0.005,
+    `take2 audio start_time expected ~0, got ${secondAudioStart}`,
+  );
 
   const workspace = createOrOpenProject({
     projectDir: path.join(root, 'project'), name: 'Real takes late video', sourcePath: first,
