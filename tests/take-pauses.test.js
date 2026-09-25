@@ -10,14 +10,19 @@ const {
   snapRangesToPauses,
 } = require('../scripts/project/take-pauses');
 
-// Окна по 10 мс: речь -20 dB на 0-1.0 и 1.3-2.5 с, тишина -90 dB на 1.0-1.3 и 2.5-3.0 с.
-function speechLevels() {
+// Окна по 10 мс: речь speechDb, тишина silenceDb в интервалах pauses (секунды).
+function levelsWithPauses(pauses, { duration = 3, speechDb = -20, silenceDb = -90 } = {}) {
   const levels = [];
-  for (let index = 0; index < 300; index += 1) {
+  for (let index = 0; index < duration * 100; index += 1) {
     const time = index / 100;
-    levels.push(time < 1 || (time >= 1.3 && time < 2.5) ? -20 : -90);
+    levels.push(pauses.some(([from, to]) => time >= from && time < to) ? silenceDb : speechDb);
   }
   return { frameSec: 0.01, levels };
+}
+
+// Речь на 0-1.0 и 1.3-2.5 с, тишина на 1.0-1.3 и 2.5-3.0 с.
+function speechLevels() {
+  return levelsWithPauses([[1, 1.3], [2.5, 3]]);
 }
 
 function twoTakes() {
@@ -27,7 +32,7 @@ function twoTakes() {
   ]);
 }
 
-test('pcm levels are 10 ms RMS frames in dBFS with a floor for digital silence', () => {
+test('pcm levels are RMS frames in dBFS with a floor for digital silence', () => {
   const buffer = Buffer.alloc(320 * 2);
   for (let index = 160; index < 320; index += 1) buffer.writeInt16LE(16384, index * 2);
   const { frameSec, levels } = levelsFromPcm(buffer, { sampleRate: 16000 });
@@ -35,13 +40,17 @@ test('pcm levels are 10 ms RMS frames in dBFS with a floor for digital silence',
   assert.equal(levels.length, 2);
   assert.equal(levels[0], -120);
   assert.ok(Math.abs(levels[1] - 20 * Math.log10(0.5)) < 1e-9);
+  assert.equal(levelsFromPcm(Buffer.alloc(0), { sampleRate: 22050 }).frameSec, 221 / 22050);
 });
 
-test('pause threshold adapts to the take noise floor and never exceeds -30 dBFS', () => {
+test('pause threshold follows the take noise and stays at least 20 dB below speech', () => {
   assert.equal(pauseThresholdDb(speechLevels().levels), -55);
   const phone = speechLevels().levels.map((level) => (level === -90 ? -50 : level));
-  assert.equal(pauseThresholdDb(phone), -35);
-  assert.equal(pauseThresholdDb(new Array(100).fill(-20)), -30);
+  assert.equal(pauseThresholdDb(phone), -40);
+  assert.equal(pauseThresholdDb(new Array(100).fill(-20)), -40);
+  // Почти без пауз 10-й процентиль попадает в речь; ограничение от речи не даёт порогу подняться.
+  assert.equal(pauseThresholdDb([...new Array(98).fill(-20), -90, -90]), -40);
+  assert.equal(pauseThresholdDb([...new Array(98).fill(-44), -90, -90]), -64);
 });
 
 test('a cut inside speech moves to the nearest pause on the video frame grid', () => {
@@ -52,14 +61,39 @@ test('a cut inside speech moves to the nearest pause on the video frame grid', (
   assert.equal(findPauseCut(analysis, 1.13, 'end', { fps: 25 }), 1.12);
   assert.equal(findPauseCut(analysis, 0.5, 'end', { fps: 25 }), null);
   assert.equal(findPauseCut(analysis, 1.36, 'end', { fps: 30000 / 1001 }), 33 * 1001 / 30000);
+  assert.equal(findPauseCut(analysis, 3.2, 'end', { fps: 25 }), null);
 });
 
-test('a span is silent only when every level frame it touches is below the threshold', () => {
+test('the expected side wins unless the other pause is clearly closer', () => {
+  // Конец куска ищет паузу сначала до себя.
+  const preferred = analyzeLevels(levelsWithPauses([[0.95, 1.05], [1.17, 1.27]]));
+  assert.equal(findPauseCut(preferred, 1.12, 'end', { fps: 25 }), 1);
+  // Но пауза сразу после границы бьёт далёкий провал до неё.
+  const closer = analyzeLevels(levelsWithPauses([[0.9, 0.98], [1.2, 1.3]]));
+  assert.equal(findPauseCut(closer, 1.17, 'end', { fps: 25 }), 1.24);
+});
+
+test('dips shorter than 50 ms are not pauses and cuts keep a margin from speech', () => {
+  const dip = analyzeLevels(levelsWithPauses([[1.2, 1.24], [2.5, 3]]));
+  assert.equal(findPauseCut(dip, 1.3, 'end', { fps: 25 }), null);
+  const analysis = analyzeLevels(speechLevels());
+  assert.equal(findPauseCut(analysis, 1.01, 'end', { fps: 25 }), 1.04);
+  assert.equal(findPauseCut(analysis, 1.29, 'start', { fps: 25 }), 1.24);
+});
+
+test('a long pause is seen to its real edges', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 4]], { duration: 5 }));
+  assert.equal(findPauseCut(analysis, 4.1, 'end', { fps: 25 }), 1.12);
+});
+
+test('a span is silent only when every covered level frame is below the threshold', () => {
   const analysis = analyzeLevels(speechLevels());
   assert.equal(isSilentSpan(analysis, 1.05, 1.06), true);
   assert.equal(isSilentSpan(analysis, 2.6, 2.6), true);
   assert.equal(isSilentSpan(analysis, 0.95, 1.05), false);
   assert.equal(isSilentSpan(analysis, 0.2, 0.6), false);
+  assert.equal(isSilentSpan(analysis, 5, 5.1), false);
+  assert.equal(isSilentSpan(analyzeLevels({ frameSec: 0.01, levels: [] }), 0, 0.1), false);
 });
 
 test('ranges move into pauses and report every moved or unmovable edge', () => {
@@ -73,15 +107,32 @@ test('ranges move into pauses and report every moved or unmovable edge', () => {
     analyses: new Map([['take-01', analysis], ['take-02', analysis]]),
     fps: 25,
   });
-  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.12], [1.2, 2.6], [0.4, 0.6]]);
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0, 1.16], [1.16, 2.6], [0.4, 0.6]]);
   assert.equal(result.ranges[0].beat, 'A');
   assert.deepEqual(result.adjustments, [
-    { index: 0, edge: 'end', from: 1.36, to: 1.12, reason: 'pause' },
-    { index: 1, edge: 'start', from: 1.36, to: 1.2, reason: 'pause' },
+    { index: 0, edge: 'end', from: 1.36, to: 1.16, reason: 'pause' },
+    { index: 1, edge: 'start', from: 1.36, to: 1.16, reason: 'pause' },
     { index: 1, edge: 'end', from: 2.4, to: 2.6, reason: 'pause' },
     { index: 2, edge: 'start', from: 0.4, to: 0.4, reason: 'no-pause' },
     { index: 2, edge: 'end', from: 0.6, to: 0.6, reason: 'no-pause' },
   ]);
+});
+
+test('touching pieces of one take share one cut, so no word between pauses is lost', () => {
+  const analysis = analyzeLevels(levelsWithPauses([[1, 1.1], [1.3, 1.4]]));
+  const result = snapRangesToPauses([
+    { take: 'take-01', start: 0.2, end: 1.2, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.2, end: 2.9, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 });
+  assert.deepEqual(result.ranges.map(({ start, end }) => [start, end]), [[0.2, 1.04], [1.04, 2.9]]);
+});
+
+test('overlapping agent ranges still fail instead of being hidden by pause cuts', () => {
+  const analysis = analyzeLevels(speechLevels());
+  assert.throws(() => snapRangesToPauses([
+    { take: 'take-01', start: 0, end: 1.4, beat: 'A', reason: 'x' },
+    { take: 'take-01', start: 1.3, end: 2.5, beat: 'B', reason: 'y' },
+  ], { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 }), /ranges\[1\] overlaps ranges\[0\] in take-01/);
 });
 
 test('a range that would collapse or overlap keeps its original edges', () => {
@@ -104,7 +155,14 @@ test('a range that would collapse or overlap keeps its original edges', () => {
   );
 });
 
-test('edges at the file boundaries are not reported and takes without levels are untouched', () => {
+test('edges at or past the file boundaries stay and takes without levels are untouched', () => {
+  const analysis = analyzeLevels(speechLevels());
+  const pastEnd = snapRangesToPauses(
+    [{ take: 'take-01', start: 1.2, end: 3.2, beat: 'A', reason: 'x' }],
+    { takes: twoTakes(), analyses: new Map([['take-01', analysis]]), fps: 25 },
+  );
+  assert.deepEqual(pastEnd.ranges.map(({ start, end }) => [start, end]), [[1.2, 3.2]]);
+  assert.deepEqual(pastEnd.adjustments, []);
   const tone = analyzeLevels({ frameSec: 0.01, levels: new Array(300).fill(-20) });
   const edges = snapRangesToPauses(
     [{ take: 'take-01', start: 0, end: 3, beat: 'A', reason: 'x' }],
