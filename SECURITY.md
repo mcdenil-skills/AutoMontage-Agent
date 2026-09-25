@@ -66,13 +66,17 @@ user, so a hang remains an availability risk and is not treated as fixed.
 We keep `node-vibrant@4.0.4`. We do not run `npm audit fix --force`, install a major
 override, or downgrade to the incompatible 3.x line. Reassess immediately on an upstream
 node-vibrant/Jimp update, if severity becomes high, if direct untrusted-image input is
-introduced, at the next release, or no later than 2026-10-06.
+introduced, at the next release, or no later than 2026-10-24.
 
-For release 1.7.0, the GitHub Security Advisory, npm registry metadata, and the installed
-transitive dependency chain were reviewed again on 2026-09-08. The latest upstream
-`node-vibrant` remains 4.0.4; the installed chain and limited local `--autotheme` exposure still
-match the advisory and mitigation recorded below. This review accepts the remaining moderate
-availability risk until 2026-10-06; it does not claim that the dependency is fixed.
+For release 1.8.0, the GitHub Security Advisory, npm registry metadata, `npm audit`, and the
+installed transitive dependency chain were reviewed again on 2026-09-25. The advisory is
+unchanged and not withdrawn, `npm audit` still reports the same five moderate findings, and the
+latest upstream `node-vibrant` remains 4.0.4, whose `@vibrant/image-node` still requires the
+Jimp 0.22 line with `file-type@16.5.4`; the `file-type` 16.x line has no backported fix. The
+`--autotheme` code path did not change since 1.7.0, so the installed chain and limited local
+exposure still match the advisory and mitigation recorded below. This review accepts the
+remaining moderate availability risk until 2026-10-24; it does not claim that the dependency
+is fixed.
 
 The block below is the machine-readable release-gate record. Keep the prose and JSON in
 sync. The gate also derives the installed five-package chain from the candidate
@@ -103,8 +107,8 @@ after 10:00 UTC, when that date has already begun in UTC+14.
     "direct untrusted-image input",
     "next release"
   ],
-  "reviewedAt": "2026-09-08",
-  "reviewedFor": "1.7.0",
-  "revisitBy": "2026-10-06"
+  "reviewedAt": "2026-09-25",
+  "reviewedFor": "1.8.0",
+  "revisitBy": "2026-10-24"
 }
 ```
