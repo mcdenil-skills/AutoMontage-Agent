@@ -104,6 +104,46 @@ test('probeMediaPath reports the offset between the video and audio start_time',
   assert.ok(Math.abs(result.startOffsetSec - 0.04) < 1e-9);
 });
 
+test('probeMediaPath reduces sample_aspect_ratio and normalizes missing or unset values to 1:1', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-sar-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'clip.mp4');
+  fs.writeFileSync(file, 'MEDIA');
+
+  function probeWithSar(sampleAspectRatio) {
+    const stream = {
+      codec_type: 'video',
+      codec_name: 'h264',
+      width: 160,
+      height: 90,
+      avg_frame_rate: '25/1',
+      r_frame_rate: '25/1',
+      duration: '3.000000',
+    };
+    if (sampleAspectRatio !== undefined) stream.sample_aspect_ratio = sampleAspectRatio;
+    let seen = null;
+    const result = probeMediaPath(file, {
+      stage: 'take probe',
+      captureToolImpl(command, args, options) {
+        seen = { command, args, options };
+        return JSON.stringify({
+          streams: [stream],
+          format: { format_name: 'mov,mp4,m4a,3gp,3g2,mj2', duration: '3.000000' },
+        });
+      },
+    });
+    return { result, seen };
+  }
+
+  const reduced = probeWithSar('8:6');
+  assert.equal(reduced.result.sampleAspectRatio, '4:3');
+  assert.ok(reduced.seen.args.includes('-show_entries'));
+  assert.ok(reduced.seen.args.some((arg) => String(arg).includes('sample_aspect_ratio')));
+
+  assert.equal(probeWithSar('0:1').result.sampleAspectRatio, '1:1');
+  assert.equal(probeWithSar(undefined).result.sampleAspectRatio, '1:1');
+});
+
 test('probeMediaPath fills missing stream durations from the container', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-probe-flv-unit-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

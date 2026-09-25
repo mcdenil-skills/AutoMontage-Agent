@@ -25,6 +25,15 @@ function takeId(number) {
   return `take-${String(number).padStart(2, '0')}`;
 }
 
+// FFmpeg поворачивает кадр до фильтров: SAR отображаемого кадра меняет местами числитель и
+// знаменатель на четверть оборота, как и displayDimensions() выше.
+function displaySampleAspectRatio(media) {
+  const raw = media.sampleAspectRatio || '1:1';
+  if (media.rotation !== 90 && media.rotation !== 270) return raw;
+  const [numerator, denominator] = raw.split(':');
+  return `${denominator}:${numerator}`;
+}
+
 function describeTake(id, { filePath, video, media }) {
   if (media.mediaKind !== 'video') throw new Error(`${id} must be a video file`);
   const display = displayDimensions(media);
@@ -36,6 +45,7 @@ function describeTake(id, { filePath, video, media }) {
     fps: video.fps,
     width: display.width,
     height: display.height,
+    sampleAspectRatio: displaySampleAspectRatio(media),
     hasAudio: media.hasAudio,
     audioSampleRate: media.audioSampleRate,
     audioChannels: media.audioChannels,
@@ -46,8 +56,9 @@ function describeTake(id, { filePath, video, media }) {
   };
 }
 
-// FFmpeg падает на разном размере кадра и отсутствии звука, а разный FPS молча превращает
-// результат в файл с переменной частотой кадров. Поэтому несовместимые дубли отклоняются.
+// FFmpeg падает на разном размере кадра, соотношении сторон пикселя и отсутствии звука, а
+// разный FPS пришлось бы пересчитывать с выпадением или повтором кадров. Поэтому несовместимые
+// дубли отклоняются до копирования.
 function assertCompatibleTakes(takes) {
   if (!takes.length) throw new Error('at least one take is required');
   const [first] = takes;
@@ -61,6 +72,10 @@ function assertCompatibleTakes(takes) {
     if (take.width !== first.width || take.height !== first.height) {
       throw new Error(`${take.id} frame size ${take.width}x${take.height} differs from `
         + `${first.id} frame size ${first.width}x${first.height}`);
+    }
+    if (take.sampleAspectRatio !== first.sampleAspectRatio) {
+      throw new Error(`${take.id} pixel aspect ratio ${take.sampleAspectRatio} differs from `
+        + `${first.id} pixel aspect ratio ${first.sampleAspectRatio}`);
     }
   }
 }

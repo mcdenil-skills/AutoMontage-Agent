@@ -110,6 +110,7 @@ test('incompatible takes are rejected before anything is copied', (t) => {
     ['fps', { probeVideoImpl: (file) => ({ width: 1920, height: 1080, fps: file.endsWith('take2.MOV') ? 30 : 25, duration: 10 }) }, /FPS/],
     ['size', { probeMediaPathImpl: (file) => (file.endsWith('take2.MOV') ? media({ width: 1280, height: 720 }) : media()) }, /frame size/],
     ['audio', { probeMediaPathImpl: (file) => (file.endsWith('take2.MOV') ? media({ hasAudio: false, audioSampleRate: null, audioChannels: null, audioDurationSec: null }) : media()) }, /no usable audio/],
+    ['pixel aspect ratio', { probeMediaPathImpl: (file) => (file.endsWith('take2.MOV') ? media({ sampleAspectRatio: '4:3' }) : media()) }, /pixel aspect ratio/],
   ]) {
     assert.throws(() => addTakes({ projectDir: fixture.dir, files: [fixture.second] }, fakes(overrides).deps), pattern, label);
     assert.equal(readProjectManifest(fixture.dir).takes, undefined, label);
@@ -123,6 +124,21 @@ test('a rotated take with the same displayed size is compatible', (t) => {
     probeMediaPathImpl: (file) => (file.endsWith('take2.MOV')
       ? media({ width: 1080, height: 1920, rotation: 90 })
       : media()),
+  });
+  addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps);
+  assert.equal(readProjectManifest(fixture.dir).takes.length, 2);
+});
+
+test('a rotated take whose displayed pixel aspect ratio matches the reference is accepted', (t) => {
+  const fixture = makeProject(t);
+  const { deps } = fakes({
+    probeMediaPathImpl: (file) => (file.endsWith('take2.MOV')
+      // Raw SAR 3:4 swaps to the displayed 4:3 once rotation is applied, matching the
+      // unrotated 4:3 reference below.
+      ? media({
+        width: 1080, height: 1920, rotation: 90, sampleAspectRatio: '3:4',
+      })
+      : media({ sampleAspectRatio: '4:3' })),
   });
   addTakes({ projectDir: fixture.dir, files: [fixture.second] }, deps);
   assert.equal(readProjectManifest(fixture.dir).takes.length, 2);
