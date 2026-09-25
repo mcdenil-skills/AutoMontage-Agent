@@ -162,7 +162,7 @@ test('checkHealth tells the pult (ok) from a foreign JSON server on the same sha
 // После перезагрузки pid из instance.json может достаться случайному чужому процессу: порт
 // пульта при этом никто не слушает. Это не «пульт занят» – ждать busyWaitMs на каждом запуске
 // значка бессмысленно, регистрацию нужно снять сразу же, как только пришла ECONNREFUSED.
-test('an alive pid whose port refuses connections is absent, not busy – removed fast', async (t) => {
+test('an alive pid whose port refuses connections is absent, not busy – removed fast', { timeout: 15000 }, async (t) => {
   const { projectsDir } = makePultRoot(t);
   // Открываем порт и сразу закрываем: получаем свободный номер, на котором точно никто не слушает.
   const scratch = http.createServer();
@@ -182,9 +182,11 @@ test('an alive pid whose port refuses connections is absent, not busy – remove
   });
   assert.equal(result, null);
   assert.equal(checks, 1, 'ECONNREFUSED не должен вызывать повторные попытки busyWaitMs');
-  // Windows подтверждает отказ на localhost только после HEALTH_TIMEOUT_MS (до 3 с на win32,
-  // scripts/pult/instance.js) – граница выше этого таймаута, но далеко ниже 20 с busyWaitMs,
-  // которых при отказе в соединении не должно быть вовсе.
+  // На Windows отказ ECONNREFUSED на localhost реально приходит примерно за 2 с – это ДО
+  // HEALTH_TIMEOUT_MS (до 3 с на win32, scripts/pult/instance.js). Если бы отказ приходил
+  // после этого таймаута, checkHealth вернул бы «busy» вместо «нет ответа», и тест ниже не
+  // прошёл бы. Порог ассерта (5 с) выше наблюдаемой задержки, но далеко ниже 20 с busyWaitMs,
+  // которых при отказе в соединении быть не должно вовсе.
   assert.ok(Date.now() - started < 5000, 'ECONNREFUSED не должен дожидаться busyWaitMs');
   assert.equal(fs.existsSync(instancePath(projectsDir)), false);
 });
