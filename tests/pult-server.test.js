@@ -639,9 +639,9 @@ test('archive hides a card without touching its folder', async (t) => {
   assert.equal((await post(session, '/api/archive', { cardId: '../x', archived: true })).status, 400);
 });
 
-// Task B доводки пульта (DECISIONS.md D-030): нажатие «Утверждаю» на архивной карточке –
-// это и есть просьба пользователя собрать финал, поэтому само утверждение возвращает
-// карточку из архива, а не оставляет пометку «в архиве» в входящих агента.
+// DECISIONS.md D-030: нажатие «Утверждаю» на архивной карточке – это и есть просьба
+// пользователя собрать финал, поэтому само утверждение возвращает карточку из архива, а не
+// оставляет пометку «в архиве» в входящих агента.
 test('approving an archived waiting card returns it from the archive', async (t) => {
   const projectsDir = await standardRoot(t);
   const { session } = await startTest(t, projectsDir);
@@ -696,9 +696,47 @@ test('approving one variant of an archived group card returns the whole card fro
   assert.deepEqual(readPultState(projectsDir).archived, []);
 });
 
+// Обратный порядок действий – утвердили, потом убрали в архив: карточка получает честную
+// надпись, флаг для подписи плеера и попадает во входящих с пометкой «в архиве»
+// (scripts/pult/inbox.js). Удаление поля archivedNeedsFinal у browserVariant в server.js или
+// удаление его проверки в videoLabelFor (pult/app.js) не должно ронять этот и следующий тест.
+test('approving then archiving a card shows the honest next step, the flag and the inbox marker', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  assert.equal((await approve(session, 'waiting-clip', ticket)).status, 201);
+  await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });
+  const cards = (await get(session, '/api/cards')).json;
+  const card = cards.archive.find((item) => item.id === 'folder:waiting-clip');
+  assert.equal(card.nextStep, 'Утверждено, в архиве – агент соберёт финал по вашей просьбе');
+  assert.equal(card.variants[0].archivedNeedsFinal, true);
+  const text = formatInbox(buildInbox({ projectsDir }), { projectsDir });
+  assert.match(text, /в архиве/);
+});
+
+// Новая правка после утверждения и архивации – nextStep остаётся «Ждёт агента: …» (это новая
+// работа автора), но флаг для подписи плеера всё равно честный: automontage inbox метит
+// утверждение «в архиве» независимо от новых правок, и подпись должна соответствовать этому.
+test('the same card with a pending edit after archiving keeps "waiting for the agent" but stays flagged', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  assert.equal((await approve(session, 'waiting-clip', ticket)).status, 201);
+  await post(session, '/api/comments', { key: 'waiting-clip', timeSec: 1, text: 'Поправь титр' });
+  await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });
+  const cards = (await get(session, '/api/cards')).json;
+  const card = cards.archive.find((item) => item.id === 'folder:waiting-clip');
+  assert.equal(card.nextStep, 'Ждёт агента: 1 правка');
+  assert.equal(card.variants[0].archivedNeedsFinal, true);
+});
+
 // Отказ движка вернуть карточку из архива не должен испортить уже случившееся утверждение
 // (порядок: сначала approve, потом un-archive) – только лог, без пути в сообщении.
-test('a failing un-archive after a successful approval still returns success and only logs the error', { skip: process.platform === 'win32' }, async (t) => {
+// chmod на права не действует под root (root игнорирует биты доступа файловой системы), а
+// Windows chmod не эмулирует Unix-права вовсе – тест пропускается в обоих случаях.
+test('a failing un-archive after a successful approval still returns success and only logs the error', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, async (t) => {
   const projectsDir = await standardRoot(t);
   const { session, calls } = await startTest(t, projectsDir);
   await post(session, '/api/archive', { cardId: 'folder:waiting-clip', archived: true });

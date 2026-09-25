@@ -290,9 +290,11 @@ function currentCard() {
   return allCards().find((card) => card.id === state.openCardId) || null;
 }
 
-// Утверждение возвращает архивную карточку из архива (Task B доводки пульта, D-030): если
-// человек как раз смотрит открытую карточку через вкладку «Архив», а она там больше не лежит,
-// «← Все ролики» должна вести туда, где карточка теперь показана, а не на опустевший архив.
+// Утверждение возвращает архивную карточку из архива (DECISIONS.md D-030): если человек как
+// раз смотрит открытую карточку через вкладку «Архив», а после успешного утверждения её там
+// больше нет, «← Все ролики» должна вести туда, где карточка теперь показана, а не на
+// опустевший архив. Вызывается только из блока утверждения после успешного /api/approve –
+// явный «Вернуть из архива» сам закрывает карточку и не должен трогать текущую вкладку.
 // aria-pressed обновляем тем же способом, что и клик по вкладке.
 function syncArchiveTab() {
   if (state.tab !== 'archive' || !state.openCardId) return;
@@ -416,6 +418,10 @@ function approveBlock(variant) {
       });
       notify('Утверждено. Скопируйте фразу для агента – он соберёт финал и проверит его.');
       await refresh();
+      // Только после успешного утверждения: сервер уже вернул карточку из архива, если она
+      // там была (DECISIONS.md D-030). Явный «Вернуть из архива» не должен проходить через
+      // эту же функцию – см. комментарий у syncArchiveTab.
+      syncArchiveTab();
     } catch (error) {
       if (error.code === 'PREVIEW_CHANGED') {
         // Билет протух не из-за сети, а потому что ролик реально изменился – перечитываем
@@ -461,7 +467,7 @@ function videoLabelFor(variant) {
     // ситуация, но карточку убрали в архив уже после утверждения: подпись должна честно
     // сказать, что финал ждёт отдельной просьбы, а не то, что агент уже занят им.
     if (variant.video.kind !== 'preview') return VIDEO_LABELS[variant.video.kind];
-    if (variant.archivedNeedsFinal) return 'Утверждённый preview – в архиве, финал по вашей просьбе';
+    if (variant.archivedNeedsFinal) return 'Утверждённый preview – в архиве, агент соберёт финал по вашей просьбе';
     return variant.needsFinal ? 'Утверждённый preview – агент собирает финал' : VIDEO_LABELS[variant.video.kind];
   }
   if (variant.videoUnsupported) return VIDEO_UNSUPPORTED_LABEL;
@@ -800,7 +806,6 @@ async function refresh({ keepDetail = false } = {}) {
   // остаются на месте: их убирает только следующее действие.
   if (refreshErrorShown) notify('');
   updateTabs();
-  syncArchiveTab();
   if (!state.openCardId) {
     // lastCardsJson обновляет сам renderList – при каждой настоящей отрисовке списка.
     if (JSON.stringify(state.data) !== lastCardsJson) renderList();

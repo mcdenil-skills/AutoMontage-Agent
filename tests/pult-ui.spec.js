@@ -168,6 +168,21 @@ test('archive hides a card without deleting it', async ({ page }) => {
   expect(fs.existsSync(`${projectsDir}/ready-clip/project.json`)).toBe(true);
 });
 
+// Регрессия: syncArchiveTab (переключение вкладки на «Ролики») должна срабатывать только
+// после успешного /api/approve, а не из общего refresh() – иначе обычная кнопка «Вернуть из
+// архива», нажатая на вкладке «Архив», незаметно перекидывала бы человека на «Ролики».
+test('returning a card from the archive via its own button stays on the archive tab', async ({ page }) => {
+  await openCard(page, 'Готовый ролик');
+  await page.locator('button', { hasText: 'В архив' }).click();
+  await page.click('[data-tab="archive"]');
+  await page.locator('.card', { hasText: 'Готовый ролик' }).click();
+  await expect(page.locator('[data-view="detail"]')).toBeVisible();
+  await page.locator('button', { hasText: 'Вернуть из архива' }).click();
+  await expect(page.locator('[data-notice]')).toContainText('Ролик вернулся из архива.');
+  await expect(page.locator('[data-tab="archive"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.empty')).toHaveText('Архив пуст.');
+});
+
 test('the agent phrase names the video folder and "Показать в папке" goes through the server', async ({ page }) => {
   await openCard(page, 'Перфекционизм');
   await expect(page.locator('[data-agent-phrase]')).toHaveValue(
@@ -373,9 +388,9 @@ test('archiving keeps the success notice visible after closing the card', async 
   await expect(page.locator('[data-notice]')).toContainText('Папка не тронута');
 });
 
-// Task A/C доводки пульта (DECISIONS.md D-030): нажатие «Утверждаю» на архивной карточке
-// само возвращает её из архива, поэтому не должно оставлять человека на пустеющей вкладке
-// «Архив» – «← Все ролики» обязана вести туда, где карточка теперь показана.
+// DECISIONS.md D-030: нажатие «Утверждаю» на архивной карточке само возвращает её из
+// архива, поэтому не должно оставлять человека на пустеющей вкладке «Архив» – «← Все ролики»
+// обязана вести туда, где карточка теперь показана.
 test('approving an archived card returns it from the archive to the main list', async ({ page }) => {
   await openCard(page, 'Перфекционизм');
   await page.locator('button', { hasText: 'В архив' }).click();
@@ -390,6 +405,25 @@ test('approving an archived card returns it from the archive to the main list', 
   await expect(page.locator('[data-count="archive"]')).toHaveText('0');
   await page.locator('button', { hasText: '← Все ролики' }).click();
   await expect(page.locator('[data-section="working"]')).toContainText('Перфекционизм');
+});
+
+// Обратный порядок действий (DECISIONS.md D-030): утвердили, потом убрали в архив. Next step
+// и подпись плеера должны честно сказать, что финал ждёт отдельной просьбы, а не то, что
+// агент уже занят им. Убрать поле archivedNeedsFinal из browserVariant (server.js) или ветку
+// videoLabelFor, которая его читает (app.js), и этот тест перестанет проходить.
+test('an approved card archived afterwards shows the honest archived texts', async ({ page }) => {
+  await openCard(page, 'Перфекционизм');
+  await page.check('[data-viewed]');
+  await page.locator('button', { hasText: 'Утверждаю' }).click();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено – агент собирает финал');
+  await page.locator('button', { hasText: 'В архив' }).click();
+  await page.click('[data-tab="archive"]');
+  await page.locator('.card', { hasText: 'Перфекционизм' }).click();
+  await expect(page.locator('[data-view="detail"]')).toBeVisible();
+  await expect(page.locator('[data-variant-next]')).toHaveText('Утверждено, в архиве – агент соберёт финал по вашей просьбе');
+  await expect(page.locator('.player__label')).toHaveText(
+    'Утверждённый preview – в архиве, агент соберёт финал по вашей просьбе',
+  );
 });
 
 // --- Карточка остаётся в синхроне с агентом ---

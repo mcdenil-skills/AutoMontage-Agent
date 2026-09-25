@@ -206,9 +206,9 @@ async function startPultServer({
       approvalTicket: playable ? approvalTicket(entry) : null,
       // Утверждённый brief ещё без финала: на экране – тот самый утверждённый preview.
       needsFinal: Boolean(entry.needsFinal),
-      // Карточку убрали в архив уже после утверждения (buildCards, Task B доводки пульта):
-      // подпись плеера должна сказать честно, что финал ждёт отдельной просьбы, а не то,
-      // что агент уже занят им.
+      // Карточка утверждена, но лежит в архиве (buildCards, DECISIONS.md D-030): подпись
+      // плеера должна сказать честно, что финал ждёт отдельной просьбы, а не то, что агент
+      // уже занят им.
       archivedNeedsFinal: Boolean(entry.archivedNeedsFinal),
       video: playable ? { kind: entry.video.kind, url: `/media/video?${versioned}` } : null,
       videoUnsupported: Boolean(videoFile) && !playable,

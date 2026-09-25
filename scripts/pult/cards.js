@@ -1,28 +1,33 @@
 const { STATUS_ORDER } = require('./status');
 
-// Утверждение возвращает карточку из архива (Task A этой доводки, см. server.js и
-// DECISIONS.md D-030), но пользователь может убрать её в архив уже ПОСЛЕ утверждения –
-// обратный порядок действий. Тогда обычная надпись status.js «Утверждено – агент собирает
-// финал» вводила бы в заблуждение: выглядит так, будто агент уже занят, хотя по правилу
-// AGENTS.md он ждёт отдельной просьбы. Текст определён ровно в одном месте – здесь.
+// Утверждение возвращает карточку из архива (см. server.js, DECISIONS.md D-030), но
+// пользователь может убрать её в архив уже ПОСЛЕ утверждения – обратный порядок действий, а
+// approveBrief можно вызвать и не через кнопку пульта (Review Workbench, CLI-утверждение в
+// чате), тогда карточка вообще не возвращается из архива автоматически. Тогда обычная надпись
+// status.js «Утверждено – агент собирает финал» вводила бы в заблуждение: выглядит так, будто
+// агент уже занят, хотя по правилу AGENTS.md он ждёт отдельной просьбы. Текст определён ровно
+// в одном месте – здесь.
 const ARCHIVED_NEEDS_FINAL_NEXT_STEP = 'Утверждено, в архиве – агент соберёт финал по вашей просьбе';
 
 function cardIdFor(entry) {
   return entry.group ? `group:${entry.group.id}` : `folder:${entry.folder}`;
 }
 
-// Структурное условие вместо сравнения со строкой APPROVED_NEXT_STEP: needsFinal у status.js
-// не зависит от новых правок, а невыполненная правка должна оставить «Ждёт агента: …» –
-// это именно та ветка status.js, где nextStep становится APPROVED_NEXT_STEP.
-function isApprovedWaitingForFinal(variant) {
-  return Boolean(variant.needsFinal) && !variant.pendingComments;
-}
-
-// Копия варианта с честной надписью, если карточка архивная и вариант ждёт финала без новых
-// правок; никогда не меняет entry из scan – его читают и другие карточки той же папки.
+// Копия варианта архивной карточки с утверждённым brief без финала. archivedNeedsFinal –
+// то же условие, по которому `automontage inbox` помечает утверждение «в архиве»
+// (scripts/pult/inbox.js: archivedIds.has(cardIdFor(entry)) при entry.needsFinal, без оглядки
+// на новые правки): подпись плеера должна оставаться честной даже тогда, когда по ролику уже
+// ждёт новая правка. nextStep карточки при этом меняем только без невыполненных правок –
+// «Ждёт агента: …» – это новая работа автора, и архивная надпись про финал не должна её
+// заслонять. Никогда не меняет entry из scan – его читают и другие карточки той же папки.
 function archivedVariant(variant, archived) {
-  if (!archived || !isApprovedWaitingForFinal(variant)) return variant;
-  return { ...variant, nextStep: ARCHIVED_NEEDS_FINAL_NEXT_STEP, archivedNeedsFinal: true };
+  const archivedNeedsFinal = archived && Boolean(variant.needsFinal);
+  if (!archivedNeedsFinal) return variant;
+  return {
+    ...variant,
+    archivedNeedsFinal: true,
+    nextStep: variant.pendingComments ? variant.nextStep : ARCHIVED_NEEDS_FINAL_NEXT_STEP,
+  };
 }
 
 function byUrgency(left, right) {
@@ -69,4 +74,4 @@ function buildCards(scan, { archived = [] } = {}) {
   };
 }
 
-module.exports = { ARCHIVED_NEEDS_FINAL_NEXT_STEP, buildCards, cardIdFor };
+module.exports = { buildCards, cardIdFor };

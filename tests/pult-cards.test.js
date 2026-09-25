@@ -60,11 +60,10 @@ test('unregistered and broken folders are passed through', () => {
   assert.deepEqual(sections.broken, [{ folder: 'old', error: 'Паспорт ролика не читается' }]);
 });
 
-// Утверждение возвращает карточку из архива (Task B), но её можно снова убрать в архив уже
-// после утверждения – тогда «Утверждено – агент собирает финал» из status.js вводило бы в
-// заблуждение: выглядело бы так, будто агент уже занят, хотя он ждёт отдельной просьбы
-// (см. AGENTS.md, «Пульт роликов», и DECISIONS.md D-030). Условие структурное: needsFinal и
-// нет невыполненных правок – ровно та ветка status.js, которая производит этот nextStep.
+// Утверждение возвращает карточку из архива (см. AGENTS.md, «Пульт роликов», и DECISIONS.md
+// D-030), но её можно снова убрать в архив уже после утверждения – тогда «Утверждено – агент
+// собирает финал» из status.js вводило бы в заблуждение: выглядело бы так, будто агент уже
+// занят, хотя он ждёт отдельной просьбы.
 test('an archived card that is approved and waiting for its final gets an honest next step', () => {
   const sections = buildCards(scan([
     entry({
@@ -98,7 +97,10 @@ test('the same approved-without-final card, not archived, keeps the plain next s
 
 // Новая правка после утверждения – новая работа автора (см. AGENTS.md): архив не должен
 // подменить «Ждёт агента: …» честной надписью про финал, которую агент пока даже не начал.
-test('an archived card with a pending edit keeps "waiting for the agent", not the archived-final text', () => {
+// Но archivedNeedsFinal (флаг для подписи плеера) остаётся true – `automontage inbox` метит
+// это утверждение «в архиве» независимо от новых правок (scripts/pult/inbox.js), и подпись
+// плеера должна оставаться честной тоже независимо от них.
+test('an archived card with a pending edit keeps "waiting for the agent" in nextStep, but the flag stays honest', () => {
   const sections = buildCards(scan([
     entry({
       folder: 'archived-edit',
@@ -110,7 +112,7 @@ test('an archived card with a pending edit keeps "waiting for the agent", not th
   ]), { archived: ['folder:archived-edit'] });
   const card = sections.archive[0];
   assert.equal(card.nextStep, 'Ждёт агента: 1 правка');
-  assert.equal(card.variants[0].archivedNeedsFinal, undefined);
+  assert.equal(card.variants[0].archivedNeedsFinal, true);
 });
 
 // Карточка группы (Task 15) должна получить ту же честную надпись, с префиксом варианта –

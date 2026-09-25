@@ -1,11 +1,5 @@
 const STATUS_ORDER = Object.freeze({ waiting: 0, working: 1, ready: 2 });
 
-// Единственное место, где определён этот текст. `cards.js` не сравнивает с ним строку (см.
-// isApprovedWaitingForFinal там же) – он вычисляет ту же ветку структурно, через needsFinal
-// и pendingComments, – но именно эту надпись честная надпись архивной карточки заменяет
-// (Task B доводки пульта, DECISIONS.md D-030), поэтому текст экспортирован как единый источник.
-const APPROVED_NEXT_STEP = 'Утверждено – агент собирает финал';
-
 function pluralEdits(count) {
   const mod10 = count % 10;
   const mod100 = count % 100;
@@ -57,7 +51,7 @@ function deriveVariantStatus({
     nextStep = 'Готов – можно забирать';
   } else if (currentBriefStatus === 'approved') {
     status = 'working';
-    nextStep = APPROVED_NEXT_STEP;
+    nextStep = 'Утверждено – агент собирает финал';
   } else if (currentBriefStatus === 'draft' && previewIsCurrent) {
     status = 'waiting';
     nextStep = approvalBlocker || 'Посмотрите preview и утвердите';
@@ -84,4 +78,4 @@ function deriveVariantStatus({
   };
 }
 
-module.exports = { APPROVED_NEXT_STEP, STATUS_ORDER, deriveVariantStatus, pluralEdits };
+module.exports = { STATUS_ORDER, deriveVariantStatus, pluralEdits };
