@@ -140,8 +140,9 @@ function enableNodeVibrant(root) {
   write(root, 'package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
 }
 
-function makeRepository() {
+function makeRepository(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-release-check-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.email', 'release-test@example.invalid']);
   git(root, ['config', 'user.name', 'Release Test']);
@@ -185,8 +186,8 @@ function makeRepository() {
   return root;
 }
 
-test('release checker reads the committed tree instead of dirty worktree files', () => {
-  const root = makeRepository();
+test('release checker reads the committed tree instead of dirty worktree files', (t) => {
+  const root = makeRepository(t);
   const privateHandle = ['@MCD', 'ENIL'].join('');
   const personalPath = ['/Users', '/private/source.mp4'].join('');
   write(root, 'src/example.js', `const owner = '${privateHandle}';\nconst path = '${personalPath}';\n`);
@@ -198,8 +199,8 @@ test('release checker reads the committed tree instead of dirty worktree files',
   assert.ok(fs.readFileSync(path.join(root, 'src/example.js'), 'utf8').includes(privateHandle));
 });
 
-test('release checker reports private ids, media provenance, engines, and changed em dash', () => {
-  const root = makeRepository();
+test('release checker reports private ids, media provenance, engines, and changed em dash', (t) => {
+  const root = makeRepository(t);
   const base = git(root, ['rev-parse', 'HEAD']);
   write(root, 'package-lock.json', `${JSON.stringify({
     name: 'fixture',
@@ -227,8 +228,8 @@ test('release checker reports private ids, media provenance, engines, and change
   assert.match(formatIssue(result.issues[0]), /^\[[a-z-]+\] [^:]+:\d+: .+ Fix: .+/);
 });
 
-test('missing base ref explains how to fetch history', () => {
-  const root = makeRepository();
+test('missing base ref explains how to fetch history', (t) => {
+  const root = makeRepository(t);
 
   assert.throws(
     () => checkRelease({ cwd: root, tree: 'HEAD', base: 'origin/main' }),
@@ -236,8 +237,8 @@ test('missing base ref explains how to fetch history', () => {
   );
 });
 
-test('environment declarations ignore inherited PATH but still require product variables', () => {
-  const root = makeRepository();
+test('environment declarations ignore inherited PATH but still require product variables', (t) => {
+  const root = makeRepository(t);
   const undeclared = ['AUTOMONTAGE', 'CUSTOM', 'TOOL'].join('_');
   write(root, 'src/example.js', [
     'const inherited = process.env.PATH;',
@@ -255,8 +256,8 @@ test('environment declarations ignore inherited PATH but still require product v
   ]);
 });
 
-test('release notes accept a current patch without 1.2.0-specific wording', () => {
-  const root = makeRepository();
+test('release notes accept a current patch without 1.2.0-specific wording', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: [
@@ -273,8 +274,8 @@ test('release notes accept a current patch without 1.2.0-specific wording', () =
   assert.equal(result.issues.some((entry) => entry.rule === 'release-notes'), false);
 });
 
-test('release notes require the current version section to have a date', () => {
-  const root = makeRepository();
+test('release notes require the current version section to have a date', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     date: null,
@@ -288,8 +289,8 @@ test('release notes require the current version section to have a date', () => {
   assert.match(result.issues.find((entry) => entry.rule === 'release-notes').message, /dated/i);
 });
 
-test('development tree permits pending Unreleased notes before a version bump', () => {
-  const root = makeRepository();
+test('development tree permits pending Unreleased notes before a version bump', (t) => {
+  const root = makeRepository(t);
   const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')
     .replace('## [Unreleased]\n\n', '## [Unreleased]\n\n### Добавлено\n\n- Pending feature.\n\n');
   write(root, 'CHANGELOG.md', changelog);
@@ -301,8 +302,8 @@ test('development tree permits pending Unreleased notes before a version bump', 
   assert.equal(result.issues.some((entry) => entry.rule === 'release-notes'), false);
 });
 
-test('release notes require Unreleased to be whitespace-empty for a release candidate', () => {
-  const root = makeRepository();
+test('release notes require Unreleased to be whitespace-empty for a release candidate', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     unreleased: 'Still pending.',
@@ -316,8 +317,8 @@ test('release notes require Unreleased to be whitespace-empty for a release cand
   assert.match(result.issues.find((entry) => entry.rule === 'release-notes').message, /Unreleased/);
 });
 
-test('release notes require a subsection with at least one bullet', () => {
-  const root = makeRepository();
+test('release notes require a subsection with at least one bullet', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\nRelease metadata is validated before publication.',
@@ -330,8 +331,8 @@ test('release notes require a subsection with at least one bullet', () => {
   assert.match(result.issues.find((entry) => entry.rule === 'release-notes').message, /bullet/i);
 });
 
-test('patch release notes require the exact Исправлено subsection', () => {
-  const root = makeRepository();
+test('patch release notes require the exact Исправлено subsection', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Добавлено\n\n- Validate release metadata before publication.',
@@ -346,8 +347,8 @@ test('patch release notes require the exact Исправлено subsection', ()
   )));
 });
 
-test('release notes reject impossible UTC calendar dates', () => {
-  const root = makeRepository();
+test('release notes reject impossible UTC calendar dates', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     date: '2026-02-30',
@@ -361,8 +362,8 @@ test('release notes reject impossible UTC calendar dates', () => {
   assert.match(result.issues.find((entry) => entry.rule === 'release-notes').message, /calendar date/i);
 });
 
-test('release checker requires provenance for each recognized binary asset extension', () => {
-  const root = makeRepository();
+test('release checker requires provenance for each recognized binary asset extension', (t) => {
+  const root = makeRepository(t);
   const files = ['public/card.webp', 'public/music.mp3', 'public/clip.mov'];
   for (const file of files) write(root, file, 'fixture binary');
   git(root, ['add', '.']);
@@ -378,8 +379,8 @@ test('release checker requires provenance for each recognized binary asset exten
   assert.deepEqual(missing, files.sort());
 });
 
-test('release checker accepts provenance rows using repo-relative binary paths', () => {
-  const root = makeRepository();
+test('release checker accepts provenance rows using repo-relative binary paths', (t) => {
+  const root = makeRepository(t);
   const files = ['public/card.webp', 'public/music.mp3', 'public/clip.mov'];
   for (const file of files) write(root, file, 'fixture binary');
   write(root, 'ASSETS.md', [
@@ -398,9 +399,9 @@ test('release checker accepts provenance rows using repo-relative binary paths',
   assert.equal(result.issues.some((entry) => entry.rule === 'asset-provenance'), false);
 });
 
-test('release checker normalizes provenance paths before stale-row comparison', () => {
+test('release checker normalizes provenance paths before stale-row comparison', (t) => {
   for (const documentedPath of ['./public/card.webp', 'public\\card.webp']) {
-    const root = makeRepository();
+    const root = makeRepository(t);
     write(root, 'public/card.webp', 'fixture binary');
     write(root, 'ASSETS.md', [
       '# Public asset provenance',
@@ -419,8 +420,8 @@ test('release checker normalizes provenance paths before stale-row comparison', 
   }
 });
 
-test('node-vibrant audit exception requires complete and time-bounded evidence', () => {
-  const root = makeRepository();
+test('node-vibrant audit exception requires complete and time-bounded evidence', (t) => {
+  const root = makeRepository(t);
   enableNodeVibrant(root);
   write(root, 'SECURITY.md', [
     '# Security',
@@ -483,8 +484,8 @@ test('node-vibrant audit exception requires complete and time-bounded evidence',
   assert.equal(expired.issues.some((entry) => entry.rule === 'security-exception'), true);
 });
 
-test('node-vibrant exception rejects an invalid reviewedAt calendar date', () => {
-  const root = makeRepository();
+test('node-vibrant exception rejects an invalid reviewedAt calendar date', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -501,8 +502,8 @@ test('node-vibrant exception rejects an invalid reviewedAt calendar date', () =>
   )));
 });
 
-test('node-vibrant exception requires reviewedFor to match package.json version', () => {
-  const root = makeRepository();
+test('node-vibrant exception requires reviewedFor to match package.json version', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -519,8 +520,8 @@ test('node-vibrant exception requires reviewedFor to match package.json version'
   )));
 });
 
-test('node-vibrant exception rejects an advisory changed without review evidence', () => {
-  const root = makeRepository();
+test('node-vibrant exception rejects an advisory changed without review evidence', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -537,8 +538,8 @@ test('node-vibrant exception rejects an advisory changed without review evidence
   )));
 });
 
-test('node-vibrant exception requires exactly one parseable security-exception fence', () => {
-  const root = makeRepository();
+test('node-vibrant exception requires exactly one parseable security-exception fence', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -566,8 +567,8 @@ test('node-vibrant exception requires exactly one parseable security-exception f
   )));
 });
 
-test('node-vibrant exception rejects a future review date', () => {
-  const root = makeRepository();
+test('node-vibrant exception rejects a future review date', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     date: '2026-08-06',
@@ -585,8 +586,8 @@ test('node-vibrant exception rejects a future review date', () => {
   )));
 });
 
-test('node-vibrant exception accepts the next global calendar date after UTC+14 midnight', () => {
-  const root = makeRepository();
+test('node-vibrant exception accepts the next global calendar date after UTC+14 midnight', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     date: '2026-08-06',
@@ -602,8 +603,8 @@ test('node-vibrant exception accepts the next global calendar date after UTC+14 
   assert.ok(!result.issues.some((entry) => entry.rule === 'security-exception'));
 });
 
-test('node-vibrant exception rejects a stale review carried into a new release date', () => {
-  const root = makeRepository();
+test('node-vibrant exception rejects a stale review carried into a new release date', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     date: '2026-08-06',
@@ -621,8 +622,8 @@ test('node-vibrant exception rejects a stale review carried into a new release d
   )));
 });
 
-test('node-vibrant exception requires exactly the documented five chain entries', () => {
-  const root = makeRepository();
+test('node-vibrant exception requires exactly the documented five chain entries', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -641,8 +642,8 @@ test('node-vibrant exception requires exactly the documented five chain entries'
   )));
 });
 
-test('node-vibrant exception is compared with the installed candidate lockfile chain', () => {
-  const root = makeRepository();
+test('node-vibrant exception is compared with the installed candidate lockfile chain', (t) => {
+  const root = makeRepository(t);
   updateReleaseVersion(root, {
     version: '1.2.1',
     section: '### Исправлено\n\n- Validate release metadata before publication.',
@@ -662,8 +663,8 @@ test('node-vibrant exception is compared with the installed candidate lockfile c
   )));
 });
 
-test('versioned release notes must cover every public release boundary', () => {
-  const root = makeRepository();
+test('versioned release notes must cover every public release boundary', (t) => {
+  const root = makeRepository(t);
   write(root, 'CHANGELOG.md', [
     '# Changelog',
     '',
@@ -684,8 +685,9 @@ test('versioned release notes must cover every public release boundary', () => {
   assert.ok(result.issues.some((entry) => entry.rule === 'release-notes'));
 });
 
-test('smoke guard detects any protected-file mutation', () => {
+test('smoke guard detects any protected-file mutation', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-smoke-guard-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   write(root, 'src/data/captions.js', 'module.exports = [];\n');
   write(root, 'src/data/transcript.json', '[]\n');
   const files = ['src/data/captions.js', 'src/data/transcript.json'];
@@ -712,8 +714,8 @@ function enableMotionRelease(root) {
   git(root, ['commit', '-qm', 'motion candidate']);
 }
 
-test('motion release refuses missing runtime, schema, skill or demo in the candidate tree', () => {
-  const root = makeRepository();
+test('motion release refuses missing runtime, schema, skill or demo in the candidate tree', (t) => {
+  const root = makeRepository(t);
   enableMotionRelease(root);
   assert.equal(checkRelease({ cwd: root }).issues.filter(entry => entry.rule === 'motion-release').length, 0);
   for (const file of ['schema/motion-brief.schema.json', 'src/MotionDirector.jsx', 'scripts/cli.js',
@@ -726,8 +728,8 @@ test('motion release refuses missing runtime, schema, skill or demo in the candi
   }
 });
 
-test('motion release refuses an unregistered composition and an invalid demo brief', () => {
-  const root = makeRepository();
+test('motion release refuses an unregistered composition and an invalid demo brief', (t) => {
+  const root = makeRepository(t);
   enableMotionRelease(root);
   write(root, 'src/Root.jsx', 'export const Root = () => null;\n');
   const demo = JSON.parse(fs.readFileSync(path.join(root, 'examples/motion-brief-demo.json')));
@@ -740,8 +742,8 @@ test('motion release refuses an unregistered composition and an invalid demo bri
   assert.ok(issues.some(entry => entry.file === 'examples/motion-brief-demo.json'));
 });
 
-test('motion release refuses CI that drops Windows audio or Linux credential-free smoke', () => {
-  const root = makeRepository();
+test('motion release refuses CI that drops Windows audio or Linux credential-free smoke', (t) => {
+  const root = makeRepository(t);
   enableMotionRelease(root);
   const file = '.github/workflows/ci.yml';
   const source = fs.readFileSync(path.join(root, file), 'utf8');
@@ -754,8 +756,8 @@ test('motion release refuses CI that drops Windows audio or Linux credential-fre
   assert.ok(issues.some(entry => /Linux/.test(entry.message)));
 });
 
-test('motion release refuses a Windows test step whose first native failure can be hidden', () => {
-  const root = makeRepository();
+test('motion release refuses a Windows test step whose first native failure can be hidden', (t) => {
+  const root = makeRepository(t);
   enableMotionRelease(root);
   const file = '.github/workflows/ci.yml';
   const safe = [
