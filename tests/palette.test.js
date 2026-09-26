@@ -8,8 +8,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const HAS_FFMPEG = spawnSync('ffmpeg', ['-version']).status === 0;
-const SKIP = !HAS_FFMPEG && 'ffmpeg is not installed';
+const { toolAvailable, ffmpegEncoderAvailable } = require('./helpers/media-fixtures');
+const SKIP = !(toolAvailable('ffmpeg') && ffmpegEncoderAvailable('libx264'))
+  && 'ffmpeg with libx264 is not installed';
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-palette-'));
 after(() => fs.rmSync(WORK, { recursive: true, force: true }));
 
@@ -33,7 +34,7 @@ function runPalette(video, extra = []) {
     encoding: 'utf8',
     timeout: 120_000,
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, String(result.error || result.stderr));
   const [json, diagnostics = ''] = result.stdout.split('// ── diagnostics');
   const seedHex = /seed\(video\):.*hex=(#[0-9a-f]{6})/i.exec(diagnostics)?.[1];
   return { theme: JSON.parse(json.trim()), seedHex, diagnostics };
@@ -88,4 +89,51 @@ test('autotheme palette keeps WCAG 4.5:1 text contrast for light, dark and gray 
       assert.ok(contrast(textSoft, cardBg) >= 4.5, `textSoft on cardBg for #${hex} at ${brandLock}`);
     }
   }
+});
+
+function splitVideo(major, minor) {
+  const file = path.join(WORK, `split-${major}-${minor}.mp4`);
+  if (fs.existsSync(file)) return file;
+  // Три четверти кадра – major, четверть – minor; граница на 240 px совпадает с блоками yuv420 и x264.
+  const result = spawnSync('ffmpeg', [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', `color=c=0x${major}:s=240x240:d=1:r=5`,
+    '-f', 'lavfi', '-i', `color=c=0x${minor}:s=80x240:d=1:r=5`,
+    '-filter_complex', '[0:v][1:v]hstack=inputs=2',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', file,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return file;
+}
+
+function seedOf(video) {
+  const { diagnostics } = runPalette(video, ['--brandLock', '0']);
+  const match = /seed\(video\): hue=([\d.]+) chroma=([\d.]+)/.exec(diagnostics);
+  assert.ok(match, `seed is printed\n${diagnostics}`);
+  return { hue: Number(match[1]), chroma: Number(match[2]) };
+}
+
+const hueDistance = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+
+test('autotheme palette seed blends two colors by their share of the frame', { skip: SKIP }, () => {
+  const blue = seedOf(solidVideo('2255cc')).hue;
+  const green = seedOf(solidVideo('2e8b57')).hue;
+  for (const [major, minor, majorHue, minorHue] of [
+    ['2255cc', '2e8b57', blue, green],
+    ['2e8b57', '2255cc', green, blue],
+  ]) {
+    const mixed = seedOf(splitVideo(major, minor)).hue;
+    const toMajor = hueDistance(mixed, majorHue);
+    const toMinor = hueDistance(mixed, minorHue);
+    // 3:1 по площади даёт около 19° от major; равные веса дали бы около 58°, один цвет – 0°.
+    assert.ok(toMajor >= 10 && toMajor <= 30, `seed hue ${mixed} is ${toMajor} deg from #${major}`);
+    assert.ok(toMajor + toMinor - hueDistance(majorHue, minorHue) < 2, `seed hue ${mixed} is not between #${major} and #${minor}`);
+  }
+});
+
+test('autotheme palette seed discounts near-gray colors', { skip: SKIP }, () => {
+  // Три четверти серого, четверть синего: серый приглушён весом 0.3, chroma seed около 33.
+  // Без приглушения было бы около 17, без учёта площади – около 50, по одному цвету – 2 или 64.
+  const { chroma } = seedOf(splitVideo('808080', '2255cc'));
+  assert.ok(chroma >= 25 && chroma <= 42, `seed chroma ${chroma}`);
 });
