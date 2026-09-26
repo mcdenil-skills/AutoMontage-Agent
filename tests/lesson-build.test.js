@@ -484,7 +484,7 @@ test('project lesson cleanup preserves foreign bytes swapped at the final remova
   assert.equal(result.status, 1);
   const race = invocations.find((entry) => entry.raceTarget);
   assert.ok(race, result.stderr);
-  // Цель тонбстоуна лежит на уровень глубже temporary (папка удаления/claimed),
+  // Цель надгробия лежит на уровень глубже temporary (папка удаления/claimed),
   // поэтому проверяем принадлежность приватной папке, а не точный dirname.
   assert.ok(race.raceTarget.startsWith(`${temporary}${path.sep}`), race.raceTarget);
   assert.equal(fs.readFileSync(race.raceTarget, 'utf8'), 'foreign-plan-at-removal');
