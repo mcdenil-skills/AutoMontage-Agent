@@ -137,3 +137,28 @@ test('autotheme palette seed discounts near-gray colors', { skip: SKIP }, () => 
   const { chroma } = seedOf(splitVideo('808080', '2255cc'));
   assert.ok(chroma >= 25 && chroma <= 42, `seed chroma ${chroma}`);
 });
+
+function sequenceVideo(first, second) {
+  const file = path.join(WORK, `sequence-${first}-${second}.mp4`);
+  if (fs.existsSync(file)) return file;
+  // 4 с первого цвета, затем 4 с второго: при 25 fps это ровно два окна thumbnail=100.
+  const result = spawnSync('ffmpeg', [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', `color=c=0x${first}:s=320x240:d=4:r=25`,
+    '-f', 'lavfi', '-i', `color=c=0x${second}:s=320x240:d=4:r=25`,
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', file,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return file;
+}
+
+test('autotheme palette seed reads characteristic frames from the whole video', { skip: SKIP }, () => {
+  const blue = seedOf(solidVideo('2255cc')).hue;
+  const green = seedOf(solidVideo('2e8b57')).hue;
+  const mixed = seedOf(sequenceVideo('2255cc', '2e8b57')).hue;
+  const toBlue = hueDistance(mixed, blue);
+  const toGreen = hueDistance(mixed, green);
+  // Два окна по 100 кадров дают два разных кадра поровну; 20 копий первого кадра дали бы чистый синий.
+  assert.ok(toBlue >= 30 && toGreen >= 30, `seed hue ${mixed}: ${toBlue} deg from blue, ${toGreen} deg from green`);
+});

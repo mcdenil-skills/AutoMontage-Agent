@@ -159,10 +159,12 @@ async function main() {
 
   // thumbnail=100 – ffmpeg сам выбирает «характерные» кадры из окон по 100 фреймов.
   // Пиксели идут сразу в stdout: ни временных файлов, ни JS-декодера картинок.
+  // -fps_mode passthrough: без него ffmpeg дублирует первый кадр вместо следующих thumbnail.
   function framePixels(video) {
     const raw = execFileSync('ffmpeg', [
       '-v', 'error', '-nostdin', '-i', video, '-an',
       '-vf', `thumbnail=100,scale=${FRAME_BOX}:${FRAME_BOX}:force_original_aspect_ratio=decrease`,
+      '-fps_mode', 'passthrough',
       '-frames:v', String(FRAME_LIMIT), '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
     ], { maxBuffer: MAX_PIXELS * 3, stdio: ['ignore', 'pipe', 'pipe'] });
     if (raw.length < 3) throw new Error('ffmpeg не извлёк ни одного кадра из видео');
