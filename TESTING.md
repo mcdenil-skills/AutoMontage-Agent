@@ -85,7 +85,12 @@ npm test
 - чистота временной папки: `tests/test-temp-hygiene.test.js` запускает тесты, которые раньше
   оставляли мусор, с отдельными `TMPDIR`/`TEMP`/`TMP` и требует, чтобы папка осталась пустой;
   файл добавляют в его список `HYGIENE_FILES`, когда чинят в нём утечку или когда он запускает
-  дочерние процессы, пишущие в `os.tmpdir()`.
+  дочерние процессы, пишущие в `os.tmpdir()`;
+- палитра `--autotheme` на синтетических видео: формат токенов и brand accent, seed по известным
+  цветам, смешение двух цветов по площади, приглушение серого, кадры из разных окон видео,
+  а не повтор первого, и контраст текста 4.5:1; security-регрессия – нет `node-vibrant`/
+  `file-type` ниже 21.3.1, быстрый отказ на испорченном ASF, не больше 20×320×320 пикселей
+  и имя файла как один аргумент ffmpeg.
 
 Любое исправление бага должно добавлять регрессионный тест его причины.
 
@@ -449,16 +454,12 @@ Windows audio probe/workspace плюс Linux motion smoke без secrets. Каж
 кандидат как данные; реальные CLI help и renderer проверяет отдельный smoke.
 Current-tree правила
 сверяют версию, Node engines, env-декларации, локальные Markdown-ссылки, приватные id,
-версионные release notes, security exception и полный бинарный инвентарь `ASSETS.md`. Для release candidate
+версионные release notes и полный бинарный инвентарь `ASSETS.md`. Для release candidate
 `CHANGELOG.md` обязан содержать ровно одну dated-секцию текущей версии вида
 `## [X.Y.Z] - YYYY-MM-DD` с реальной UTC-календарной датой; `[Unreleased]` в этот момент полностью пуст.
 В version section нужны хотя бы один `###` подраздел и bullet, а для patch-версии – `### Исправлено`.
 Каждый tracked public binary (изображение, видео, аудио или шрифт) требует полную строку с repo-relative
-путём в `ASSETS.md`. Исключение `node-vibrant` должно содержать ровно один machine-readable
-`json security-exception` fence с проверяемыми `reviewedAt` (реальная календарная дата) и `reviewedFor`,
-в точности равным текущей версии `package.json`. `reviewedAt` не может быть будущей или перенесённой
-со старой даты релиза; chain содержит ровно пять записей и выводится повторно из candidate
-`package-lock.json`, а не принимается только со слов `SECURITY.md`.
+путём в `ASSETS.md`.
 При наличии `--base` добавляется diff-проверка
 публичной пунктуации; если history/ref недоступен, ошибка содержит команду fetch.
 
@@ -550,13 +551,9 @@ Dependabot еженедельно проверяет npm-пакеты и исп�
 workflow закреплены по неизменяемому commit SHA, чтобы плавающий тег нельзя было незаметно
 подменить.
 
-Полный `npm audit` сейчас должен показывать ровно пять moderate записей по одной цепочке
-`node-vibrant -> @vibrant/image-node -> @jimp/custom -> @jimp/core -> file-type` и ноль
-high/critical. Исключение действительно только в форме, описанной в
-[`SECURITY.md`](SECURITY.md), и автоматически истекает по `revisitBy`. После изменения
-dependency tree, advisory severity или входа `--autotheme` документ и release gate нужно
-пересмотреть вместе. `npm audit fix --force`, major override и downgrade на 3.x не являются
-проверенным исправлением для этого релиза.
+Полный `npm audit` сейчас должен быть без находок. `tests/palette-security.test.js` не даёт
+вернуть в `package-lock.json` цепочку `node-vibrant` и `file-type` ниже 21.3.1: проверка сама
+сверена на вредном и легитимном lock-файле.
 
 
 ## 10. B-roll Discovery: локальный acceptance

@@ -760,7 +760,7 @@ Remotion (анимация плашек кодом), faster-whisper (распо�
 - [TESTING.md](TESTING.md) – от быстрых тестов до проверки готового MP4.
 - [DECISIONS.md](DECISIONS.md) – решения, которые не нужно заново переигрывать в каждой сессии.
 - [CHANGELOG.md](CHANGELOG.md) – история релизов и заметные изменения по версиям.
-- [SECURITY.md](SECURITY.md) – политика отчётов и ограниченные по времени исключения audit.
+- [SECURITY.md](SECURITY.md) – политика отчётов об уязвимостях и правила для dependency advisories.
 - [AGENTS.md](AGENTS.md) – правила работы AI-агентов и обязательный синхрон документации.
 
 ### Версии и история изменений
@@ -792,12 +792,8 @@ git config core.hooksPath .githooks
 API-ключи, токены и пароли. В GitHub обе независимые проверки повторяются на каждый push и pull
 request, а Gitleaks сканирует полную историю. Не обходи локальный hook через `--no-verify`.
 
-`npm audit --audit-level=high` блокирует high/critical advisories. Пять текущих moderate
-записей сводятся к одному transitive `file-type` advisory внутри optional `--autotheme`;
-точная цепочка, граница входа и дата обязательного пересмотра записаны в
-[`SECURITY.md`](SECURITY.md). Это временное исключение, а не заявление об отсутствии риска.
-Release-checker принимает его только когда `reviewedAt` совпадает с датой текущего релиза,
-не находится в будущем, а ровно пять записей chain совпадают с candidate `package-lock.json`.
+`npm audit --audit-level=high` блокирует high/critical advisories. Полный `npm audit` сейчас
+без находок.
 
 ### Проверка Git-дерева и кандидата в релиз
 
