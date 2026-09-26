@@ -1,7 +1,7 @@
 {
   "description": "SHA-256 of public text-only benchmark artifacts. Media/model bytes are not included; their expected hashes are inside corpus/model manifests.",
   "sha256": {
-    "docs/research/2026-09-08-broll-reranking-benchmark.md": "73556b089c97b4bbdcaf8d59aa18209f1d3b5ca7f4090a78dd1fa0b9ea0e0755",
+    "docs/research/2026-09-08-broll-reranking-benchmark.md": "b32288c7ab0eb998f096017465d1a7c7e1debad32f212efd1e59e85e329cabb7",
     "examples/broll-benchmark/ATTRIBUTION.md": "d4486808f2d22c9fcf0c7a955b2fcad8b57f615b23f3f061b26fb530d4c8fa4b",
     "examples/broll-benchmark/blind-map.json": "5b92dba7da75c7291554232b2a8ffec0b16226b28a99584ede5bb18678fa3f71",
     "examples/broll-benchmark/corpus.json": "9fd0eccf580ff4796b82c9a7b5bcd6972a3640d3108ea67820a8f8bf2d9a0a8c",
