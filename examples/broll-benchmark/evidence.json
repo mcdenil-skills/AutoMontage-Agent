@@ -1,7 +1,7 @@
 {
   "description": "SHA-256 of public text-only benchmark artifacts. Media/model bytes are not included; their expected hashes are inside corpus/model manifests.",
   "sha256": {
-    "docs/research/2026-09-08-broll-reranking-benchmark.md": "93c4c78e174f1c71f00860a83072685817ffdcaa9a40871e4c73a630b710e290",
+    "docs/research/2026-09-08-broll-reranking-benchmark.md": "b32288c7ab0eb998f096017465d1a7c7e1debad32f212efd1e59e85e329cabb7",
     "examples/broll-benchmark/ATTRIBUTION.md": "d4486808f2d22c9fcf0c7a955b2fcad8b57f615b23f3f061b26fb530d4c8fa4b",
     "examples/broll-benchmark/blind-map.json": "5b92dba7da75c7291554232b2a8ffec0b16226b28a99584ede5bb18678fa3f71",
     "examples/broll-benchmark/corpus.json": "9fd0eccf580ff4796b82c9a7b5bcd6972a3640d3108ea67820a8f8bf2d9a0a8c",
@@ -9,7 +9,7 @@
     "examples/broll-benchmark/model-manifest.json": "1f13fd04b8d5d9c0e2334dd9a1e1ddf4b1ca8544ee3f1e5dfb42c2d6ba2d617c",
     "examples/broll-benchmark/original-results.json": "ab630efc17f9551c31908340bd0c1c6208ea2b78f7f1a61a7dc343357144714a",
     "examples/broll-benchmark/repeated-runs.json": "f312f2d96935d8585fd8c47939c0be684b10f79ade987a1f61d9bee7d43fd238",
-    "examples/broll-benchmark/requirements.txt": "98ef975aa4a29db2a8cd94e8bbb7821d0db499f48348a92fa35c97f4ecc89587",
+    "examples/broll-benchmark/requirements.txt": "319104370f4691ea4993113b4d3aba1f3480f4ccf9fe1501bd0fbe64b57158ce",
     "examples/broll-benchmark/scores.json": "fa264679e0a68108b51e5ff7a96adcc2285567fae89d5b99b9d4bd2a931e5bb1",
     "scripts/broll/benchmark-openclip.py": "40d57f3f846ae6c6176f3c988b4af6a5cc6f229c3ff75ba112ab752e43b917fb",
     "tests/broll-benchmark.test.js": "f3bf7484a66831f7f29888e4550bc26922c9e8b9874b87774f1ef5919e0f5fed"
