@@ -24,8 +24,9 @@ test('builtin theme ids do not require an external theme directory', () => {
   });
 });
 
-test('explicit external theme loads from a directory with spaces', () => {
+test('explicit external theme loads from a directory with spaces', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'themes ext '));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const directory = path.join(root, 'private-brand-test');
   fs.mkdirSync(directory);
   fs.writeFileSync(path.join(directory, 'theme.json'), JSON.stringify({
@@ -36,13 +37,14 @@ test('explicit external theme loads from a directory with spaces', () => {
   assert.equal(theme.colors.bg, '#000000');
 });
 
-test('explicit external theme fails closed when the pack is unavailable', () => {
+test('explicit external theme fails closed when the pack is unavailable', (t) => {
   assert.throws(
     () => withThemesExt(null, () => loadExtTheme('private-brand-test')),
     /private-brand-test.*THEMES_EXT/,
   );
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'themes missing '));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.throws(
     () => withThemesExt(root, () => loadExtTheme('private-brand-test')),
     /private-brand-test.*не найдена/,
@@ -55,8 +57,9 @@ test('external theme rejects traversal and shell-like ids before reading files',
   }
 });
 
-test('external theme errors never disclose the THEMES_EXT absolute path', () => {
+test('external theme errors never disclose the THEMES_EXT absolute path', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'secret themes '));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const directory = path.join(root, 'private-brand-test');
   fs.mkdirSync(directory);
   fs.writeFileSync(path.join(directory, 'theme.json'), '{broken');

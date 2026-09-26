@@ -25,6 +25,9 @@ function runBuildWithIntercept(t, args, {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-build-intercept-'));
   const hook = path.join(directory, 'hook.js');
   const calls = path.join(directory, 'calls.jsonl');
+  // build.js кладёт промежуточные файлы в os.tmpdir(); держим их внутри directory.
+  const temporary = path.join(directory, 'tmp');
+  fs.mkdirSync(temporary);
   fs.writeFileSync(hook, [
     "const childProcess = require('node:child_process');",
     "const fs = require('node:fs');",
@@ -63,6 +66,9 @@ function runBuildWithIntercept(t, args, {
     encoding: 'utf8',
     env: {
       ...process.env,
+      TMPDIR: temporary,
+      TEMP: temporary,
+      TMP: temporary,
       AUTOMONTAGE_BUILD_CAPTURE: calls,
       NODE_OPTIONS: `--require=${hook}`,
     },

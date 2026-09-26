@@ -28,6 +28,10 @@ function runLessonBuildWithIntercept(t, args, {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-lesson-intercept-'));
   const hook = path.join(directory, 'hook.js');
   const calls = path.join(directory, 'calls.jsonl');
+  // build.js кладёт временный план в os.tmpdir(); держим его внутри directory,
+  // чтобы надгробия защищённого удаления исчезали вместе с ней.
+  const temporary = path.join(directory, 'tmp');
+  fs.mkdirSync(temporary);
   fs.writeFileSync(hook, [
     "const childProcess = require('node:child_process');",
     "const fs = require('node:fs');",
@@ -97,6 +101,9 @@ function runLessonBuildWithIntercept(t, args, {
     encoding: 'utf8',
     env: {
       ...process.env,
+      TMPDIR: temporary,
+      TEMP: temporary,
+      TMP: temporary,
       AUTOMONTAGE_LESSON_CAPTURE: calls,
       AUTOMONTAGE_LESSON_FAIL_RENDER: failRender ? '1' : '',
       ...(materializePlan ? { OPENAI_API_KEY: 'test-only-placeholder' } : {}),
@@ -106,7 +113,7 @@ function runLessonBuildWithIntercept(t, args, {
   const invocations = fs.existsSync(calls)
     ? fs.readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
     : [];
-  return { result, invocations };
+  return { result, invocations, temporary };
 }
 
 function makePlanProject(t) {
@@ -425,7 +432,7 @@ test('project lesson planning removes its exact generated temporary pair after s
   for (const failPlan of [false, true]) {
     await t.test(failPlan ? 'failure' : 'success', (subtest) => {
       const workspace = makePlanProject(subtest);
-      const { result, invocations } = runLessonBuildWithIntercept(subtest, [
+      const { result, invocations, temporary } = runLessonBuildWithIntercept(subtest, [
         'examples/demo-source.mp4',
         '--template', 'lesson',
         '--no-transcribe',
@@ -437,16 +444,18 @@ test('project lesson planning removes its exact generated temporary pair after s
       ));
       assert.ok(generated);
       const jsonPath = generated.args[2];
+      assert.equal(path.dirname(jsonPath), temporary);
       const markdownPath = generated.args[generated.args.indexOf('--markdown') + 1];
       assert.equal(fs.existsSync(jsonPath), false);
       assert.equal(fs.existsSync(markdownPath), false);
+      assert.deepEqual(fs.readdirSync(temporary), []);
     });
   }
 });
 
 test('project lesson planning preserves a foreign replacement of its generated temp file and fails closed', (t) => {
   const workspace = makePlanProject(t);
-  const { result, invocations } = runLessonBuildWithIntercept(t, [
+  const { result, invocations, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--no-transcribe',
@@ -458,21 +467,15 @@ test('project lesson planning preserves a foreign replacement of its generated t
   ));
   assert.ok(generated, result.stderr);
   const jsonPath = generated.args[2];
+  assert.equal(path.dirname(jsonPath), temporary);
   const markdownPath = generated.args[generated.args.indexOf('--markdown') + 1];
-  t.after(() => {
-    for (const target of [jsonPath, `${jsonPath}.original`, markdownPath]) {
-      try { fs.unlinkSync(target); } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    }
-  });
   assert.ok(findRegularFileWithBytes(path.dirname(jsonPath), 'foreign replacement'));
   assert.equal(fs.existsSync(markdownPath), false);
 });
 
 test('project lesson cleanup preserves foreign bytes swapped at the final removal syscall', (t) => {
   const workspace = makePlanProject(t);
-  const { result, invocations } = runLessonBuildWithIntercept(t, [
+  const { result, invocations, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--no-transcribe',
@@ -481,16 +484,10 @@ test('project lesson cleanup preserves foreign bytes swapped at the final remova
   assert.equal(result.status, 1);
   const race = invocations.find((entry) => entry.raceTarget);
   assert.ok(race, result.stderr);
+  // Цель надгробия лежит на уровень глубже temporary (папка удаления/claimed),
+  // поэтому проверяем принадлежность приватной папке, а не точный dirname.
+  assert.ok(race.raceTarget.startsWith(`${temporary}${path.sep}`), race.raceTarget);
   assert.equal(fs.readFileSync(race.raceTarget, 'utf8'), 'foreign-plan-at-removal');
-  t.after(() => {
-    for (const entry of invocations) {
-      if (entry.raceTarget) {
-        try { fs.unlinkSync(entry.raceTarget); } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
-        }
-      }
-    }
-  });
 });
 
 test('lesson rejects source-changing flags that invalidate approved timings', () => {
@@ -517,7 +514,7 @@ test('approved lesson props use one temporary media bundle and remove it after r
   const propsPath = path.join(ROOT, 'out', `${id}.lesson.props.json`);
   t.after(() => fs.rmSync(propsPath, { force: true }));
 
-  const { result, invocations } = runLessonBuildWithIntercept(t, [
+  const { result, invocations, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--brief', 'examples/lesson-neutral-approved.json',
@@ -539,6 +536,7 @@ test('approved lesson props use one temporary media bundle and remove it after r
   assert.equal(fs.existsSync(publicDirectory), false);
   assert.equal(JSON.stringify(props).includes(publicDirectory), false);
   assert.equal(fs.existsSync(path.join(ROOT, 'public', props.faceSrc)), false);
+  assert.deepEqual(fs.readdirSync(temporary), []);
 });
 
 test('approved lesson rebinds legacy scene faceSrc to the same temporary source lease', (t) => {
@@ -556,7 +554,7 @@ test('approved lesson rebinds legacy scene faceSrc to the same temporary source 
     fs.rmSync(briefPath, { force: true });
   });
 
-  const { result } = runLessonBuildWithIntercept(t, [
+  const { result, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--brief', briefPath,
@@ -570,6 +568,7 @@ test('approved lesson rebinds legacy scene faceSrc to the same temporary source 
   assert.equal(props.audioSrc, props.faceSrc);
   assert.match(props.faceSrc, /^\.automontage\/dynamic-[0-9a-f-]+\/media-1\.mp4$/);
   assert.equal(fs.existsSync(path.join(ROOT, 'public', props.faceSrc)), false);
+  assert.deepEqual(fs.readdirSync(temporary), []);
 });
 
 test('failed lesson render still removes its temporary public lease', (t) => {
@@ -577,7 +576,7 @@ test('failed lesson render still removes its temporary public lease', (t) => {
   const propsPath = path.join(ROOT, 'out', `${id}.lesson.props.json`);
   t.after(() => fs.rmSync(propsPath, { force: true }));
 
-  const { result } = runLessonBuildWithIntercept(t, [
+  const { result, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--brief', 'examples/lesson-neutral-approved.json',
@@ -588,6 +587,7 @@ test('failed lesson render still removes its temporary public lease', (t) => {
   assert.equal(result.status, 1);
   const props = JSON.parse(fs.readFileSync(propsPath, 'utf8'));
   assert.equal(fs.existsSync(path.join(ROOT, 'public', props.faceSrc)), false);
+  assert.deepEqual(fs.readdirSync(temporary), []);
 });
 
 test('lesson export rejects a pre-existing final symlink without overwriting its target', (t) => {
@@ -605,7 +605,7 @@ test('lesson export rejects a pre-existing final symlink without overwriting its
     fs.rmSync(builtPath, { force: true });
   });
 
-  const { result } = runLessonBuildWithIntercept(t, [
+  const { result, temporary } = runLessonBuildWithIntercept(t, [
     'examples/demo-source.mp4',
     '--template', 'lesson',
     '--brief', 'examples/lesson-neutral-approved.json',
@@ -618,4 +618,5 @@ test('lesson export rejects a pre-existing final symlink without overwriting its
   assert.match(result.stderr, /symbolic link/i);
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'outside-must-survive');
   assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
+  assert.deepEqual(fs.readdirSync(temporary), []);
 });

@@ -241,12 +241,12 @@ test('output budgets include geometry and time, clamp absolute caps, and reject 
   }), (error) => error.code === 'MEDIA_IMPORT_OUTPUT_BUDGET_INVALID');
 });
 
-test('disk reserve is checked before reading a request byte', async () => {
+test('disk reserve is checked before reading a request byte', async (t) => {
   let reads = 0;
   const request = new Readable({ read() { reads += 1; this.push(Buffer.from('x')); this.push(null); } });
   await assert.rejects(importReviewMedia({
     request,
-    projectDir: tempProject({ after() {} }),
+    projectDir: tempProject(t),
     outputFps: 25,
     headers: rawHeaders('x.png', 'image/png', 1),
     controller: createImportController(),
