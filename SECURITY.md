@@ -9,9 +9,9 @@ and include the affected command, input shape, impact, and a minimal reproductio
 ## Supported release
 
 Security fixes target the latest released version. CI blocks high and critical npm
-advisories and scans Git history with Gitleaks. A lower-severity exception is allowed only
-when its exact dependency path, exposure, mitigation, owner-visible deadline, and revisit
-triggers are recorded below and accepted by `npm run check:release`.
+advisories and scans Git history with Gitleaks. A lower-severity advisory must be fixed
+before release or documented in this file with its exact dependency path, exposure,
+mitigation, and revisit date.
 
 ## B-roll discovery review for 1.6.0
 
@@ -33,6 +33,6 @@ The public regression suite verifies these boundaries:
   edit capability before state-changing routes.
 
 The review found no high or critical dependency advisory and Gitleaks found no secret in the
-feature commits. The remaining accepted dependency risk is documented below. OCR remains a
-warning system rather than a proof that an image has no text or logo, so the full visual preview
-and explicit human approval remain mandatory.
+feature commits. No accepted dependency risk remains; `npm audit` reports no findings (#33).
+OCR remains a warning system rather than a proof that an image has no text or logo, so the full
+visual preview and explicit human approval remain mandatory.

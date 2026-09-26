@@ -792,12 +792,8 @@ git config core.hooksPath .githooks
 API-ключи, токены и пароли. В GitHub обе независимые проверки повторяются на каждый push и pull
 request, а Gitleaks сканирует полную историю. Не обходи локальный hook через `--no-verify`.
 
-`npm audit --audit-level=high` блокирует high/critical advisories. Пять текущих moderate
-записей сводятся к одному transitive `file-type` advisory внутри optional `--autotheme`;
-точная цепочка, граница входа и дата обязательного пересмотра записаны в
-[`SECURITY.md`](SECURITY.md). Это временное исключение, а не заявление об отсутствии риска.
-Release-checker принимает его только когда `reviewedAt` совпадает с датой текущего релиза,
-не находится в будущем, а ровно пять записей chain совпадают с candidate `package-lock.json`.
+`npm audit --audit-level=high` блокирует high/critical advisories. Полный `npm audit` сейчас
+без находок.
 
 ### Проверка Git-дерева и кандидата в релиз
 

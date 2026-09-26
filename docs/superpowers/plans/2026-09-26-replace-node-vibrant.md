@@ -492,3 +492,13 @@ npm run check:release -- --base origin/main
 git add CHANGELOG.md DECISIONS.md TESTING.md README.md
 git commit -m "docs: record the node-vibrant replacement"
 ```
+
+## Итог исполнения
+
+Код отличается от плана по итогам ревью: в `tests/palette.test.js` добавлены тесты смешения двух
+цветов по площади и приглушения серого (без них проходили замены, игнорирующие площадь или вес
+серого), пропуск по наличию ffmpeg с libx264 и видимая причина таймаута. Ревью нашло старую
+ошибку выборки кадров – ffmpeg повторял первый thumbnail 20 раз; она исправлена флагом
+`-fps_mode passthrough` с регрессионным тестом. Вместе с проверкой исключения удалена ставшая
+ненужной `releaseDateForVersion`; в `SECURITY.md` переписаны две фразы, ссылавшиеся на
+исключение. Итоговый сдвиг seed на реальном ролике: hue 80.9 → 92.2, chroma 14.0 → 13.6.
