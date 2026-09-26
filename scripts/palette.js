@@ -10,7 +10,7 @@
 //   node scripts/palette.js ./tmp/preview_src.mp4 --brandLock 1.0
 //   node scripts/palette.js ./tmp/preview_src.mp4 --brandLock 0.3
 //
-// Зависимости: @material/material-color-utilities (HCT + роли темы),
+// Зависимости: @material/material-color-utilities (QuantizerCelebi, HCT + роли темы),
 //              ffmpeg (до 20 характерных кадров сырыми rgb24-пикселями).
 //
 // ── Почему CommonJS + dynamic import ──

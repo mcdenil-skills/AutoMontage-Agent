@@ -933,10 +933,9 @@ QA и `automontage demo` работают без provider API-ключей.
   ffprobe/ffmpeg.
 - Release checker читает committed Git-объект, а не рабочую папку; smoke подтверждает оба
   публичных render path и после них сверяет hashes защищённых transcript/captions fixtures.
-- Временное принятие dependency advisory допустимо только через неистёкшую машинно
-  проверяемую запись в `SECURITY.md`: review date совпадает с датой текущего release, уже
-  наступила хотя бы в UTC+14, а документированная цепочка точно совпадает с candidate
-  `package-lock.json`.
+- CI блокирует high/critical advisories; более слабое advisory исправляют до релиза или
+  описывают в `SECURITY.md`. `tests/palette-security.test.js` не даёт вернуть в
+  `package-lock.json` цепочку `node-vibrant` и `file-type` ниже 21.3.1.
 
 ## 10. Как расширять
 
