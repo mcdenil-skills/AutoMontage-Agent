@@ -153,7 +153,7 @@ function sequenceVideo(first, second) {
   return file;
 }
 
-test('autotheme palette seed reads characteristic frames from the whole video', { skip: SKIP }, () => {
+test('autotheme palette seed reads several frame windows instead of repeating the first one', { skip: SKIP }, () => {
   const blue = seedOf(solidVideo('2255cc')).hue;
   const green = seedOf(solidVideo('2e8b57')).hue;
   const mixed = seedOf(sequenceVideo('2255cc', '2e8b57')).hue;
