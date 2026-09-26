@@ -10,14 +10,13 @@
 //   node scripts/palette.js ./tmp/preview_src.mp4 --brandLock 1.0
 //   node scripts/palette.js ./tmp/preview_src.mp4 --brandLock 0.3
 //
-// Зависимости: node-vibrant (перцептивные свотчи по кадрам),
-//              @material/material-color-utilities (HCT + роли темы),
-//              ffmpeg (вытащить характерные кадры).
+// Зависимости: @material/material-color-utilities (HCT + роли темы),
+//              ffmpeg (до 20 характерных кадров сырыми rgb24-пикселями).
 //
 // ── Почему CommonJS + dynamic import ──
 // В корне проекта package.json БЕЗ "type":"module" (иначе сломается идущий
 // remotion-рендер src/*.js как CommonJS). Поэтому этот файл — CommonJS, а
-// ESM-only пакеты (node-vibrant, MCU) грузим через await import().
+// ESM-only MCU грузим через await import().
 //
 // ── Почему loader-хук для MCU ──
 // MCU 0.4.0 опубликован как type:module с внутренними import'ами без
@@ -30,9 +29,6 @@
 const { register } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
-const { readdirSync, unlinkSync, mkdtempSync, rmdirSync } = require('node:fs');
-const { tmpdir } = require('node:os');
-const { join } = require('node:path');
 
 // Регистрируем resolve-хук ДО импорта MCU.
 register('./scripts/mcu-loader.mjs', pathToFileURL(process.cwd() + '/').href);
@@ -41,6 +37,12 @@ register('./scripts/mcu-loader.mjs', pathToFileURL(process.cwd() + '/').href);
 
 const clamp01 = (x) => Math.min(1, Math.max(0, isNaN(x) ? 0 : x));
 const lerp = (a, b, t) => a + (b - a) * t;
+
+// Не больше 20 кадров в рамке 320×320: объём сырых пикселей ограничен до разбора.
+const FRAME_LIMIT = 20;
+const FRAME_BOX = 320;
+const MAX_PIXELS = FRAME_LIMIT * FRAME_BOX * FRAME_BOX;
+const QUANTIZE_COLORS = 64;
 
 function parseArgs(argv) {
   const a = { brandLock: 1.0, brandAccent: '#CC785C', video: null };
@@ -93,8 +95,9 @@ function pickText(bgHex, darkHex, lightHex) {
 async function main() {
   // ESM-only пакеты — только через dynamic import.
   const mcu = await import('@material/material-color-utilities');
-  const { argbFromHex, hexFromArgb, Hct, themeFromSourceColor } = mcu;
-  const { Vibrant } = await import('node-vibrant/node');
+  const {
+    argbFromHex, hexFromArgb, Hct, themeFromSourceColor, QuantizerCelebi, argbFromRgb,
+  } = mcu;
 
   // ── HCT-помощники (замыкаются на mcu) ──
   const hexToHct = (hex) => Hct.fromInt(argbFromHex(hex));
@@ -152,53 +155,42 @@ async function main() {
     return best;
   }
 
-  // ───────────────────── Извлечение кадров ─────────────────────
+  // ───────────────────── Пиксели кадров ─────────────────────
 
-  function extractFrames(video) {
-    const dir = mkdtempSync(join(tmpdir(), 'pal_'));
-    // thumbnail=100 — ffmpeg сам выбирает «характерные» кадры из окон по 100 фреймов
-    execFileSync(
-      'ffmpeg',
-      ['-y', '-i', video, '-vf', 'thumbnail=100,scale=320:-1', '-frames:v', '20',
-       join(dir, 'pal_%02d.png')],
-      { stdio: ['ignore', 'ignore', 'ignore'] }
-    );
-    const files = readdirSync(dir)
-      .filter((f) => f.endsWith('.png'))
-      .sort()
-      .map((f) => join(dir, f));
-    return { dir, files };
+  // thumbnail=100 – ffmpeg сам выбирает «характерные» кадры из окон по 100 фреймов.
+  // Пиксели идут сразу в stdout: ни временных файлов, ни JS-декодера картинок.
+  function framePixels(video) {
+    const raw = execFileSync('ffmpeg', [
+      '-v', 'error', '-nostdin', '-i', video, '-an',
+      '-vf', `thumbnail=100,scale=${FRAME_BOX}:${FRAME_BOX}:force_original_aspect_ratio=decrease`,
+      '-frames:v', String(FRAME_LIMIT), '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
+    ], { maxBuffer: MAX_PIXELS * 3, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (raw.length < 3) throw new Error('ffmpeg не извлёк ни одного кадра из видео');
+    const pixels = new Array(Math.floor(raw.length / 3));
+    for (let i = 0; i < pixels.length; i += 1) {
+      pixels[i] = argbFromRgb(raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]);
+    }
+    return pixels;
   }
 
   // ───────────────────── Seed-цвет из видео ─────────────────────
 
-  // Собираем Vibrant-свотчи по всем кадрам, усредняем В ПЕРЦЕПТИВНОМ
-  // пространстве HCT (взвешенно по population), а не в сыром RGB.
+  // Квантуем пиксели всех кадров (QuantizerCelebi) и усредняем цвета В ПЕРЦЕПТИВНОМ
+  // пространстве HCT, взвешенно по числу пикселей, а не в сыром RGB.
   // Hue усредняем циркулярно (через синус/косинус).
-  async function seedFromFrames(files) {
+  function seedFromPixels(pixels) {
     let sx = 0, sy = 0, sChroma = 0, sTone = 0, w = 0;
-    for (const f of files) {
-      let palette;
-      try {
-        palette = await new Vibrant(f).getPalette();
-      } catch {
-        continue; // битый кадр — пропускаем
-      }
-      for (const key of Object.keys(palette)) {
-        const sw = palette[key];
-        if (!sw) continue;
-        const pop = sw.population || 0;
-        if (pop <= 0) continue;
-        const hct = hexToHct(sw.hex);
-        // Приглушаем вклад почти-серых свотчей: у них hue шумный.
-        const weight = pop * (0.3 + 0.7 * Math.min(1, hct.chroma / 40));
-        const rad = (hct.hue * Math.PI) / 180;
-        sx += Math.cos(rad) * weight;
-        sy += Math.sin(rad) * weight;
-        sChroma += hct.chroma * weight;
-        sTone += hct.tone * weight;
-        w += weight;
-      }
+    for (const [argb, population] of QuantizerCelebi.quantize(pixels, QUANTIZE_COLORS)) {
+      if (population <= 0) continue;
+      const hct = Hct.fromInt(argb);
+      // Приглушаем вклад почти-серых цветов: у них hue шумный.
+      const weight = population * (0.3 + 0.7 * Math.min(1, hct.chroma / 40));
+      const rad = (hct.hue * Math.PI) / 180;
+      sx += Math.cos(rad) * weight;
+      sy += Math.sin(rad) * weight;
+      sChroma += hct.chroma * weight;
+      sTone += hct.tone * weight;
+      w += weight;
     }
     if (w === 0) {
       return { hue: 40, chroma: 8, tone: 50, hex: hctToHex(40, 8, 50) };
@@ -298,27 +290,23 @@ async function main() {
     process.exit(1);
   }
 
-  const { dir, files } = extractFrames(args.video);
-  try {
-    const seed = await seedFromFrames(files);
-    const theme = buildTheme(seed, args.brandLock, args.brandAccent);
+  const pixels = framePixels(args.video);
+  const seed = seedFromPixels(pixels);
+  const theme = buildTheme(seed, args.brandLock, args.brandAccent);
 
-    // Контроль ключевых пар.
-    const crText = contrastRatio(theme.colors.text, theme.colors.cardBg);
-    const crSoft = contrastRatio(theme.colors.textSoft, theme.colors.cardBg);
-    const crMilkOnAccent = contrastRatio(theme.colors.milk, theme.colors.accent);
+  // Контроль ключевых пар.
+  const crText = contrastRatio(theme.colors.text, theme.colors.cardBg);
+  const crSoft = contrastRatio(theme.colors.textSoft, theme.colors.cardBg);
+  const crMilkOnAccent = contrastRatio(theme.colors.milk, theme.colors.accent);
 
-    console.log(JSON.stringify(theme, null, 2));
-    console.log('\n// ── diagnostics ──');
-    console.log(`// seed(video): hue=${seed.hue.toFixed(1)} chroma=${seed.chroma.toFixed(1)} tone=${seed.tone.toFixed(1)} hex=${seed.hex}`);
-    console.log(`// brandLock=${args.brandLock}  brandAccent=${args.brandAccent}`);
-    console.log(`// contrast text  on cardBg : ${crText.toFixed(2)}:1  ${crText >= 4.5 ? 'OK' : 'FAIL'}`);
-    console.log(`// contrast soft  on cardBg : ${crSoft.toFixed(2)}:1  ${crSoft >= 4.5 ? 'OK' : 'FAIL'}`);
-    console.log(`// contrast milk  on accent : ${crMilkOnAccent.toFixed(2)}:1`);
-  } finally {
-    for (const f of files) { try { unlinkSync(f); } catch {} }
-    try { rmdirSync(dir); } catch {}
-  }
+  console.log(JSON.stringify(theme, null, 2));
+  console.log('\n// ── diagnostics ──');
+  console.log(`// seed(video): hue=${seed.hue.toFixed(1)} chroma=${seed.chroma.toFixed(1)} tone=${seed.tone.toFixed(1)} hex=${seed.hex}`);
+  console.log(`// pixels: ${pixels.length} from ffmpeg rgb24 frames (limit ${MAX_PIXELS})`);
+  console.log(`// brandLock=${args.brandLock}  brandAccent=${args.brandAccent}`);
+  console.log(`// contrast text  on cardBg : ${crText.toFixed(2)}:1  ${crText >= 4.5 ? 'OK' : 'FAIL'}`);
+  console.log(`// contrast soft  on cardBg : ${crSoft.toFixed(2)}:1  ${crSoft >= 4.5 ? 'OK' : 'FAIL'}`);
+  console.log(`// contrast milk  on accent : ${crMilkOnAccent.toFixed(2)}:1`);
 }
 
 main().catch((e) => {
