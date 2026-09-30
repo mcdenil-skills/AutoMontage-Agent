@@ -17,7 +17,7 @@ const HELP = `automontage lead-magnet – команды агента для л�
   offer add --project-dir <папка> --code-word <слово> --kind comment-keyword|dm --quote "<цитата>"
             --units '<JSON>' [--format guide|prompts|checklist|cheatsheet] [--audience "<кто>"]
             [--source script --script <файл в папке ролика>]
-  create --from <папка ролика> <r-id> --title "<название>"
+  create --from <папка ролика> <r-id> --title "<название>" [--code-word <слово без обещания>]
   revision start --id <id>          revision publish --id <id> --revision <n>
   check --id <id> --revision <n>
   link --id <id> --folder <папка ролика> --code-word <слово>
@@ -60,9 +60,8 @@ function videoProject(projectsDir, folder) {
   return resolveProjectPath(projectsDir, folder, { label: 'папка ролика', mustExist: true, type: 'directory' });
 }
 
-function offerFor(projectsDir, folder, codeWord) {
-  const offers = readOffers(videoProject(projectsDir, folder));
-  return offers.find((offer) => offer.codeWord === codeWord) || null;
+function checkedVideoFile(projectDir, relativePath, mustExist = false) {
+  return resolveProjectPath(projectDir, relativePath, { label: relativePath, mustExist, type: 'file' });
 }
 
 const COMMANDS = {
@@ -83,9 +82,15 @@ const COMMANDS = {
     const folder = need(flags, 'from');
     const [decisionId] = flags.positional;
     const projectDir = videoProject(flags.projectsDir, folder);
-    const decision = readDecisions(projectDir).find((item) => item.id === decisionId && item.type === 'create');
+    checkedVideoFile(projectDir, 'pult/lead-magnet.json', true);
+    const decision = readDecisions(projectDir).find((item) => item.id === decisionId && item.type === 'create' && item.status === 'new');
     if (!decision) throw new Error(`запрос ${decisionId} не найден в ${folder}`);
-    const offer = decision.offerId ? readOffers(projectDir).find((item) => item.id === decision.offerId) : null;
+    let offer = null;
+    if (decision.offerId !== null) {
+      checkedVideoFile(projectDir, 'lead-magnet/offers.json');
+      offer = readOffers(projectDir).find((item) => item.id === decision.offerId) || null;
+      if (!offer) throw new Error(`обещание ${decision.offerId} не найдено у ролика ${folder}`);
+    }
     const passport = library.createLeadMagnet(flags.projectsDir, {
       codeWord: decision.codeWord || need(flags, 'code-word'),
       title: need(flags, 'title'),
@@ -119,7 +124,9 @@ const COMMANDS = {
     const id = need(flags, 'id');
     const folder = need(flags, 'from');
     const passport = library.readLeadMagnet(flags.projectsDir, id);
-    const offer = passport.codeWords.map((word) => offerFor(flags.projectsDir, folder, word)).find(Boolean);
+    const projectDir = videoProject(flags.projectsDir, folder);
+    checkedVideoFile(projectDir, 'lead-magnet/offers.json');
+    const offer = readOffers(projectDir).find((item) => passport.codeWords.includes(item.codeWord));
     if (!offer) throw new Error(`у ролика ${folder} нет обещания со словом лид-магнита`);
     library.updatePromise(flags.projectsDir, id, { quote: offer.quote, startSec: offer.startSec, endSec: offer.endSec, sourceFolder: folder });
     write(`Обещание обновлено: «${offer.quote}». Собери новую ревизию.`);

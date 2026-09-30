@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const { main } = require('../scripts/lead-magnet/cli');
 const library = require('../scripts/lead-magnet/library');
-const { addDecision } = require('../scripts/lead-magnet/requests');
+const { acceptDecision, addDecision } = require('../scripts/lead-magnet/requests');
 const { PARAMS, QUOTE, UNITS, makeLeadMagnet, makeVideoProject } = require('./helpers/lead-magnet-fixtures');
 
 async function run(argv) {
@@ -54,8 +54,69 @@ test('there is no approve command and the CLI never loads the approve module', a
   assert.match(result.out, /неизвестная команда/);
   assert.equal((await run(['constructor'])).code, 1);
   const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'lead-magnet', 'cli.js'), 'utf8');
-  assert.doesNotMatch(source, /require\(['"]\.\/approve['"]\)/);
-  assert.doesNotMatch(source, /['"]?approve['"]?\s*:/);
+  assert.doesNotMatch(source, /(?:require|import)\s*\(?\s*['"][^'"]*approve[^'"]*['"]/i);
+  assert.doesNotMatch(source, /(?:['"]approve['"]|\bapprove)\s*:/i);
+  assert.doesNotMatch(source, /\/api\/approve/i);
+});
+
+test('create consumes only new create requests; accepted and wrong-type IDs cannot create another passport', async (t) => {
+  const { projectsDir, projectDir, folder } = makeVideoProject(t);
+  const P = ['--projects-dir', projectsDir];
+  const offered = await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', QUOTE, '--units', JSON.stringify(UNITS)]);
+  assert.equal(offered.code, 0, offered.out);
+  const accepted = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS });
+  acceptDecision(projectDir, accepted.id);
+  const wrongType = addDecision(projectDir, { type: 'decline', offerId: 'o-gayd', codeWord: 'ГАЙД' });
+  for (const id of [accepted.id, wrongType.id]) {
+    const result = await run(['create', ...P, '--from', folder, id, '--title', 'Повтор']);
+    assert.equal(result.code, 1, result.out);
+    assert.equal(library.listLeadMagnets(projectsDir).entries.length, 0);
+  }
+  const fresh = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS });
+  assert.equal((await run(['create', ...P, '--from', folder, fresh.id, '--title', 'Новый'])).code, 0);
+  assert.equal(library.listLeadMagnets(projectsDir).entries.length, 1);
+});
+
+test('create rejects a missing offer identity but permits an explicit manual request', async (t) => {
+  const { projectsDir, projectDir, folder } = makeVideoProject(t);
+  const P = ['--projects-dir', projectsDir];
+  assert.equal((await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', QUOTE, '--units', JSON.stringify(UNITS)])).code, 0);
+  const request = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS });
+  fs.unlinkSync(path.join(projectDir, 'lead-magnet', 'offers.json'));
+  const missing = await run(['create', ...P, '--from', folder, request.id, '--title', 'Гайд']);
+  assert.equal(missing.code, 1, missing.out);
+  assert.match(missing.out, /обещание|offerId/);
+  assert.equal(library.listLeadMagnets(projectsDir).entries.length, 0);
+  const manual = addDecision(projectDir, { type: 'create', offerId: null, codeWord: null, params: { ...PARAMS, promiseConfirmed: false } });
+  const created = await run(['create', ...P, '--from', folder, manual.id, '--code-word', 'ЧЕКЛИСТ', '--title', 'Чеклист']);
+  assert.equal(created.code, 0, created.out);
+  assert.equal(library.listLeadMagnets(projectsDir).entries[0].promise.quote, null);
+});
+
+test('create rejects symlinked decision and offer directories before reading or mutating', async (t) => {
+  for (const child of ['pult', 'lead-magnet']) {
+    const { base, projectsDir, projectDir, folder } = makeVideoProject(t, `2026.09.30_${child}`);
+    assert.equal((await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', QUOTE, '--units', JSON.stringify(UNITS)])).code, 0);
+    const request = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS });
+    const outside = path.join(base, `outside-${child}`);
+    fs.renameSync(path.join(projectDir, child), outside);
+    fs.symlinkSync(outside, path.join(projectDir, child));
+    const result = await run(['create', '--projects-dir', projectsDir, '--from', folder, request.id, '--title', 'Гайд']);
+    assert.equal(result.code, 1, result.out);
+    assert.equal(library.listLeadMagnets(projectsDir).entries.length, 0);
+  }
+});
+
+test('promise update rejects a symlinked offer directory and leaves the passport unchanged', async (t) => {
+  const { base, projectsDir, projectDir, folder, id } = makeLeadMagnet(t);
+  assert.equal((await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', QUOTE, '--units', JSON.stringify(UNITS)])).code, 0);
+  const before = library.readLeadMagnet(projectsDir, id);
+  const outside = path.join(base, 'outside-offers');
+  fs.renameSync(path.join(projectDir, 'lead-magnet'), outside);
+  fs.symlinkSync(outside, path.join(projectDir, 'lead-magnet'));
+  const result = await run(['promise', 'update', '--projects-dir', projectsDir, '--id', id, '--from', folder]);
+  assert.equal(result.code, 1, result.out);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, id), before);
 });
 
 test('create and promise update reject a video folder outside projects', async (t) => {
