@@ -1941,6 +1941,7 @@ function runRenderLifecycle(workspace, render, operation, {
 module.exports = {
   acquireProjectMutationLease,
   approveBrief,
+  captureProjectDirectoryGuard,
   copyProjectFileNoReplace,
   createOrOpenProject,
   formatProjectId,

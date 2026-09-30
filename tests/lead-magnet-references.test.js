@@ -50,6 +50,67 @@ test('a symlinked refs folder is refused', (t) => {
   assert.deepEqual(fs.readdirSync(path.join(base, 'elsewhere')), []);
 });
 
+test('a refs folder swapped for a symlink at the write boundary cannot receive reference bytes', (t) => {
+  const { base, projectDir } = makeVideoProject(t);
+  const refsDir = path.join(projectDir, 'pult', 'lead-magnet-refs');
+  const heldDir = path.join(projectDir, 'pult', 'lead-magnet-refs-held');
+  const outsideDir = path.join(base, 'outside');
+  fs.mkdirSync(outsideDir);
+  const originalWrite = fs.writeFileSync;
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  const swap = (candidate) => {
+    if (swapped || !candidate.startsWith(`${refsDir}${path.sep}`)) return;
+    swapped = true;
+    fs.renameSync(refsDir, heldDir);
+    fs.symlinkSync(outsideDir, refsDir, 'dir');
+  };
+  fs.writeFileSync = (candidate, ...args) => {
+    swap(String(candidate));
+    return originalWrite(candidate, ...args);
+  };
+  fs.openSync = (candidate, ...args) => {
+    swap(String(candidate));
+    return originalOpen(candidate, ...args);
+  };
+  try {
+    assert.throws(() => storeReference(projectDir, PNG));
+  } finally {
+    fs.writeFileSync = originalWrite;
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+  assert.deepEqual(fs.readdirSync(outsideDir), []);
+});
+
+test('a normal write at the same boundary stores a reference in the project', (t) => {
+  const { projectDir } = makeVideoProject(t);
+  const refsDir = path.join(projectDir, 'pult', 'lead-magnet-refs');
+  const originalWrite = fs.writeFileSync;
+  const originalOpen = fs.openSync;
+  let reachedBoundary = false;
+  const observe = (candidate) => {
+    if (String(candidate).startsWith(`${refsDir}${path.sep}`)) reachedBoundary = true;
+  };
+  fs.writeFileSync = (candidate, ...args) => {
+    observe(candidate);
+    return originalWrite(candidate, ...args);
+  };
+  fs.openSync = (candidate, ...args) => {
+    observe(candidate);
+    return originalOpen(candidate, ...args);
+  };
+  let stored;
+  try {
+    stored = storeReference(projectDir, PNG);
+  } finally {
+    fs.writeFileSync = originalWrite;
+    fs.openSync = originalOpen;
+  }
+  assert.equal(reachedBoundary, true);
+  assert.deepEqual(fs.readFileSync(path.join(projectDir, ...stored.path.split('/'))), PNG);
+});
+
 test('only plain http(s) links are accepted', () => {
   assert.equal(normalizeReferenceUrl(' https://example.com/guide '), 'https://example.com/guide');
   for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'https://user:pass@example.com', 'https://exa\u0007mple.com', 'не ссылка', `https://e.com/${'a'.repeat(2100)}`]) {

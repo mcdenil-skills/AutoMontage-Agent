@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { resolveProjectPath } = require('../project/workspace');
+const { captureProjectDirectoryGuard, resolveProjectPath, writeFilesNoReplace } = require('../project/workspace');
 const { ensureDirectory, hashBytes, hashFile } = require('../pult/files');
 
 const MB = 1024 * 1024;
@@ -42,10 +42,15 @@ function storeReference(projectDir, bytes) {
   const target = resolveProjectPath(projectDir, relative, { label: 'reference', mustExist: false, type: 'file' });
   ensureDirectory(path.join(projectDir, 'pult'));
   ensureDirectory(path.dirname(target));
+  const guard = captureProjectDirectoryGuard(projectDir, target, fs, 'reference');
   try {
-    fs.writeFileSync(target, bytes, { flag: 'wx', mode: 0o644 });
+    writeFilesNoReplace([{ destination: target, data: bytes, purpose: 'reference' }], {
+      assertParentCurrent: () => guard.assertCurrent(),
+      verifyPublishedIdentity: true,
+    });
   } catch (error) {
     if (!error || error.code !== 'EEXIST') throw error;
+    guard.assertCurrent();
     if (fs.lstatSync(target).isSymbolicLink() || hashFile(target) !== sha256) {
       throw new Error('референс: на месте файла лежит чужое содержимое');
     }
