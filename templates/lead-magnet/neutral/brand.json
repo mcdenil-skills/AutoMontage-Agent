@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Нейтральный",
+  "logoRequired": false,
+  "logo": null,
+  "tokens": {
+    "colors": { "background": "#F7F5F0", "surface": "#FFFFFF", "text": "#1C1C1E", "muted": "#6B6B70", "accent": "#2F6FEB" },
+    "fonts": { "heading": "Onest", "body": "Onest", "mono": "JetBrains Mono" }
+  },
+  "fontFiles": [],
+  "cta": {
+    "title": "Понравилось?",
+    "text": "Сохраните страницу и подпишитесь, чтобы не пропустить следующие материалы.",
+    "buttons": [],
+    "utm": null
+  },
+  "voice": { "skills": [], "rulesFile": null },
+  "examples": []
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet brand pack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "logoRequired", "logo", "tokens", "fontFiles", "cta", "voice", "examples"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "logoRequired": { "type": "boolean" },
+    "logo": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_./-]{1,120}\\.(svg|png)$" },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["colors", "fonts"],
+      "properties": {
+        "colors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["background", "surface", "text", "muted", "accent"],
+          "properties": {
+            "background": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "surface": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "text": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "muted": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "accent": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+          }
+        },
+        "fonts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["heading", "body", "mono"],
+          "properties": {
+            "heading": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "body": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "mono": { "type": "string", "minLength": 1, "maxLength": 80 }
+          }
+        }
+      }
+    },
+    "fontFiles": { "type": "array", "maxItems": 12, "items": { "type": "string", "pattern": "^[A-Za-z0-9_./-]{1,120}\\.(ttf|otf|woff2?)$" } },
+    "cta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "text", "buttons", "utm"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "text": { "type": "string", "maxLength": 400 },
+        "buttons": {
+          "type": "array", "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "url"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "maxLength": 60 },
+              "url": { "type": "string", "pattern": "^https://", "maxLength": 500 }
+            }
+          }
+        },
+        "utm": { "type": ["string", "null"], "pattern": "^\\?utm_[A-Za-z0-9_=&{}.-]{1,200}$" }
+      }
+    },
+    "voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skills", "rulesFile"],
+      "properties": {
+        "skills": { "type": "array", "maxItems": 5, "items": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" } },
+        "rulesFile": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_./-]{1,120}\\.md$" }
+      }
+    },
+    "examples": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^\\d{4}\\.\\d{2}\\.\\d{2}_[a-z0-9-]{1,80}$" } }
+  }
+}
