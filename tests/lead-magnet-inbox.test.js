@@ -59,3 +59,60 @@ test('a broken lead-magnet.json of a video is reported, not skipped', (t) => {
   assert.equal(inbox.broken.length, 1);
   assert.match(formatLeadMagnetInbox(inbox, { projectsDir }), /повреждён/);
 });
+
+test('inbox rejects a video pult symlink before reading decisions and keeps a regular file visible', (t) => {
+  const { base, projectsDir, projectDir, folder } = setup(t);
+  const decision = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS });
+  assert.deepEqual(buildLeadMagnetInbox({ projectsDir }).decisions.map((item) => item.decision.id), [decision.id]);
+  const outside = path.join(base, 'outside-pult');
+  fs.renameSync(path.join(projectDir, 'pult'), outside);
+  fs.symlinkSync(outside, path.join(projectDir, 'pult'));
+  const inbox = buildLeadMagnetInbox({ projectsDir });
+  assert.equal(inbox.decisions.length, 0);
+  assert.match(inbox.broken[0].where, new RegExp(`${folder}/pult/lead-magnet.json`));
+  assert.match(inbox.broken[0].error, /symbolic link/);
+});
+
+test('inbox reports a dangling decision-file symlink and ignores a truly absent file', (t) => {
+  const { base, projectsDir, projectDir } = setup(t);
+  assert.equal(buildLeadMagnetInbox({ projectsDir }).broken.length, 0);
+  const file = path.join(projectDir, 'pult', 'lead-magnet.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.symlinkSync(path.join(base, 'missing.json'), file);
+  const inbox = buildLeadMagnetInbox({ projectsDir });
+  assert.equal(inbox.broken.length, 1);
+  assert.match(inbox.broken[0].error, /symbolic link/);
+});
+
+test('inbox reports a project scan error instead of claiming no work', (t) => {
+  const { projectsDir } = setup(t);
+  const original = fs.readdirSync;
+  fs.readdirSync = function readdirSync(candidate, ...args) {
+    if (candidate === projectsDir) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    return original.call(this, candidate, ...args);
+  };
+  t.after(() => { fs.readdirSync = original; });
+  const inbox = buildLeadMagnetInbox({ projectsDir });
+  assert.equal(inbox.decisions.length, 0);
+  assert.match(inbox.broken.map((item) => item.error).join(' '), /permission denied/);
+});
+
+test('inbox renders user Markdown as text while keeping ordinary wording', () => {
+  const params = {
+    ...PARAMS,
+    audience: '**новички** [ссылка](https://example.com)',
+    wishes: 'добавь `код` <img src=x>',
+    design: { ...PARAMS.design, references: [{ kind: 'url', url: 'https://example.com/a`b' }] },
+  };
+  const inbox = {
+    broken: [{ where: 'video`name/pult/lead-magnet.json', error: '<bad> **file**' }],
+    decisions: [{ folder: 'video`name', decision: { id: 'r-12345678', type: 'create', codeWord: 'ГАЙД', params } }],
+    comments: [{ id: '2026.09.30_gayd', comment: { id: 'c-12345678', revision: 1, target: { kind: 'block', blockId: 'step`2', view: 'phone' }, text: '**сократи** [x](https://example.com)' } }],
+  };
+  const text = formatLeadMagnetInbox(inbox, { projectsDir: '/tmp/projects' });
+  assert.match(text, /формат: гайд по шагам/);
+  assert.match(text, /на слово «ГАЙД»/);
+  assert.doesNotMatch(text, /(?<!\\)\*\*новички\*\*|(?<!\\)\*\*сократи\*\*|(?<!\\)<img|(?<!\\)<bad>|(?<!\\)\[ссылка\]\(/);
+  assert.match(text, /\\\*\\\*новички\\\*\\\*/);
+  assert.match(text, /`` video`name\/pult\/lead-magnet\.json ``/);
+});
