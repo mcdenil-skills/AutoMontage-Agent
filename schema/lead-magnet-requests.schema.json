@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet decisions written by the pult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "decisions"],
+  "properties": {
+    "version": { "const": 1 },
+    "decisions": { "type": "array", "maxItems": 500, "items": { "$ref": "#/definitions/decision" } }
+  },
+  "definitions": {
+    "reference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "sha256", "mime", "bytes"],
+          "properties": {
+            "kind": { "const": "file" },
+            "path": { "type": "string", "pattern": "^pult/lead-magnet-refs/[a-f0-9]{64}\\.(png|jpg|webp|pdf|html)$" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "mime": { "enum": ["image/png", "image/jpeg", "image/webp", "application/pdf", "text/html"] },
+            "bytes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": { "kind": { "const": "url" }, "url": { "type": "string", "minLength": 8, "maxLength": 2048 } }
+        }
+      ]
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "audience", "design", "texts", "wishes", "promiseConfirmed"],
+      "properties": {
+        "format": { "enum": ["guide", "prompts", "checklist", "cheatsheet"] },
+        "audience": { "type": "string", "maxLength": 200 },
+        "design": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "take", "likeId", "note", "references"],
+          "properties": {
+            "mode": { "enum": ["brand", "reference", "new", "like"] },
+            "take": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["composition", "colors", "fonts"],
+              "properties": { "composition": { "type": "boolean" }, "colors": { "type": "boolean" }, "fonts": { "type": "boolean" } }
+            },
+            "likeId": { "type": ["string", "null"], "pattern": "^\\d{4}\\.\\d{2}\\.\\d{2}_[a-z0-9-]{1,80}$" },
+            "note": { "type": "string", "maxLength": 500 },
+            "references": { "type": "array", "maxItems": 5, "items": { "$ref": "#/definitions/reference" } }
+          }
+        },
+        "texts": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 3,
+          "items": { "enum": ["dm", "telegram", "instagram"] }
+        },
+        "wishes": { "type": "string", "maxLength": 1000 },
+        "promiseConfirmed": { "type": "boolean" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "createdAt", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^r-[a-f0-9]{8}$" },
+        "type": { "enum": ["create", "decline", "reopen", "link", "promise-refresh", "promise-keep", "funnel-check"] },
+        "createdAt": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["new", "accepted"] },
+        "acceptedAt": { "type": "string", "minLength": 1 },
+        "offerId": { "type": ["string", "null"], "pattern": "^o-[a-z0-9-]{1,60}$" },
+        "codeWord": { "type": ["string", "null"], "pattern": "^[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 -]{0,39}$" },
+        "leadMagnetId": { "type": "string", "pattern": "^\\d{4}\\.\\d{2}\\.\\d{2}_[a-z0-9-]{1,80}$" },
+        "params": { "$ref": "#/definitions/params" }
+      }
+    }
+  }
+}
