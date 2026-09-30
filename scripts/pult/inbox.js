@@ -7,6 +7,10 @@ const { cardIdFor } = require('./cards');
 const { COMMENT_ID, acceptComment, readComments } = require('./comments');
 const { isSafeName } = require('./names');
 const { readPultState } = require('./state');
+const { acceptLeadMagnetComment } = require('../lead-magnet/comments');
+const { DECISION_ID, LEAD_MAGNET_ID, LM_COMMENT_ID } = require('../lead-magnet/constants');
+const { buildLeadMagnetInbox, formatLeadMagnetInbox } = require('../lead-magnet/inbox');
+const { acceptDecision } = require('../lead-magnet/requests');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -159,7 +163,7 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
 }
 
 function parseInboxOptions(argv, { root = ROOT } = {}) {
-  const options = { projectsDir: path.join(root, 'projects'), accept: null };
+  const options = { projectsDir: path.join(root, 'projects'), accept: null, acceptLead: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--projects-dir') {
@@ -175,6 +179,18 @@ function parseInboxOptions(argv, { root = ROOT } = {}) {
       if (typeof folder !== 'string' || !isSafeName(folder)) throw new Error('--accept: неверная папка ролика');
       if (typeof id !== 'string' || !COMMENT_ID.test(id)) throw new Error('--accept: неверный id правки');
       options.accept = { folder, id };
+      index += 2;
+      continue;
+    }
+    if (argument === '--accept-lead') {
+      const owner = argv[index + 1];
+      const id = argv[index + 2];
+      if (typeof id !== 'string' || !(DECISION_ID.test(id) || LM_COMMENT_ID.test(id))) {
+        throw new Error('--accept-lead: неверный id запроса или правки');
+      }
+      const ownerOk = DECISION_ID.test(id) ? isSafeName(owner) : (typeof owner === 'string' && LEAD_MAGNET_ID.test(owner));
+      if (!ownerOk) throw new Error('--accept-lead: неверная папка ролика или id лид-магнита');
+      options.acceptLead = { owner, id };
       index += 2;
       continue;
     }
@@ -194,7 +210,23 @@ function main(argv = process.argv.slice(2), { write = (line) => console.log(line
       write(`Правка ${options.accept.id} отмечена принятой.`);
       return 0;
     }
-    write(formatInbox(buildInbox({ projectsDir: options.projectsDir }), { projectsDir: options.projectsDir, cwd }));
+    if (options.acceptLead) {
+      const { owner, id } = options.acceptLead;
+      if (DECISION_ID.test(id)) {
+        const projectDir = path.join(options.projectsDir, owner);
+        const stat = fs.lstatSync(projectDir);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('папка ролика не найдена');
+        acceptDecision(projectDir, id);
+      } else {
+        acceptLeadMagnetComment(options.projectsDir, owner, id);
+      }
+      write(`Лид-магнит: ${id} отмечен принятым.`);
+      return 0;
+    }
+    const videoText = formatInbox(buildInbox({ projectsDir: options.projectsDir }), { projectsDir: options.projectsDir, cwd });
+    const leadText = formatLeadMagnetInbox(buildLeadMagnetInbox({ projectsDir: options.projectsDir }), { projectsDir: options.projectsDir });
+    if (!leadText) write(videoText);
+    else write(videoText === 'Во входящих пульта пусто.' ? `# Входящие пульта\n\n${leadText}` : `${videoText}\n\n${leadText}`);
     return 0;
   } catch (error) {
     write(`❌ inbox: ${error.message}`);
