@@ -33,7 +33,7 @@ function decisionsPath(projectDir) {
 }
 
 function hasRequiredFields(decision) {
-  return (REQUIRED_BY_TYPE[decision.type] || []).every((field) => Object.hasOwn(decision, field));
+  return (REQUIRED_BY_TYPE[decision.type] || []).every((field) => Object.hasOwn(decision, field) && decision[field] !== undefined);
 }
 
 function readDecisions(projectDir) {
@@ -98,6 +98,7 @@ function checkParams(projectDir, params, { hasOffer }) {
 
 function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-${randomBytes(4).toString('hex')}` } = {}) {
   if (!REQUIRED_BY_TYPE[input.type]) throw new Error('лид-магнит: неизвестное решение');
+  if (!hasRequiredFields(input)) throw new Error('лид-магнит: обязательные поля решения не заполнены');
   const createdAt = now().toISOString();
   const decision = { id: id(), type: input.type, createdAt, status: 'new' };
   for (const field of REQUIRED_BY_TYPE[input.type]) decision[field] = input[field];
