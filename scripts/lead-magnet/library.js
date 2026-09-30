@@ -199,7 +199,7 @@ function publishRevision(projectsDir, id, n, { now = () => new Date() } = {}) {
 // «Оставить как есть» при изменившемся обещании: новая цитата больше не считается расхождением.
 function acknowledgePromise(projectsDir, id, quote, { now = () => new Date() } = {}) {
   const passport = readLeadMagnet(projectsDir, id);
-  const normalized = normalizeText(quote);
+  const normalized = quote === null ? '' : normalizeText(quote);
   const acknowledged = passport.promise.acknowledged.includes(normalized)
     ? passport.promise.acknowledged
     : [...passport.promise.acknowledged, normalized];

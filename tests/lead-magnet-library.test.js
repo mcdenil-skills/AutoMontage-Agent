@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const library = require('../scripts/lead-magnet/library');
+const { deriveLeadMagnetStatus } = require('../scripts/lead-magnet/status');
 const { QUOTE, UNITS, makeVideoProject } = require('./helpers/lead-magnet-fixtures');
 
 const NOW = () => new Date('2026-09-30T12:00:00.000Z');
@@ -144,4 +145,23 @@ test('broken passports are listed separately and a promise can be acknowledged o
   const updated = library.updatePromise(projectsDir, id, { quote: 'и я пришлю семь промптов', startSec: 61, endSec: 63, sourceFolder: folder }, { now: NOW });
   assert.equal(updated.promise.quote, 'и я пришлю семь промптов');
   assert.deepEqual(updated.promise.acknowledged, []);
+});
+
+test('acknowledging a disappeared promise clears the card warning without accepting a different quote', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  const { dir } = library.startRevision(projectsDir, id, { now: NOW });
+  writeRevisionFiles(dir);
+  library.publishRevision(projectsDir, id, 1, { now: NOW });
+
+  const draft = library.readLeadMagnet(projectsDir, id);
+  const input = { passport: draft, newComments: 0, checkOk: true, currentQuote: null };
+  assert.equal(deriveLeadMagnetStatus(input).promiseChanged, true);
+
+  const acknowledged = library.acknowledgePromise(projectsDir, id, null, { now: NOW });
+  assert.deepEqual(acknowledged.promise.acknowledged, ['']);
+  assert.deepEqual(deriveLeadMagnetStatus({ ...input, passport: acknowledged }), {
+    status: 'waiting', nextStep: 'Лид-магнит: посмотрите и утвердите', approvable: true,
+  });
+  assert.equal(deriveLeadMagnetStatus({ ...input, passport: acknowledged, currentQuote: 'и я пришлю семь промптов' }).promiseChanged, true);
 });

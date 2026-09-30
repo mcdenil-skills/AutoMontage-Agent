@@ -2,7 +2,7 @@ const { normalizeText } = require('./text');
 
 function promiseChanged(passport, currentQuote) {
   if (currentQuote === undefined || !passport.promise.quote) return false;
-  if (currentQuote === null) return true;
+  if (currentQuote === null) return !passport.promise.acknowledged.includes('');
   const current = normalizeText(currentQuote);
   return current !== normalizeText(passport.promise.quote) && !passport.promise.acknowledged.includes(current);
 }
