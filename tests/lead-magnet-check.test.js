@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const http = require('node:http');
 const { chromium } = require('playwright');
 
 const { checkRevision } = require('../scripts/lead-magnet/check');
@@ -64,4 +65,49 @@ test('the logo is required only when the brand pack says so', async (t) => {
   assert.equal(without.byId.logo.ok, false);
   const withLogo = await run(t, { page: goodPage({ logo: true }) }, { LEAD_MAGNET_BRAND: packDir });
   assert.equal(withLogo.byId.logo.ok, true);
+});
+
+test('phone text must stay inside the viewport, including its left edge', async (t) => {
+  const paragraph = (left) => `<p style="position:relative;left:${left}px;width:300px">Текст должен быть виден целиком</p>`;
+  const clipped = await run(t, { page: goodPage({ extra: paragraph(-80) }) });
+  assert.equal(clipped.byId['phone-width'].ok, false);
+  const visible = await run(t, { page: goodPage({ extra: paragraph(10) }) });
+  assert.equal(visible.report.ok, true);
+});
+
+test('hidden promised items do not count as delivered content', async (t) => {
+  const hidden = await run(t, { page: goodPage({ prompts: 4,
+    extra: '<p data-lm-item="prompt" style="display:none">Невидимый пятый промпт</p>' }) });
+  assert.equal(hidden.byId.promise.ok, false);
+  const visible = await run(t, { page: goodPage({ prompts: 5 }) });
+  assert.equal(visible.report.ok, true);
+});
+
+test('WebSocket attempts fail self-containment without reaching even a local server', async (t) => {
+  let connections = 0;
+  const server = http.createServer();
+  server.on('connection', () => { connections += 1; });
+  server.on('upgrade', (_request, socket) => socket.destroy());
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `ws://127.0.0.1:${server.address().port}/probe`;
+  const attack = await run(t, { page: goodPage({ extra: `<script>new WebSocket(${JSON.stringify(url)})</script>` }) });
+  assert.equal(connections, 0, 'a WebSocket must never reach the local listener');
+  assert.equal(attack.byId['self-contained'].ok, false);
+  assert.ok(attack.byId['self-contained'].message.includes(url));
+  const offline = await run(t, { page: goodPage({ extra: '<script>document.querySelector("h1").textContent = "Сайт без кода";</script>' }) });
+  assert.equal(offline.report.ok, true, JSON.stringify(offline.report.items.filter((item) => !item.ok)));
+  assert.equal(connections, 0);
+});
+
+test('a maximum-length failed fact produces a saved failed report without losing the claim', async (t) => {
+  const fact = { claim: 'я'.repeat(400), source: 'Локальный источник', status: 'failed' };
+  const failed = await run(t, { facts: [fact] });
+  assert.equal(failed.report.ok, false);
+  assert.equal(failed.byId.facts.ok, false);
+  assert.ok([...failed.byId.facts.message].length <= 400);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(failed.dir, 'qa', 'check.json'), 'utf8')), failed.report);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(failed.dir, 'facts.json'), 'utf8')).items, [fact]);
+  const verified = await run(t, { facts: [{ ...fact, status: 'verified' }] });
+  assert.equal(verified.report.ok, true);
 });

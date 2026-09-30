@@ -17,8 +17,12 @@ const PHONE_WIDTH = 390;
 
 // Выполняется внутри страницы: только чтение DOM, без изменений.
 function inspectPage() {
+  const isVisible = (element) => element.checkVisibility({
+    opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true,
+  });
   const items = {};
   for (const element of document.querySelectorAll('[data-lm-item]')) {
+    if (!isVisible(element)) continue;
     const key = element.getAttribute('data-lm-item');
     items[key] = (items[key] || 0) + 1;
   }
@@ -34,13 +38,24 @@ function inspectPage() {
   const heading = document.querySelector('[data-lm-block="hero"], header, h1');
   // Общая ширина документа не замечает текст, обрезанный внутри overflow:hidden.
   const clippedText = [...document.body.querySelectorAll('*')].filter((element) => {
-    if (!element.innerText?.trim() || element.getClientRects().length === 0) return false;
+    if (!element.innerText?.trim() || !isVisible(element)) return false;
     const style = getComputedStyle(element);
     if (style.visibility === 'hidden') return false;
     const clips = (overflow) => ['hidden', 'clip', 'auto', 'scroll'].includes(overflow);
     return (clips(style.overflowX) && element.scrollWidth > element.clientWidth + 1)
       || (clips(style.overflowY) && element.scrollHeight > element.clientHeight + 1);
   }).length;
+  // Отрицательный left не увеличивает scrollWidth: проверяем сами строки текста.
+  let outsideText = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!node.textContent.trim() || !isVisible(node.parentElement)) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    if ([...range.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0
+      && (rect.left < -1 || rect.right > window.innerWidth + 1))) outsideText += 1;
+  }
   return {
     text: document.body.innerText,
     items,
@@ -49,14 +64,16 @@ function inspectPage() {
     blockIds: blocks.map((block) => block.getAttribute('data-lm-block')),
     pres: pres.length,
     withoutCopy,
-    clippedText,
+    clippedText: clippedText + outsideText,
     hasLogo: Boolean(document.querySelector('[data-lm="logo"] svg, [data-lm="logo"] img, svg[data-lm="logo"], img[data-lm="logo"]')),
     headerText: `${document.title} ${heading ? heading.textContent : ''}`,
   };
 }
 
 function item(id, ok, message) {
-  return { id, ok, message };
+  // Полные факты остаются в facts.json; краткая диагностика обязана влезать в схему.
+  const characters = [...message];
+  return { id, ok, message: characters.length > 400 ? `${characters.slice(0, 399).join('')}…` : message };
 }
 
 async function checkRevision(projectsDir, id, n, {
@@ -77,8 +94,13 @@ async function checkRevision(projectsDir, id, n, {
   let phoneClippedText;
   try {
     const open = async (viewport, shot) => {
-      const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+      const context = await browser.newContext({ viewport, serviceWorkers: 'block', offline: true });
       try {
+        // route() не перехватывает WebSocket: отдельный маршрут не подключается к серверу.
+        await context.routeWebSocket('**/*', (socket) => {
+          external.push(socket.url());
+          return socket.close({ code: 1008, reason: 'Self-contained page required' });
+        });
         // Самодостаточность: страница не должна тянуть ничего, кроме себя самой и data:/blob:.
         await context.route('**/*', (route) => {
           const url = route.request().url();
