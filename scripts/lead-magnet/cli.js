@@ -124,6 +124,7 @@ const COMMANDS = {
     const report = await checkRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
     for (const item of report.items) write(`${item.ok ? '✓' : '✕'} ${item.id}: ${item.message}`);
     write(report.ok ? 'Каркас и факты: всё зелёное.' : 'Есть красные пункты – исправь до показа.');
+    return report.ok ? 0 : 1;
   },
   link: (flags, write) => {
     const passport = library.linkVideo(flags.projectsDir, need(flags, 'id'), { folder: need(flags, 'folder'), codeWord: need(flags, 'code-word') });
@@ -172,8 +173,8 @@ async function main(argv = process.argv.slice(2), { write = (line) => console.lo
     const twoWords = `${argv[0]} ${argv[1] || ''}`;
     const name = Object.hasOwn(COMMANDS, twoWords) ? twoWords : argv[0];
     if (!Object.hasOwn(COMMANDS, name)) throw new Error(`неизвестная команда «${argv[0]}». Справка: automontage lead-magnet --help`);
-    await COMMANDS[name](parseFlags(argv.slice(name.split(' ').length)), write);
-    return 0;
+    const result = await COMMANDS[name](parseFlags(argv.slice(name.split(' ').length)), write);
+    return name === 'check' ? result : 0;
   } catch (error) {
     write(`❌ lead-magnet: ${error.message}`);
     return 1;
