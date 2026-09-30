@@ -1,17 +1,20 @@
 // scripts/lead-magnet/requests.js
+const fs = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const Ajv = require('ajv');
 
 const schema = require('../../schema/lead-magnet-requests.schema.json');
 const { resolveProjectPath } = require('../project/workspace');
-const { readJsonIfExists, writeJsonAtomic } = require('../pult/files');
+const { hashBytes, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
+const { openReadOnlyFlags } = require('../filesystem-capabilities');
 const { formatAjvErrors, normalizeCodeWord } = require('./constants');
 const { readOffers } = require('./offers');
-const { normalizeReferenceUrl } = require('./references');
+const { normalizeReferenceUrl, REFERENCE_LIMITS, REFS_DIR, sniffReference } = require('./references');
 
 const LABEL = 'pult/lead-magnet.json';
 const validateFile = new Ajv({ allErrors: true }).compile(schema);
+const MAX_REFERENCE_BYTES = Math.max(...Object.values(REFERENCE_LIMITS));
 // Эти решения не требуют работы агента: пульт или движок исполняют их сразу.
 const AUTO_ACCEPTED = new Set(['decline', 'reopen', 'link', 'promise-keep']);
 const REQUIRED_BY_TYPE = {
@@ -44,6 +47,30 @@ function readDecisions(projectDir) {
   return value.decisions;
 }
 
+function verifyFileReference(projectDir, reference) {
+  const invalid = () => new Error('лид-магнит: файл референса изменён или его описание неверно – загрузите заново');
+  try {
+    const expectedPath = `${REFS_DIR}/${reference.sha256}.${path.posix.extname(reference.path).slice(1)}`;
+    if (reference.path !== expectedPath) throw invalid();
+    const absolute = resolveProjectPath(projectDir, reference.path, { label: 'reference', mustExist: true, type: 'file' });
+    const descriptor = fs.openSync(absolute, openReadOnlyFlags(fs));
+    let bytes;
+    try {
+      const stat = fs.fstatSync(descriptor);
+      if (!stat.isFile() || stat.size !== reference.bytes || stat.size > MAX_REFERENCE_BYTES) throw invalid();
+      bytes = fs.readFileSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const type = sniffReference(bytes);
+    if (!type || bytes.length !== reference.bytes || bytes.length > REFERENCE_LIMITS[type.ext]
+      || reference.path !== `${REFS_DIR}/${reference.sha256}.${type.ext}`
+      || reference.mime !== type.mime || hashBytes(bytes) !== reference.sha256) throw invalid();
+  } catch (_) {
+    throw invalid();
+  }
+}
+
 function checkParams(projectDir, params, { hasOffer }) {
   if (hasOffer && params.promiseConfirmed !== true) {
     throw new Error('лид-магнит: подтвердите, что делаем ровно под обещание из ролика');
@@ -61,11 +88,7 @@ function checkParams(projectDir, params, { hasOffer }) {
       ...design,
       references: design.references.map((reference) => {
         if (reference.kind === 'url') return { kind: 'url', url: normalizeReferenceUrl(reference.url) };
-        try {
-          resolveProjectPath(projectDir, reference.path, { label: 'reference', mustExist: true, type: 'file' });
-        } catch (_) {
-          throw new Error('лид-магнит: файл референса не найден – загрузите его заново');
-        }
+        verifyFileReference(projectDir, reference);
         return reference;
       }),
     },
@@ -79,8 +102,10 @@ function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-
   for (const field of REQUIRED_BY_TYPE[input.type]) decision[field] = input[field];
   if (Object.hasOwn(decision, 'codeWord') && decision.codeWord !== null) decision.codeWord = normalizeCodeWord(decision.codeWord);
   if (Object.hasOwn(decision, 'offerId') && decision.offerId !== null) {
-    if (!readOffers(projectDir).some((offer) => offer.id === decision.offerId)) {
-      throw new Error('лид-магнит: такого обещания у ролика нет');
+    const offer = readOffers(projectDir).find((item) => item.id === decision.offerId);
+    if (!offer) throw new Error('лид-магнит: такого обещания у ролика нет');
+    if (Object.hasOwn(decision, 'codeWord') && decision.codeWord !== offer.codeWord) {
+      throw new Error('лид-магнит: кодовое слово не совпадает с обещанием ролика');
     }
   }
   if (decision.type === 'create') {
