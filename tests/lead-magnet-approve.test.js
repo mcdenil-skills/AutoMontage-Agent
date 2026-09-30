@@ -9,12 +9,18 @@ const library = require('../scripts/lead-magnet/library');
 const { hashFile } = require('../scripts/pult/files');
 const { makeLeadMagnet, writeRevision } = require('./helpers/lead-magnet-fixtures');
 
+const CHECK_IDS = ['promise', 'cta', 'phone-width', 'copy-buttons', 'logo', 'header', 'self-contained', 'blocks', 'texts', 'facts'];
+
 // Отчёт проверки пишем вручную: здесь проверяется логика утверждения, а не Chromium.
-function publish(projectsDir, id, { ok = true } = {}) {
+function publish(projectsDir, id, { ok = true, facts = [] } = {}) {
   const { n, dir } = library.startRevision(projectsDir, id);
-  writeRevision(dir);
+  writeRevision(dir, { facts });
   const pageSha256 = hashFile(path.join(dir, 'page.html'));
-  fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({ version: 1, checkedAt: 'x', pageSha256, ok, items: [] }));
+  const factsSha256 = hashFile(path.join(dir, 'facts.json'));
+  fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({
+    version: 1, checkedAt: '2026-09-30T12:00:00.000Z', pageSha256, factsSha256, ok,
+    items: CHECK_IDS.map((itemId) => ({ id: itemId, ok, message: 'проверено' })),
+  }));
   library.publishRevision(projectsDir, id, n);
   return { n, dir, pageSha256 };
 }
@@ -50,4 +56,54 @@ test('a red check blocks approval', (t) => {
   const { projectsDir, id } = makeLeadMagnet(t);
   const { n, pageSha256 } = publish(projectsDir, id, { ok: false });
   assert.equal(codeOf(() => approveLeadMagnet(projectsDir, id, { revision: n, expectedPageSha256: pageSha256, confirmViewed: true })), 'CHECK_FAILED');
+});
+
+test('incomplete, duplicate, contradictory and failed check items block approval', (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir, pageSha256 } = publish(projectsDir, id);
+  const reportPath = path.join(dir, 'qa', 'check.json');
+  const original = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const approve = () => approveLeadMagnet(projectsDir, id, { revision: n, expectedPageSha256: pageSha256, confirmViewed: true });
+  for (const mutate of [
+    (report) => { report.items = []; },
+    (report) => { report.items.pop(); },
+    (report) => { report.items[1] = { ...report.items[0] }; },
+    (report) => { report.items[0].ok = false; },
+    (report) => { report.ok = false; },
+    (report) => { delete report.factsSha256; },
+    (report) => { report.factsSha256 = 'f'.repeat(64); },
+    (report) => { report.items[0].id = 'unexpected'; },
+  ]) {
+    const report = structuredClone(original);
+    mutate(report);
+    fs.writeFileSync(reportPath, JSON.stringify(report));
+    assert.equal(codeOf(approve), 'CHECK_FAILED', JSON.stringify(report));
+  }
+  fs.writeFileSync(reportPath, '{broken');
+  assert.equal(codeOf(approve), 'CHECK_FAILED', 'malformed JSON must not approve');
+});
+
+test('missing, unverified and changed facts block approval; fresh verified facts pass', (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir, pageSha256 } = publish(projectsDir, id, { facts: [
+    { claim: 'Проверенное утверждение', source: 'Локальный источник', status: 'verified' },
+  ] });
+  const factsPath = path.join(dir, 'facts.json');
+  const original = fs.readFileSync(factsPath);
+  const approve = () => approveLeadMagnet(projectsDir, id, { revision: n, expectedPageSha256: pageSha256, confirmViewed: true });
+  fs.rmSync(factsPath);
+  assert.equal(codeOf(approve), 'CHECK_FAILED');
+  fs.writeFileSync(factsPath, JSON.stringify({ version: 1, checkedAt: 'x', items: [{ claim: 'Заявление', source: 'Источник', status: 'failed' }] }));
+  const reportPath = path.join(dir, 'qa', 'check.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  report.factsSha256 = hashFile(factsPath);
+  fs.writeFileSync(reportPath, JSON.stringify(report));
+  assert.equal(codeOf(approve), 'CHECK_FAILED');
+  fs.writeFileSync(factsPath, original);
+  report.factsSha256 = hashFile(factsPath);
+  fs.writeFileSync(reportPath, JSON.stringify(report));
+  fs.writeFileSync(factsPath, JSON.stringify({ version: 1, checkedAt: 'x', items: [{ claim: 'Заявление', source: 'Источник', status: 'verified' }] }));
+  assert.equal(codeOf(approve), 'CHECK_FAILED', 'verified replacement still invalidates the checked evidence');
+  fs.writeFileSync(factsPath, original);
+  assert.equal(approve().approved, n);
 });

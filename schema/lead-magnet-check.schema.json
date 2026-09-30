@@ -3,11 +3,12 @@
   "title": "Lead magnet automatic check report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "checkedAt", "pageSha256", "ok", "items"],
+  "required": ["version", "checkedAt", "pageSha256", "factsSha256", "ok", "items"],
   "properties": {
     "version": { "const": 1 },
     "checkedAt": { "type": "string", "minLength": 1 },
     "pageSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "factsSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "ok": { "type": "boolean" },
     "items": {
       "type": "array",

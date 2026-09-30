@@ -154,7 +154,8 @@ async function checkRevision(projectsDir, id, n, {
     item('texts', textProblems.length === 0, textProblems.length ? textProblems.join('; ') : 'тексты в лимитах'),
     item('facts', facts.ok, facts.message),
   ];
-  const report = { version: 1, checkedAt: now().toISOString(), pageSha256, ok: items.every((entry) => entry.ok), items };
+  const factsSha256 = hashFile(path.join(dir, 'facts.json'));
+  const report = { version: 1, checkedAt: now().toISOString(), pageSha256, factsSha256, ok: items.every((entry) => entry.ok), items };
   if (!validateReport(report)) throw new Error('check: отчёт не соответствует схеме');
   writeJsonAtomic(path.join(dir, 'qa', 'check.json'), report);
   return report;

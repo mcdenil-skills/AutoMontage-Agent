@@ -8,6 +8,7 @@ const { chromium } = require('playwright');
 
 const { checkRevision } = require('../scripts/lead-magnet/check');
 const library = require('../scripts/lead-magnet/library');
+const { hashFile } = require('../scripts/pult/files');
 const { goodPage, makeLeadMagnet, writeRevision } = require('./helpers/lead-magnet-fixtures');
 
 let browser;
@@ -27,6 +28,7 @@ async function run(t, revisionOptions = {}, env = {}) {
 test('a good page passes every item and gets screenshots', async (t) => {
   const { report, dir } = await run(t);
   assert.equal(report.ok, true, JSON.stringify(report.items.filter((item) => !item.ok)));
+  assert.equal(report.factsSha256, hashFile(path.join(dir, 'facts.json')));
   assert.ok(fs.statSync(path.join(dir, 'qa', 'desktop.png')).size > 0);
   assert.ok(fs.statSync(path.join(dir, 'qa', 'phone-390.png')).size > 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qa', 'check.json'), 'utf8')), report);

@@ -1,8 +1,15 @@
 const path = require('node:path');
+const Ajv = require('ajv');
 
+const checkSchema = require('../../schema/lead-magnet-check.schema.json');
 const { hashFile, readJsonIfExists } = require('../pult/files');
 const { countNewLeadMagnetComments } = require('./comments');
+const { readFacts } = require('./facts');
 const { readLeadMagnet, revisionDir, savePassport } = require('./library');
+
+const validateCheck = new Ajv({ allErrors: true }).compile(checkSchema);
+const REQUIRED_CHECKS = new Set(['promise', 'cta', 'phone-width', 'copy-buttons', 'logo', 'header',
+  'self-contained', 'blocks', 'texts', 'facts']);
 
 function fail(code, message) {
   const error = new Error(message);
@@ -24,8 +31,22 @@ function approveLeadMagnet(projectsDir, id, { revision, expectedPageSha256, conf
   if (actual !== expectedPageSha256 || actual !== current.pageSha256) {
     throw fail('PAGE_CHANGED', 'Страница изменилась – откройте её заново');
   }
-  const report = readJsonIfExists(path.join(dir, 'qa', 'check.json'), 'qa/check.json');
-  if (!report || report.ok !== true || report.pageSha256 !== actual) {
+  let report;
+  let factsSha256;
+  let facts;
+  try {
+    report = readJsonIfExists(path.join(dir, 'qa', 'check.json'), 'qa/check.json');
+    facts = readFacts(dir);
+    if (facts.ok) factsSha256 = hashFile(path.join(dir, 'facts.json'));
+  } catch (_) {
+    throw fail('CHECK_FAILED', 'Проверка каркаса или фактов не пройдена – агент исправит');
+  }
+  const checks = report && Array.isArray(report.items) ? report.items : [];
+  if (!validateCheck(report) || report.ok !== true || report.pageSha256 !== actual
+    || !facts.ok || report.factsSha256 !== factsSha256
+    || checks.length !== REQUIRED_CHECKS.size
+    || checks.some((item) => item.ok !== true || !REQUIRED_CHECKS.has(item.id))
+    || new Set(checks.map((item) => item.id)).size !== REQUIRED_CHECKS.size) {
     throw fail('CHECK_FAILED', 'Проверка каркаса или фактов не пройдена – агент исправит');
   }
   if (countNewLeadMagnetComments(projectsDir, id, revision) > 0) {
