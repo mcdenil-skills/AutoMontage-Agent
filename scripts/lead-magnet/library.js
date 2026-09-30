@@ -5,7 +5,7 @@ const Ajv = require('ajv');
 
 const passportSchema = require('../../schema/lead-magnet.schema.json');
 const requestsSchema = require('../../schema/lead-magnet-requests.schema.json');
-const { slugifyProjectName } = require('../project/workspace');
+const { resolveProjectPath, slugifyProjectName } = require('../project/workspace');
 const { ensureDirectory, hashFile, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
 const { isSafeName } = require('../pult/names');
 const { LEAD_MAGNET_ID, LIBRARY_DIR, TEXT_FILES, formatAjvErrors, normalizeCodeWord } = require('./constants');
@@ -17,20 +17,35 @@ const validatePassport = ajv.compile(passportSchema);
 const PASSPORT = 'lead-magnet.json';
 
 function libraryRoot(projectsDir) {
-  return path.join(projectsDir, LIBRARY_DIR);
+  return resolveProjectPath(projectsDir, LIBRARY_DIR, { label: 'библиотека лид-магнитов', type: 'directory' });
 }
 
 function leadMagnetDir(projectsDir, id) {
   if (typeof id !== 'string' || !LEAD_MAGNET_ID.test(id)) throw new Error('лид-магнит: неверный id');
-  return path.join(libraryRoot(projectsDir), id);
+  return resolveProjectPath(projectsDir, path.join(LIBRARY_DIR, id), { label: 'лид-магнит', type: 'directory' });
 }
 
 function revisionDir(projectsDir, id, n) {
-  return path.join(leadMagnetDir(projectsDir, id), `v${String(n).padStart(2, '0')}`);
+  if (!Number.isInteger(n) || n < 1 || n > 99) throw new Error('лид-магнит: неверный номер ревизии');
+  leadMagnetDir(projectsDir, id);
+  return resolveProjectPath(projectsDir, path.join(LIBRARY_DIR, id, `v${String(n).padStart(2, '0')}`),
+    { label: 'ревизия', type: 'directory' });
+}
+
+function passportPath(projectsDir, id) {
+  leadMagnetDir(projectsDir, id);
+  return resolveProjectPath(projectsDir, path.join(LIBRARY_DIR, id, PASSPORT), { label: PASSPORT, type: 'file' });
+}
+
+function revisionFile(projectsDir, id, n, relative) {
+  revisionDir(projectsDir, id, n);
+  return resolveProjectPath(projectsDir,
+    path.join(LIBRARY_DIR, id, `v${String(n).padStart(2, '0')}`, relative),
+    { label: `ревизия ${relative}`, type: 'file' });
 }
 
 function readLeadMagnet(projectsDir, id) {
-  const value = readJsonIfExists(path.join(leadMagnetDir(projectsDir, id), PASSPORT), PASSPORT);
+  const value = readJsonIfExists(passportPath(projectsDir, id), PASSPORT);
   if (value === undefined) throw new Error(`лид-магнит ${id} не найден`);
   if (!validatePassport(value) || value.id !== id) throw new Error(`${PASSPORT}: не соответствует схеме`);
   return value;
@@ -39,7 +54,7 @@ function readLeadMagnet(projectsDir, id) {
 function savePassport(projectsDir, passport, now) {
   const next = { ...passport, updatedAt: now().toISOString() };
   if (!validatePassport(next)) throw new Error(`${PASSPORT}: ${formatAjvErrors(validatePassport.errors)}`);
-  writeJsonAtomic(path.join(leadMagnetDir(projectsDir, next.id), PASSPORT), next);
+  writeJsonAtomic(passportPath(projectsDir, next.id), next);
   return next;
 }
 
@@ -55,6 +70,9 @@ function assertFolder(folder) {
 
 function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
   const codeWord = normalizeCodeWord(input.codeWord);
+  const folder = assertFolder(input.videoFolder);
+  const existing = findByCodeWord(projectsDir, codeWord)[0];
+  if (existing) return linkVideo(projectsDir, existing.id, { folder, codeWord }, { now });
   const createdAt = now();
   ensureDirectory(libraryRoot(projectsDir));
   const base = `${datePrefix(createdAt)}_${slugifyProjectName(codeWord)}`;
@@ -76,7 +94,7 @@ function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
     promise: { ...input.promise, acknowledged: [] },
     units: input.units,
     params: input.params,
-    videos: [assertFolder(input.videoFolder)],
+    videos: [folder],
     revisions: [],
     current: null,
     approved: null,
@@ -116,15 +134,19 @@ function listLeadMagnets(projectsDir) {
 // Утверждённые – первыми: именно их предлагает кнопка «Уже есть готовый».
 function findByCodeWord(projectsDir, codeWord) {
   const word = normalizeCodeWord(codeWord);
-  return listLeadMagnets(projectsDir).entries
+  const matches = listLeadMagnets(projectsDir).entries
     .filter((item) => item.codeWords.includes(word))
     .sort((a, b) => Number(b.approved !== null) - Number(a.approved !== null));
+  if (matches.length > 1) throw new Error(`кодовое слово ${word} принадлежит нескольким лид-магнитам`);
+  return matches;
 }
 
 function linkVideo(projectsDir, id, { folder, codeWord }, { now = () => new Date() } = {}) {
   const passport = readLeadMagnet(projectsDir, id);
   const word = normalizeCodeWord(codeWord);
   assertFolder(folder);
+  const owner = findByCodeWord(projectsDir, word)[0];
+  if (owner && owner.id !== id) throw new Error(`кодовое слово ${word} уже принадлежит другому лид-магниту`);
   return savePassport(projectsDir, {
     ...passport,
     videos: passport.videos.includes(folder) ? passport.videos : [...passport.videos, folder],
@@ -137,8 +159,10 @@ function startRevision(projectsDir, id, { now = () => new Date() } = {}) {
   const n = passport.revisions.length + 1;
   const dir = revisionDir(projectsDir, id, n);
   fs.mkdirSync(dir);
-  fs.mkdirSync(path.join(dir, 'texts'));
-  fs.mkdirSync(path.join(dir, 'qa'));
+  fs.mkdirSync(resolveProjectPath(projectsDir, path.join(LIBRARY_DIR, id, path.basename(dir), 'texts'),
+    { label: 'тексты ревизии', type: 'directory' }));
+  fs.mkdirSync(resolveProjectPath(projectsDir, path.join(LIBRARY_DIR, id, path.basename(dir), 'qa'),
+    { label: 'проверка ревизии', type: 'directory' }));
   savePassport(projectsDir, {
     ...passport,
     revisions: [...passport.revisions, { n, dir: path.basename(dir), status: 'building', pageSha256: null, createdAt: now().toISOString() }],
@@ -154,13 +178,13 @@ function publishRevision(projectsDir, id, n, { now = () => new Date() } = {}) {
   const passport = readLeadMagnet(projectsDir, id);
   const revision = passport.revisions.find((item) => item.n === n);
   if (!revision || revision.status !== 'building') throw new Error(`ревизия ${n} не собирается сейчас`);
-  const dir = revisionDir(projectsDir, id, n);
+  revisionDir(projectsDir, id, n);
   for (const relative of requiredRevisionFiles(passport)) {
-    const stat = fs.lstatSync(path.join(dir, ...relative.split('/')), { throwIfNoEntry: false });
+    const stat = fs.lstatSync(revisionFile(projectsDir, id, n, relative), { throwIfNoEntry: false });
     if (!stat || !stat.isFile()) throw new Error(`ревизии не хватает файла ${relative}`);
   }
-  const pageSha256 = hashFile(path.join(dir, 'page.html'));
-  const report = readJsonIfExists(path.join(dir, 'qa', 'check.json'), 'qa/check.json');
+  const pageSha256 = hashFile(revisionFile(projectsDir, id, n, 'page.html'));
+  const report = readJsonIfExists(revisionFile(projectsDir, id, n, 'qa/check.json'), 'qa/check.json');
   if (!report || report.pageSha256 !== pageSha256) {
     throw new Error('сначала запусти проверку: automontage lead-magnet check');
   }

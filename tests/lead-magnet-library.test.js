@@ -41,7 +41,10 @@ test('lead magnet gets a dated id, a passport and a link to its video', (t) => {
   assert.deepEqual(passport.videos, [folder]);
   assert.equal(passport.current, null);
   assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id), passport);
-  assert.equal(create(projectsDir, folder).id, '2026.09.30_gayd-2');
+  const reused = create(projectsDir, 'second-video');
+  assert.equal(reused.id, passport.id);
+  assert.deepEqual(reused.videos, [folder, 'second-video']);
+  assert.equal(library.findByCodeWord(projectsDir, 'гайд').length, 1);
 });
 
 test('find by code word and link another video', (t) => {
@@ -53,6 +56,62 @@ test('find by code word and link another video', (t) => {
   assert.deepEqual(linked.videos, [folder, 'другой-ролик']);
   assert.deepEqual(linked.codeWords, ['ГАЙД', 'ГАЙД 2']);
   assert.throws(() => library.linkVideo(projectsDir, id, { folder: '../x', codeWord: 'ГАЙД' }), /папк/);
+  const other = create(projectsDir, folder, 'ПРОМПТЫ');
+  assert.throws(() => library.linkVideo(projectsDir, other.id, { folder: 'another', codeWord: 'гайд' }), /кодовое слово/);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, other.id).codeWords, ['ПРОМПТЫ']);
+});
+
+test('revision numbers must be integers from 1 through 99', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  assert.equal(path.basename(library.revisionDir(projectsDir, id, 1)), 'v01');
+  assert.equal(path.basename(library.revisionDir(projectsDir, id, 99)), 'v99');
+  for (const n of ['/../../../../outside', 0, 100, 1.5, NaN]) {
+    assert.throws(() => library.revisionDir(projectsDir, id, n), /ревизи/);
+  }
+});
+
+test('library, passport and revision symlinks cannot redirect reads or writes', (t) => {
+  const { base, projectsDir, folder } = makeVideoProject(t);
+  const outside = path.join(base, 'outside');
+  fs.mkdirSync(outside);
+  const root = path.join(projectsDir, '.lead-magnets');
+  fs.symlinkSync(outside, root);
+  assert.throws(() => create(projectsDir, folder), /symbolic link|небезопасн/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  fs.unlinkSync(root);
+
+  const { id } = create(projectsDir, folder);
+  const magnet = path.join(root, id);
+  const movedMagnet = path.join(outside, id);
+  fs.renameSync(magnet, movedMagnet);
+  fs.symlinkSync(movedMagnet, magnet);
+  assert.throws(() => library.readLeadMagnet(projectsDir, id), /symbolic link|небезопасн/);
+  assert.throws(() => library.startRevision(projectsDir, id, { now: NOW }), /symbolic link|небезопасн/);
+  assert.equal(fs.existsSync(path.join(movedMagnet, 'v01')), false);
+  fs.unlinkSync(magnet);
+  fs.renameSync(movedMagnet, magnet);
+
+  const { dir } = library.startRevision(projectsDir, id, { now: NOW });
+  const movedRevision = path.join(outside, 'v01');
+  fs.renameSync(dir, movedRevision);
+  fs.symlinkSync(movedRevision, dir);
+  assert.throws(() => library.publishRevision(projectsDir, id, 1, { now: NOW }), /symbolic link|небезопасн/);
+  assert.equal(library.readLeadMagnet(projectsDir, id).revisions[0].status, 'building');
+});
+
+test('artifact parent symlink is rejected while a normal neighboring revision publishes', (t) => {
+  const { base, projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  const { dir } = library.startRevision(projectsDir, id, { now: NOW });
+  writeRevisionFiles(dir);
+  const outsideTexts = path.join(base, 'outside-texts');
+  fs.renameSync(path.join(dir, 'texts'), outsideTexts);
+  fs.symlinkSync(outsideTexts, path.join(dir, 'texts'));
+  assert.throws(() => library.publishRevision(projectsDir, id, 1, { now: NOW }), /symbolic link|небезопасн/);
+  fs.unlinkSync(path.join(dir, 'texts'));
+  fs.renameSync(outsideTexts, path.join(dir, 'texts'));
+  assert.equal(library.publishRevision(projectsDir, id, 1, { now: NOW }).revisions[0].status, 'draft');
 });
 
 test('revision goes building → draft only with all files and a matching check report', (t) => {
