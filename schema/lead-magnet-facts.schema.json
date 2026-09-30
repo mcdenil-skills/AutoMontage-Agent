@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet fact check report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "checkedAt", "items"],
+  "properties": {
+    "version": { "const": 1 },
+    "checkedAt": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array", "maxItems": 300,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "source", "status"],
+        "properties": {
+          "claim": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "source": { "type": "string", "minLength": 1, "maxLength": 600 },
+          "status": { "enum": ["verified", "failed", "unverifiable"] },
+          "note": { "type": "string", "maxLength": 400 }
+        }
+      }
+    }
+  }
+}
