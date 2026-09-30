@@ -52,7 +52,7 @@ function buildLeadMagnetInbox({ projectsDir }) {
       try {
         fs.lstatSync(file);
       } catch (error) {
-        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+        if (error.code === 'ENOENT') continue;
         throw error;
       }
       for (const decision of readDecisions(path.join(projectsDir, folder))) {

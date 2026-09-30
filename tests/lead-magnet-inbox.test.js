@@ -10,7 +10,7 @@ const library = require('../scripts/lead-magnet/library');
 const { addOffer } = require('../scripts/lead-magnet/offers');
 const { addDecision, readDecisions } = require('../scripts/lead-magnet/requests');
 const { main } = require('../scripts/pult/inbox');
-const { PARAMS, QUOTE, UNITS, makeLeadMagnet, writeRevision } = require('./helpers/lead-magnet-fixtures');
+const { PARAMS, QUOTE, UNITS, makeLeadMagnet, makeVideoProject, writeRevision } = require('./helpers/lead-magnet-fixtures');
 const { hashFile } = require('../scripts/pult/files');
 
 function setup(t) {
@@ -82,6 +82,16 @@ test('inbox reports a dangling decision-file symlink and ignores a truly absent 
   const inbox = buildLeadMagnetInbox({ projectsDir });
   assert.equal(inbox.broken.length, 1);
   assert.match(inbox.broken[0].error, /symbolic link/);
+});
+
+test('inbox reports pult as a regular file and ignores a truly absent pult directory', (t) => {
+  const { projectsDir, projectDir } = makeVideoProject(t);
+  assert.deepEqual(buildLeadMagnetInbox({ projectsDir }).broken, []);
+  fs.writeFileSync(path.join(projectDir, 'pult'), 'not a directory');
+  const inbox = buildLeadMagnetInbox({ projectsDir });
+  assert.equal(inbox.broken.length, 1);
+  assert.match(inbox.broken[0].where, /pult\/lead-magnet\.json$/);
+  assert.match(inbox.broken[0].error, /ENOTDIR/);
 });
 
 test('inbox reports a project scan error instead of claiming no work', (t) => {
