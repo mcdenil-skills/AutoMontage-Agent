@@ -1,11 +1,11 @@
 // scripts/lead-magnet/check.js
 const fs = require('node:fs');
 const path = require('node:path');
-const { pathToFileURL } = require('node:url');
 const Ajv = require('ajv');
 
 const schema = require('../../schema/lead-magnet-check.schema.json');
-const { hashFile, writeJsonAtomic } = require('../pult/files');
+const { createHash } = require('node:crypto');
+const { captureProjectDirectoryGuard, resolveProjectPath, stageOwnedSiblingFile } = require('../project/workspace');
 const { resolveBrand } = require('./brand');
 const { TEXT_FILES, TEXT_LIMITS } = require('./constants');
 const { readFacts } = require('./facts');
@@ -76,6 +76,41 @@ function item(id, ok, message) {
   return { id, ok, message: characters.length > 400 ? `${characters.slice(0, 399).join('')}…` : message };
 }
 
+// Every descendant is confined before access; identity guards span asynchronous browser work.
+function checkedFile(projectsDir, dir, relative) {
+  return resolveProjectPath(projectsDir, path.relative(projectsDir, path.join(dir, relative)), { label: relative, type: 'file' });
+}
+function readChecked(projectsDir, dir, relative) {
+  const file = checkedFile(projectsDir, dir, relative);
+  const guard = captureProjectDirectoryGuard(projectsDir, file, fs, relative);
+  guard.assertCurrent();
+  let handle;
+  try {
+    handle = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    guard.assertCurrent();
+    if (!fs.fstatSync(handle).isFile()) throw new Error('Expected regular file');
+    const bytes = fs.readFileSync(handle);
+    guard.assertCurrent();
+    return bytes;
+  } catch (error) {
+    if (error.code === 'ENOENT') { guard.assertCurrent(); return null; }
+    throw error;
+  } finally { if (handle !== undefined) fs.closeSync(handle); }
+}
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+function inputFingerprint(projectsDir, dir, passport) {
+  const texts = passport.params.texts.map((kind) => {
+    const bytes = readChecked(projectsDir, dir, TEXT_FILES[kind]);
+    return [kind, bytes === null ? null : digest(bytes)];
+  });
+  return digest(JSON.stringify({ promise: passport.promise, units: passport.units, texts }));
+}
+function guardedWrite(file, bytes, guard) {
+  guard.assertCurrent();
+  const stage = stageOwnedSiblingFile(file, bytes, { purpose: 'lead-check', assertParentCurrent: guard.assertCurrent, verifyPublishedIdentity: true });
+  try { stage.commitReplace(); } finally { stage.cleanupTemp(); }
+}
+
 async function checkRevision(projectsDir, id, n, {
   env = process.env,
   now = () => new Date(),
@@ -83,9 +118,15 @@ async function checkRevision(projectsDir, id, n, {
 } = {}) {
   const passport = readLeadMagnet(projectsDir, id);
   const dir = revisionDir(projectsDir, id, n);
-  const pagePath = path.join(dir, 'page.html');
-  const pageUrl = pathToFileURL(pagePath).href;
-  const pageSha256 = hashFile(pagePath);
+  const pageBytes = readChecked(projectsDir, dir, 'page.html');
+  const inputSha256 = inputFingerprint(projectsDir, dir, passport);
+  const outputs = Object.fromEntries(['desktop.png', 'phone-390.png', 'check.json'].map((name) => {
+    const file = checkedFile(projectsDir, dir, `qa/${name}`);
+    return [name, { file, guard: captureProjectDirectoryGuard(projectsDir, file, fs, 'QA') }];
+  }));
+  // Serve the already-read bytes: Chromium must never reopen a mutable filesystem path.
+  const pageUrl = 'https://lead-magnet.invalid/page.html';
+  const pageSha256 = digest(pageBytes);
   const { brand } = resolveBrand({ env });
   const external = [];
   const browser = await launch();
@@ -104,13 +145,15 @@ async function checkRevision(projectsDir, id, n, {
         // Самодостаточность: страница не должна тянуть ничего, кроме себя самой и data:/blob:.
         await context.route('**/*', (route) => {
           const url = route.request().url();
-          if (url === pageUrl || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
+          if (url === pageUrl) return route.fulfill({ contentType: 'text/html', body: pageBytes });
+          if (url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
           external.push(url);
           return route.abort();
         });
         const page = await context.newPage();
         await page.goto(pageUrl, { waitUntil: 'load' });
-        await page.screenshot({ path: path.join(dir, 'qa', shot), fullPage: true });
+        const bytes = await page.screenshot({ fullPage: true });
+        guardedWrite(outputs[shot].file, bytes, outputs[shot].guard);
         return { info: await page.evaluate(inspectPage), width: await page.evaluate(() => document.documentElement.scrollWidth) };
       } finally {
         await context.close();
@@ -128,13 +171,14 @@ async function checkRevision(projectsDir, id, n, {
   const quoteOk = !passport.promise.quote || pageText.includes(` ${normalizeText(passport.promise.quote)} `);
   const missingUnits = passport.units.filter((unit) => (desktop.items[unit.key] || 0) < (unit.count || 1));
   const textProblems = passport.params.texts.flatMap((kind) => {
-    const file = path.join(dir, ...TEXT_FILES[kind].split('/'));
-    const length = fs.existsSync(file) ? [...fs.readFileSync(file, 'utf8')].length : -1;
+    const bytes = readChecked(projectsDir, dir, TEXT_FILES[kind]);
+    const length = bytes === null ? -1 : [...bytes.toString('utf8')].length;
     if (length < 0) return [`${kind}: нет файла`];
     return length > TEXT_LIMITS[kind] ? [`${kind}: ${length} из ${TEXT_LIMITS[kind]}`] : [];
   });
   const duplicateBlocks = desktop.blockIds.filter((value, index, all) => all.indexOf(value) !== index);
-  const facts = readFacts(dir);
+  const factsBytes = readChecked(projectsDir, dir, 'facts.json');
+  const facts = readFacts(dir, factsBytes);
 
   const items = [
     item('promise', quoteOk && missingUnits.length === 0, quoteOk
@@ -154,11 +198,15 @@ async function checkRevision(projectsDir, id, n, {
     item('texts', textProblems.length === 0, textProblems.length ? textProblems.join('; ') : 'тексты в лимитах'),
     item('facts', facts.ok, facts.message),
   ];
-  const factsSha256 = hashFile(path.join(dir, 'facts.json'));
-  const report = { version: 1, checkedAt: now().toISOString(), pageSha256, factsSha256, ok: items.every((entry) => entry.ok), items };
+  const factsSha256 = facts.valid && factsBytes !== null ? digest(factsBytes) : null;
+  if (digest(readChecked(projectsDir, dir, 'page.html')) !== pageSha256
+    || inputFingerprint(projectsDir, dir, readLeadMagnet(projectsDir, id)) !== inputSha256) {
+    throw new Error('Check inputs changed during browser validation');
+  }
+  const report = { version: 1, checkedAt: now().toISOString(), pageSha256, factsSha256, inputSha256, ok: items.every((entry) => entry.ok), items };
   if (!validateReport(report)) throw new Error('check: отчёт не соответствует схеме');
-  writeJsonAtomic(path.join(dir, 'qa', 'check.json'), report);
+  guardedWrite(outputs['check.json'].file, `${JSON.stringify(report, null, 2)}\n`, outputs['check.json'].guard);
   return report;
 }
 
-module.exports = { PHONE_WIDTH, checkRevision };
+module.exports = { PHONE_WIDTH, checkRevision, checkedFile, readChecked, inputFingerprint };

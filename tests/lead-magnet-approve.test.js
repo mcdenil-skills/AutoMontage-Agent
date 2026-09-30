@@ -18,7 +18,7 @@ function publish(projectsDir, id, { ok = true, facts = [] } = {}) {
   const pageSha256 = hashFile(path.join(dir, 'page.html'));
   const factsSha256 = hashFile(path.join(dir, 'facts.json'));
   fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({
-    version: 1, checkedAt: '2026-09-30T12:00:00.000Z', pageSha256, factsSha256, ok,
+    version: 1, checkedAt: '2026-09-30T12:00:00.000Z', pageSha256, factsSha256, inputSha256: require('../scripts/lead-magnet/check').inputFingerprint(projectsDir, dir, library.readLeadMagnet(projectsDir, id)), ok,
     items: CHECK_IDS.map((itemId) => ({ id: itemId, ok, message: 'проверено' })),
   }));
   library.publishRevision(projectsDir, id, n);
@@ -106,4 +106,33 @@ test('missing, unverified and changed facts block approval; fresh verified facts
   assert.equal(codeOf(approve), 'CHECK_FAILED', 'verified replacement still invalidates the checked evidence');
   fs.writeFileSync(factsPath, original);
   assert.equal(approve().approved, n);
+});
+
+test('approval rejects changed or deleted texts and changed promise, units, or selection', (t) => {
+  for (const change of ['text', 'deleted', 'promise', 'units', 'selection']) {
+    const { projectsDir, id } = makeLeadMagnet(t);
+    const { n, dir, pageSha256 } = publish(projectsDir, id);
+    if (change === 'text') fs.writeFileSync(path.join(dir, 'texts/dm.txt'), 'x'.repeat(2001));
+    else if (change === 'deleted') fs.unlinkSync(path.join(dir, 'texts/dm.txt'));
+    else {
+      const p = library.readLeadMagnet(projectsDir, id);
+      if (change === 'promise') p.promise.quote = 'другое обещание';
+      if (change === 'units') p.units[1].count = 7;
+      if (change === 'selection') p.params.texts = ['dm'];
+      library.savePassport(projectsDir, p, () => new Date());
+    }
+    assert.equal(codeOf(() => approveLeadMagnet(projectsDir, id, { revision: n, expectedPageSha256: pageSha256, confirmViewed: true })), 'CHECK_FAILED', change);
+  }
+});
+
+test('approval rejects symlinked QA, page, facts and selected text paths', (t) => {
+  for (const relative of ['qa', 'page.html', 'facts.json', 'texts']) {
+    const { base, projectsDir, id } = makeLeadMagnet(t);
+    const { n, dir, pageSha256 } = publish(projectsDir, id);
+    const outside = path.join(base, 'outside-approval');
+    fs.renameSync(path.join(dir, relative), outside);
+    fs.symlinkSync(outside, path.join(dir, relative));
+    assert.throws(() => approveLeadMagnet(projectsDir, id, { revision: n, expectedPageSha256: pageSha256, confirmViewed: true }));
+    assert.equal(library.readLeadMagnet(projectsDir, id).approved, null);
+  }
 });

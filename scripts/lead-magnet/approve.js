@@ -1,8 +1,8 @@
-const path = require('node:path');
 const Ajv = require('ajv');
 
 const checkSchema = require('../../schema/lead-magnet-check.schema.json');
-const { hashFile, readJsonIfExists } = require('../pult/files');
+const { createHash } = require('node:crypto');
+const { readChecked, inputFingerprint } = require('./check');
 const { countNewLeadMagnetComments } = require('./comments');
 const { readFacts } = require('./facts');
 const { readLeadMagnet, revisionDir, savePassport } = require('./library');
@@ -27,7 +27,7 @@ function approveLeadMagnet(projectsDir, id, { revision, expectedPageSha256, conf
     throw fail('REVISION_CHANGED', 'Агент выпустил новую версию – посмотрите её перед утверждением');
   }
   const dir = revisionDir(projectsDir, id, revision);
-  const actual = hashFile(path.join(dir, 'page.html'));
+  const actual = createHash('sha256').update(readChecked(projectsDir, dir, 'page.html')).digest('hex');
   if (actual !== expectedPageSha256 || actual !== current.pageSha256) {
     throw fail('PAGE_CHANGED', 'Страница изменилась – откройте её заново');
   }
@@ -35,9 +35,11 @@ function approveLeadMagnet(projectsDir, id, { revision, expectedPageSha256, conf
   let factsSha256;
   let facts;
   try {
-    report = readJsonIfExists(path.join(dir, 'qa', 'check.json'), 'qa/check.json');
-    facts = readFacts(dir);
-    if (facts.ok) factsSha256 = hashFile(path.join(dir, 'facts.json'));
+    report = JSON.parse(readChecked(projectsDir, dir, 'qa/check.json'));
+    const bytes = readChecked(projectsDir, dir, 'facts.json');
+    facts = readFacts(dir, bytes);
+    if (facts.ok) factsSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (report.inputSha256 !== inputFingerprint(projectsDir, dir, passport)) throw new Error('Stale inputs');
   } catch (_) {
     throw fail('CHECK_FAILED', 'Проверка каркаса или фактов не пройдена – агент исправит');
   }

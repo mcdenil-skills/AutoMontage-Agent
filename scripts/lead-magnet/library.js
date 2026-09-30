@@ -207,9 +207,9 @@ function acknowledgePromise(projectsDir, id, quote, { now = () => new Date() } =
 }
 
 // «Обновить под новое»: агент переносит новую цитату в паспорт перед новой ревизией.
-function updatePromise(projectsDir, id, promise, { now = () => new Date() } = {}) {
+function updatePromise(projectsDir, id, promise, { now = () => new Date(), units } = {}) {
   const passport = readLeadMagnet(projectsDir, id);
-  return savePassport(projectsDir, { ...passport, promise: { ...promise, acknowledged: [] } }, now);
+  return savePassport(projectsDir, { ...passport, units: units === undefined ? passport.units : units, promise: { ...promise, acknowledged: [] } }, now);
 }
 
 module.exports = {

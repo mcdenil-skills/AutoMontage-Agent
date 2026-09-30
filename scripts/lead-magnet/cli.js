@@ -129,7 +129,7 @@ const COMMANDS = {
     const offers = readOffers(projectDir);
     const offer = passport.codeWords.map((word) => offers.find((item) => item.codeWord === word)).find(Boolean);
     if (!offer) throw new Error(`у ролика ${folder} нет обещания со словом лид-магнита`);
-    library.updatePromise(flags.projectsDir, id, { quote: offer.quote, startSec: offer.startSec, endSec: offer.endSec, sourceFolder: folder });
+    library.updatePromise(flags.projectsDir, id, { quote: offer.quote, startSec: offer.startSec, endSec: offer.endSec, sourceFolder: folder }, { units: offer.units });
     write(`Обещание обновлено: «${offer.quote}». Собери новую ревизию.`);
   },
   'funnel set': (flags, write) => {

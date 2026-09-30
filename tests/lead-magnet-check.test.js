@@ -113,3 +113,66 @@ test('a maximum-length failed fact produces a saved failed report without losing
   const verified = await run(t, { facts: [{ ...fact, status: 'verified' }] });
   assert.equal(verified.report.ok, true);
 });
+
+test('QA descendants reject symlinks and directory swaps without outside writes', async (t) => {
+  for (const swap of [false, true]) {
+    const { base, projectsDir, id } = makeLeadMagnet(t);
+    const { n, dir } = library.startRevision(projectsDir, id);
+    writeRevision(dir);
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(outside);
+    const replace = () => { fs.renameSync(path.join(dir, 'qa'), path.join(dir, 'old-qa')); fs.symlinkSync(outside, path.join(dir, 'qa')); };
+    if (!swap) replace();
+    await assert.rejects(checkRevision(projectsDir, id, n, { env: {}, launch: async () => {
+      if (swap) replace();
+      return launch();
+    } }));
+    assert.deepEqual(fs.readdirSync(outside), []);
+  }
+});
+
+test('missing and malformed facts replace green reports and recover', async (t) => {
+  for (const initial of [true, false]) {
+    const { projectsDir, id } = makeLeadMagnet(t);
+    const { n, dir } = library.startRevision(projectsDir, id);
+    writeRevision(dir);
+    if (!initial) assert.equal((await checkRevision(projectsDir, id, n, { env: {}, launch })).ok, true);
+    for (const malformed of [false, true]) {
+      if (malformed) fs.writeFileSync(path.join(dir, 'facts.json'), '{broken');
+      else fs.unlinkSync(path.join(dir, 'facts.json'));
+      const report = await checkRevision(projectsDir, id, n, { env: {}, launch });
+      assert.equal(report.ok, false);
+      assert.equal(report.items.find((x) => x.id === 'facts').ok, false);
+      assert.equal(report.factsSha256, null);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qa/check.json'))), report);
+    }
+    writeRevision(dir);
+    assert.equal((await checkRevision(projectsDir, id, n, { env: {}, launch })).ok, true);
+  }
+});
+
+test('check rejects symlinked page, facts and selected text descendants before reading', async (t) => {
+  for (const relative of ['page.html', 'facts.json', 'texts']) {
+    const { base, projectsDir, id } = makeLeadMagnet(t);
+    const { n, dir } = library.startRevision(projectsDir, id);
+    writeRevision(dir);
+    const outside = path.join(base, 'outside-input');
+    fs.renameSync(path.join(dir, relative), outside);
+    fs.symlinkSync(outside, path.join(dir, relative));
+    await assert.rejects(checkRevision(projectsDir, id, n, { env: {}, launch }));
+  }
+});
+
+test('Chromium reads captured page bytes and rejects page replacement during launch', async (t) => {
+  const { base, projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir } = library.startRevision(projectsDir, id);
+  writeRevision(dir);
+  const outside = path.join(base, 'outside.html');
+  fs.writeFileSync(outside, '<h1>Outside secret must not be rendered</h1>');
+  await assert.rejects(checkRevision(projectsDir, id, n, { env: {}, launch: async () => {
+    fs.renameSync(path.join(dir, 'page.html'), path.join(dir, 'original.html'));
+    fs.symlinkSync(outside, path.join(dir, 'page.html'));
+    return launch();
+  } }));
+  assert.equal(fs.existsSync(path.join(dir, 'qa/check.json')), false);
+});

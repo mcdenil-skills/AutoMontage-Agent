@@ -143,3 +143,19 @@ test('create and promise update reject a video folder outside projects', async (
   assert.equal(update.code, 1);
   assert.match(update.out, /canonical relative path/);
 });
+
+test('offer refresh transfers quantities and types into the next checked revision', async (t) => {
+  const { checkRevision } = require('../scripts/lead-magnet/check');
+  const { goodPage, writeRevision } = require('./helpers/lead-magnet-fixtures');
+  for (const units of [[{ key: 'prompt', count: 7, label: 'промптов' }], [{ key: 'example', count: 2, label: 'примера' }]]) {
+    const { projectsDir, projectDir, folder, id } = makeLeadMagnet(t);
+    assert.equal((await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', QUOTE, '--units', JSON.stringify(units)])).code, 0);
+    assert.equal((await run(['promise', 'update', '--projects-dir', projectsDir, '--id', id, '--from', folder])).code, 0);
+    assert.deepEqual(library.readLeadMagnet(projectsDir, id).units, units);
+    const { n, dir } = library.startRevision(projectsDir, id);
+    writeRevision(dir);
+    assert.equal((await checkRevision(projectsDir, id, n, { env: {} })).items.find((x) => x.id === 'promise').ok, false);
+    writeRevision(dir, { page: goodPage({ prompts: 7, extra: '<p data-lm-item="example">Один</p><p data-lm-item="example">Два</p>' }) });
+    assert.equal((await checkRevision(projectsDir, id, n, { env: {} })).ok, true);
+  }
+});
