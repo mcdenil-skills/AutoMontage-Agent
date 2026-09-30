@@ -42,24 +42,61 @@ test('lead magnet gets a dated id, a passport and a link to its video', (t) => {
   assert.deepEqual(passport.videos, [folder]);
   assert.equal(passport.current, null);
   assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id), passport);
-  const reused = create(projectsDir, 'second-video');
-  assert.equal(reused.id, passport.id);
-  assert.deepEqual(reused.videos, [folder, 'second-video']);
-  assert.equal(library.findByCodeWord(projectsDir, 'гайд').length, 1);
+  const second = create(projectsDir, 'second-video');
+  assert.equal(second.id, '2026.09.30_gayd-2');
+  assert.deepEqual(second.videos, ['second-video']);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id).videos, [folder]);
+});
+
+test('creating three magnets with the same word gives each an independent passport', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const magnets = [create(projectsDir, folder), create(projectsDir, 'second-video'), create(projectsDir, 'third-video')];
+  assert.deepEqual(magnets.map((item) => item.id), [
+    '2026.09.30_gayd', '2026.09.30_gayd-2', '2026.09.30_gayd-3',
+  ]);
+  assert.deepEqual(magnets.map((item) => item.videos), [[folder], ['second-video'], ['third-video']]);
+  assert.deepEqual(new Set(library.findByCodeWord(projectsDir, 'гайд').map((item) => item.id)),
+    new Set(magnets.map((item) => item.id)));
+});
+
+test('a repeated long word gets a suffix within the safe ID length', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const word = 'Ю'.repeat(40);
+  const first = create(projectsDir, folder, word);
+  const second = create(projectsDir, 'second-video', word);
+  assert.match(first.id, /^2026\.09\.30_[a-z0-9-]{1,80}$/);
+  assert.match(second.id, /^2026\.09\.30_[a-z0-9-]{1,80}$/);
+  assert.notEqual(first.id, second.id);
+  assert.ok(second.id.endsWith('-2'));
+});
+
+test('find by code word puts an approved magnet before new magnets sharing the word', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const first = create(projectsDir, folder);
+  const approved = create(projectsDir, 'approved-video');
+  const third = create(projectsDir, 'third-video');
+  library.savePassport(projectsDir, {
+    ...approved, approved: 1,
+    revisions: [{ n: 1, dir: 'v01', status: 'approved', pageSha256: 'a'.repeat(64), createdAt: NOW().toISOString() }],
+  }, NOW);
+  const matches = library.findByCodeWord(projectsDir, 'гайд');
+  assert.equal(matches[0].id, approved.id);
+  assert.deepEqual(new Set(matches.slice(1).map((item) => item.id)), new Set([first.id, third.id]));
 });
 
 test('find by code word and link another video', (t) => {
   const { projectsDir, folder } = makeVideoProject(t);
   const { id } = create(projectsDir, folder);
-  create(projectsDir, folder, 'ПРОМПТЫ');
+  const other = create(projectsDir, folder, 'ПРОМПТЫ');
   assert.deepEqual(library.findByCodeWord(projectsDir, 'гайд').map((item) => item.id), [id]);
   const linked = library.linkVideo(projectsDir, id, { folder: 'другой-ролик', codeWord: 'ГАЙД 2' }, { now: NOW });
   assert.deepEqual(linked.videos, [folder, 'другой-ролик']);
   assert.deepEqual(linked.codeWords, ['ГАЙД', 'ГАЙД 2']);
   assert.throws(() => library.linkVideo(projectsDir, id, { folder: '../x', codeWord: 'ГАЙД' }), /папк/);
-  const other = create(projectsDir, folder, 'ПРОМПТЫ');
-  assert.throws(() => library.linkVideo(projectsDir, other.id, { folder: 'another', codeWord: 'гайд' }), /кодовое слово/);
-  assert.deepEqual(library.readLeadMagnet(projectsDir, other.id).codeWords, ['ПРОМПТЫ']);
+  const shared = library.linkVideo(projectsDir, other.id, { folder: 'another', codeWord: 'гайд' }, { now: NOW });
+  assert.deepEqual(shared.codeWords, ['ПРОМПТЫ', 'ГАЙД']);
+  assert.deepEqual(shared.videos, [folder, 'another']);
+  assert.deepEqual(new Set(library.findByCodeWord(projectsDir, 'ГАЙД').map((item) => item.id)), new Set([id, other.id]));
 });
 
 test('revision numbers must be integers from 1 through 99', (t) => {

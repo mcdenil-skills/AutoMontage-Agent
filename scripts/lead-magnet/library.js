@@ -71,11 +71,11 @@ function assertFolder(folder) {
 function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
   const codeWord = normalizeCodeWord(input.codeWord);
   const folder = assertFolder(input.videoFolder);
-  const existing = findByCodeWord(projectsDir, codeWord)[0];
-  if (existing) return linkVideo(projectsDir, existing.id, { folder, codeWord }, { now });
   const createdAt = now();
   ensureDirectory(libraryRoot(projectsDir));
-  const base = `${datePrefix(createdAt)}_${slugifyProjectName(codeWord)}`;
+  const prefix = `${datePrefix(createdAt)}_`;
+  const slug = slugifyProjectName(codeWord);
+  const base = `${prefix}${slug}`;
   let id = base;
   for (let attempt = 2; ; attempt += 1) {
     try {
@@ -83,7 +83,8 @@ function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
       break;
     } catch (error) {
       if (!error || error.code !== 'EEXIST' || attempt > 99) throw error;
-      id = `${base}-${attempt}`;
+      const suffix = `-${attempt}`;
+      id = `${prefix}${slug.slice(0, 80 - suffix.length).replace(/-+$/, '')}${suffix}`;
     }
   }
   const passport = {
@@ -137,7 +138,6 @@ function findByCodeWord(projectsDir, codeWord) {
   const matches = listLeadMagnets(projectsDir).entries
     .filter((item) => item.codeWords.includes(word))
     .sort((a, b) => Number(b.approved !== null) - Number(a.approved !== null));
-  if (matches.length > 1) throw new Error(`кодовое слово ${word} принадлежит нескольким лид-магнитам`);
   return matches;
 }
 
@@ -145,8 +145,6 @@ function linkVideo(projectsDir, id, { folder, codeWord }, { now = () => new Date
   const passport = readLeadMagnet(projectsDir, id);
   const word = normalizeCodeWord(codeWord);
   assertFolder(folder);
-  const owner = findByCodeWord(projectsDir, word)[0];
-  if (owner && owner.id !== id) throw new Error(`кодовое слово ${word} уже принадлежит другому лид-магниту`);
   return savePassport(projectsDir, {
     ...passport,
     videos: passport.videos.includes(folder) ? passport.videos : [...passport.videos, folder],
