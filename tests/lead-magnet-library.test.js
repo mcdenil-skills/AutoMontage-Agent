@@ -70,6 +70,20 @@ test('a repeated long word gets a suffix within the safe ID length', (t) => {
   assert.ok(second.id.endsWith('-2'));
 });
 
+test('a maximum-length transliterated word creates three valid distinct IDs', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const word = 'Щ'.repeat(40);
+  const magnets = [create(projectsDir, folder, word), create(projectsDir, 'second-video', word),
+    create(projectsDir, 'third-video', word)];
+  for (const magnet of magnets) {
+    assert.match(magnet.id, /^2026\.09\.30_[a-z0-9-]{1,80}$/);
+    assert.deepEqual(library.readLeadMagnet(projectsDir, magnet.id), magnet);
+  }
+  assert.equal(new Set(magnets.map((magnet) => magnet.id)).size, 3);
+  assert.ok(magnets[1].id.endsWith('-2'));
+  assert.ok(magnets[2].id.endsWith('-3'));
+});
+
 test('find by code word puts an approved magnet before new magnets sharing the word', (t) => {
   const { projectsDir, folder } = makeVideoProject(t);
   const first = create(projectsDir, folder);
@@ -80,8 +94,7 @@ test('find by code word puts an approved magnet before new magnets sharing the w
     revisions: [{ n: 1, dir: 'v01', status: 'approved', pageSha256: 'a'.repeat(64), createdAt: NOW().toISOString() }],
   }, NOW);
   const matches = library.findByCodeWord(projectsDir, 'гайд');
-  assert.equal(matches[0].id, approved.id);
-  assert.deepEqual(new Set(matches.slice(1).map((item) => item.id)), new Set([first.id, third.id]));
+  assert.deepEqual(matches.map((item) => item.id), [approved.id, third.id, first.id]);
 });
 
 test('find by code word and link another video', (t) => {

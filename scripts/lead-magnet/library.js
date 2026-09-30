@@ -75,7 +75,7 @@ function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
   ensureDirectory(libraryRoot(projectsDir));
   const prefix = `${datePrefix(createdAt)}_`;
   const slug = slugifyProjectName(codeWord);
-  const base = `${prefix}${slug}`;
+  const base = `${prefix}${slug.slice(0, 80).replace(/-+$/, '')}`;
   let id = base;
   for (let attempt = 2; ; attempt += 1) {
     try {
@@ -137,7 +137,9 @@ function findByCodeWord(projectsDir, codeWord) {
   const word = normalizeCodeWord(codeWord);
   const matches = listLeadMagnets(projectsDir).entries
     .filter((item) => item.codeWords.includes(word))
-    .sort((a, b) => Number(b.approved !== null) - Number(a.approved !== null));
+    .sort((a, b) => Number(b.approved !== null) - Number(a.approved !== null)
+      || b.createdAt.localeCompare(a.createdAt)
+      || b.id.localeCompare(a.id));
   return matches;
 }
 
