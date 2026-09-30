@@ -126,7 +126,8 @@ const COMMANDS = {
     const passport = library.readLeadMagnet(flags.projectsDir, id);
     const projectDir = videoProject(flags.projectsDir, folder);
     checkedVideoFile(projectDir, 'lead-magnet/offers.json');
-    const offer = readOffers(projectDir).find((item) => passport.codeWords.includes(item.codeWord));
+    const offers = readOffers(projectDir);
+    const offer = passport.codeWords.map((word) => offers.find((item) => item.codeWord === word)).find(Boolean);
     if (!offer) throw new Error(`у ролика ${folder} нет обещания со словом лид-магнита`);
     library.updatePromise(flags.projectsDir, id, { quote: offer.quote, startSec: offer.startSec, endSec: offer.endSec, sourceFolder: folder });
     write(`Обещание обновлено: «${offer.quote}». Собери новую ревизию.`);

@@ -119,6 +119,20 @@ test('promise update rejects a symlinked offer directory and leaves the passport
   assert.deepEqual(library.readLeadMagnet(projectsDir, id), before);
 });
 
+test('promise update prefers passport code word order over offer file order', async (t) => {
+  const { projectsDir, projectDir, folder, id } = makeLeadMagnet(t);
+  library.linkVideo(projectsDir, id, { folder, codeWord: 'ЧЕКЛИСТ' });
+  const alternate = 'Напишите ГАЙД в комментариях';
+  for (const [word, quote] of [['ЧЕКЛИСТ', alternate], ['ГАЙД', QUOTE]]) {
+    const result = await run(['offer', 'add', '--project-dir', projectDir, '--code-word', word,
+      '--kind', 'dm', '--quote', quote, '--units', JSON.stringify(UNITS)]);
+    assert.equal(result.code, 0, result.out);
+  }
+  const updated = await run(['promise', 'update', '--projects-dir', projectsDir, '--id', id, '--from', folder]);
+  assert.equal(updated.code, 0, updated.out);
+  assert.equal(library.readLeadMagnet(projectsDir, id).promise.quote, QUOTE);
+});
+
 test('create and promise update reject a video folder outside projects', async (t) => {
   const { projectsDir, id } = makeLeadMagnet(t);
   const P = ['--projects-dir', projectsDir];
