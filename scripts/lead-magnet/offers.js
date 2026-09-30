@@ -1,6 +1,7 @@
 // scripts/lead-magnet/offers.js
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const Ajv = require('ajv');
 
 const schema = require('../../schema/lead-magnet-offers.schema.json');
@@ -38,6 +39,13 @@ function resolveSource(projectDir, sourceKind, stored) {
   }
 }
 
+function offerId(codeWord) {
+  const slug = slugifyProjectName(codeWord);
+  if (slug.length <= 60) return `o-${slug}`;
+  const suffix = createHash('sha256').update(codeWord).digest('hex').slice(0, 16);
+  return `o-${slug.slice(0, 43).replace(/-+$/, '')}-${suffix}`;
+}
+
 // Агент не придумывает цитату: она обязана дословно (с точностью до регистра и
 // пунктуации) найтись в расшифровке или в утверждённом сценарии. Иначе запись не пишется.
 function addOffer(projectDir, input, { now = () => new Date() } = {}) {
@@ -64,7 +72,7 @@ function addOffer(projectDir, input, { now = () => new Date() } = {}) {
     }
   }
   const offer = {
-    id: `o-${slugifyProjectName(codeWord)}`,
+    id: offerId(codeWord),
     codeWord,
     kind: input.kind,
     quote,

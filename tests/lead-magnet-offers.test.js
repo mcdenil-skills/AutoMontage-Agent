@@ -33,6 +33,20 @@ test('re-detecting the same code word replaces the offer instead of duplicating 
   assert.equal(offers[0].kind, 'dm');
 });
 
+test('valid long Cyrillic code words get bounded, stable, distinct IDs', (t) => {
+  const { projectDir } = makeVideoProject(t);
+  const firstWord = 'Щ'.repeat(40);
+  const secondWord = `${'Щ'.repeat(39)}Ш`;
+  const input = { kind: 'comment-keyword', quote: QUOTE, units: UNITS };
+  const first = addOffer(projectDir, { ...input, codeWord: firstWord }, { now: NOW });
+  const second = addOffer(projectDir, { ...input, codeWord: secondWord }, { now: NOW });
+  assert.match(first.id, /^o-[a-z0-9-]{1,60}$/);
+  assert.match(second.id, /^o-[a-z0-9-]{1,60}$/);
+  assert.notEqual(first.id, second.id);
+  assert.equal(addOffer(projectDir, { ...input, codeWord: firstWord.toLowerCase() }, { now: NOW }).id, first.id);
+  assert.equal(readOffers(projectDir).length, 2);
+});
+
 test('a quote that is not in the speech is rejected and nothing is written', (t) => {
   const { projectDir } = makeVideoProject(t);
   assert.throws(
