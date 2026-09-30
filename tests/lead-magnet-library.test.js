@@ -1,0 +1,88 @@
+// tests/lead-magnet-library.test.js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const library = require('../scripts/lead-magnet/library');
+const { QUOTE, UNITS, makeVideoProject } = require('./helpers/lead-magnet-fixtures');
+
+const NOW = () => new Date('2026-09-30T12:00:00.000Z');
+const PARAMS = {
+  format: 'guide', audience: 'новички',
+  design: { mode: 'brand', take: { composition: true, colors: false, fonts: false }, likeId: null, note: '', references: [] },
+  texts: ['dm'], wishes: '', promiseConfirmed: true,
+};
+
+function create(projectsDir, folder, codeWord = 'ГАЙД') {
+  return library.createLeadMagnet(projectsDir, {
+    codeWord, title: 'Сайт без кода', promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder },
+    units: UNITS, params: PARAMS, videoFolder: folder,
+  }, { now: NOW });
+}
+
+function writeRevisionFiles(dir, { withCheck = true } = {}) {
+  fs.writeFileSync(path.join(dir, 'page.html'), '<!doctype html><html><body>ok</body></html>');
+  fs.writeFileSync(path.join(dir, 'page.pdf'), '%PDF-1.7');
+  fs.writeFileSync(path.join(dir, 'content.md'), '# ok');
+  fs.writeFileSync(path.join(dir, 'texts', 'dm.txt'), 'Привет');
+  fs.writeFileSync(path.join(dir, 'facts.json'), JSON.stringify({ version: 1, checkedAt: 'x', items: [] }));
+  if (withCheck) {
+    const pageSha256 = require('../scripts/pult/files').hashFile(path.join(dir, 'page.html'));
+    fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({ version: 1, checkedAt: 'x', pageSha256, ok: true, items: [] }));
+  }
+}
+
+test('lead magnet gets a dated id, a passport and a link to its video', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const passport = create(projectsDir, folder);
+  assert.equal(passport.id, '2026.09.30_gayd');
+  assert.deepEqual(passport.codeWords, ['ГАЙД']);
+  assert.deepEqual(passport.videos, [folder]);
+  assert.equal(passport.current, null);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id), passport);
+  assert.equal(create(projectsDir, folder).id, '2026.09.30_gayd-2');
+});
+
+test('find by code word and link another video', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  create(projectsDir, folder, 'ПРОМПТЫ');
+  assert.deepEqual(library.findByCodeWord(projectsDir, 'гайд').map((item) => item.id), [id]);
+  const linked = library.linkVideo(projectsDir, id, { folder: 'другой-ролик', codeWord: 'ГАЙД 2' }, { now: NOW });
+  assert.deepEqual(linked.videos, [folder, 'другой-ролик']);
+  assert.deepEqual(linked.codeWords, ['ГАЙД', 'ГАЙД 2']);
+  assert.throws(() => library.linkVideo(projectsDir, id, { folder: '../x', codeWord: 'ГАЙД' }), /папк/);
+});
+
+test('revision goes building → draft only with all files and a matching check report', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  const { n, dir } = library.startRevision(projectsDir, id, { now: NOW });
+  assert.equal(n, 1);
+  assert.equal(path.basename(dir), 'v01');
+  assert.throws(() => library.publishRevision(projectsDir, id, 1, { now: NOW }), /не хватает файла/);
+  writeRevisionFiles(dir, { withCheck: false });
+  assert.throws(() => library.publishRevision(projectsDir, id, 1, { now: NOW }), /проверку/);
+  writeRevisionFiles(dir);
+  const passport = library.publishRevision(projectsDir, id, 1, { now: NOW });
+  assert.equal(passport.current, 1);
+  assert.equal(passport.revisions[0].status, 'draft');
+  assert.match(passport.revisions[0].pageSha256, /^[a-f0-9]{64}$/);
+  assert.equal(library.startRevision(projectsDir, id, { now: NOW }).n, 2);
+});
+
+test('broken passports are listed separately and a promise can be acknowledged or updated', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const { id } = create(projectsDir, folder);
+  fs.mkdirSync(path.join(projectsDir, '.lead-magnets', '2026.09.01_bad'));
+  fs.writeFileSync(path.join(projectsDir, '.lead-magnets', '2026.09.01_bad', 'lead-magnet.json'), '{');
+  const list = library.listLeadMagnets(projectsDir);
+  assert.deepEqual(list.entries.map((item) => item.id), [id]);
+  assert.equal(list.broken[0].id, '2026.09.01_bad');
+  const acknowledged = library.acknowledgePromise(projectsDir, id, 'Новая цитата из ролика', { now: NOW });
+  assert.deepEqual(acknowledged.promise.acknowledged, ['новая цитата из ролика']);
+  const updated = library.updatePromise(projectsDir, id, { quote: 'и я пришлю семь промптов', startSec: 61, endSec: 63, sourceFolder: folder }, { now: NOW });
+  assert.equal(updated.promise.quote, 'и я пришлю семь промптов');
+  assert.deepEqual(updated.promise.acknowledged, []);
+});
