@@ -3,11 +3,22 @@
   "title": "Lead magnet passport",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "id", "title", "codeWords", "promise", "units", "params", "videos", "revisions", "current", "approved", "createdAt", "updatedAt"],
+  "required": ["version", "id", "title", "codeWords", "request", "promise", "units", "params", "videos", "revisions", "current", "approved", "createdAt", "updatedAt"],
   "properties": {
     "version": { "const": 1 },
     "id": { "type": "string", "pattern": "^\\d{4}\\.\\d{2}\\.\\d{2}_[a-z0-9-]{1,80}$" },
     "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "request": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": false, "required": ["folder", "decisionId"],
+          "properties": {
+            "folder": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "decisionId": { "type": "string", "pattern": "^r-[a-f0-9]{8}$" }
+          }
+        }
+      ]
+    },
     "codeWords": {
       "type": "array", "uniqueItems": true, "maxItems": 10,
       "items": { "type": "string", "pattern": "^[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 -]{0,39}$" }

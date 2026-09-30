@@ -7,6 +7,7 @@ const { resolveBrand } = require('./brand');
 const { checkRevision } = require('./check');
 const { setFunnelState } = require('./funnel');
 const library = require('./library');
+const { DECISION_ID } = require('./constants');
 const { addOffer, readOffers } = require('./offers');
 const { readDecisions } = require('./requests');
 
@@ -82,7 +83,14 @@ const COMMANDS = {
     const folder = need(flags, 'from');
     const [decisionId] = flags.positional;
     const projectDir = videoProject(flags.projectsDir, folder);
+    if (typeof decisionId !== 'string' || !DECISION_ID.test(decisionId)) throw new Error('лид-магнит: неверный id запроса');
     checkedVideoFile(projectDir, 'pult/lead-magnet.json', true);
+    const existing = library.listLeadMagnets(flags.projectsDir).entries.find((item) => item.request?.folder === folder
+      && item.request.decisionId === decisionId);
+    if (existing) {
+      write(`Лид-магнит по запросу ${decisionId} уже создан: ${existing.id}. Продолжай его`);
+      return;
+    }
     const decision = readDecisions(projectDir).find((item) => item.id === decisionId && item.type === 'create' && item.status === 'new');
     if (!decision) throw new Error(`запрос ${decisionId} не найден в ${folder}`);
     let offer = null;
@@ -100,6 +108,7 @@ const COMMANDS = {
       units: offer ? offer.units : [],
       params: decision.params,
       videoFolder: folder,
+      request: { folder, decisionId },
     });
     write(`Создан лид-магнит ${passport.id}. Дальше: automontage lead-magnet revision start --id ${passport.id}`);
   },

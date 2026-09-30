@@ -40,12 +40,46 @@ test('lead magnet gets a dated id, a passport and a link to its video', (t) => {
   assert.equal(passport.id, '2026.09.30_gayd');
   assert.deepEqual(passport.codeWords, ['ГАЙД']);
   assert.deepEqual(passport.videos, [folder]);
+  assert.equal(passport.request, null);
   assert.equal(passport.current, null);
   assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id), passport);
   const second = create(projectsDir, 'second-video');
   assert.equal(second.id, '2026.09.30_gayd-2');
   assert.deepEqual(second.videos, ['second-video']);
   assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id).videos, [folder]);
+});
+
+test('a passport preserves the request that created it', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const passport = library.createLeadMagnet(projectsDir, {
+    codeWord: 'ГАЙД', title: 'Сайт без кода',
+    promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder },
+    units: UNITS, params: PARAMS, videoFolder: folder,
+    request: { folder, decisionId: 'r-1234abcd' },
+  }, { now: NOW });
+  assert.deepEqual(library.readLeadMagnet(projectsDir, passport.id).request,
+    { folder, decisionId: 'r-1234abcd' });
+});
+
+test('a request cannot name a different video folder or create a library entry', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  assert.throws(() => library.createLeadMagnet(projectsDir, {
+    codeWord: 'ГАЙД', title: 'Сайт без кода',
+    promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder },
+    units: UNITS, params: PARAMS, videoFolder: folder,
+    request: { folder: 'другой-ролик', decisionId: 'r-1234abcd' },
+  }, { now: NOW }), /неверный запрос/);
+  assert.equal(fs.existsSync(path.join(projectsDir, '.lead-magnets')), false);
+});
+
+test('a passport created before request tracking remains readable', (t) => {
+  const { projectsDir, folder } = makeVideoProject(t);
+  const passport = create(projectsDir, folder);
+  const file = path.join(projectsDir, '.lead-magnets', passport.id, 'lead-magnet.json');
+  const legacy = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete legacy.request;
+  fs.writeFileSync(file, JSON.stringify(legacy));
+  assert.equal(library.readLeadMagnet(projectsDir, passport.id).request, null);
 });
 
 test('creating three magnets with the same word gives each an independent passport', (t) => {

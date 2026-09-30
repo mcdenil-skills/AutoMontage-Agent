@@ -77,6 +77,36 @@ test('create consumes only new create requests; accepted and wrong-type IDs cann
   assert.equal(library.listLeadMagnets(projectsDir).entries.length, 1);
 });
 
+test('create replays the same request after acceptance without making another folder', async (t) => {
+  const { projectsDir, projectDir, folder } = makeVideoProject(t);
+  const P = ['--projects-dir', projectsDir];
+  const request = addDecision(projectDir, { type: 'create', offerId: null, codeWord: null,
+    params: { ...PARAMS, promiseConfirmed: false } });
+  const first = await run(['create', ...P, '--from', folder, request.id, '--code-word', 'ГАЙД', '--title', 'Первый']);
+  assert.equal(first.code, 0, first.out);
+  const [passport] = library.listLeadMagnets(projectsDir).entries;
+  assert.deepEqual(passport.request, { folder, decisionId: request.id });
+  acceptDecision(projectDir, request.id);
+  const replay = await run(['create', ...P, '--from', folder, request.id, '--title', 'Другой заголовок']);
+  assert.deepEqual(replay, { code: 0, out: `Лид-магнит по запросу ${request.id} уже создан: ${passport.id}. Продолжай его` });
+  assert.deepEqual(library.listLeadMagnets(projectsDir).entries.map((item) => item.id), [passport.id]);
+  assert.equal(fs.existsSync(path.join(projectsDir, '.lead-magnets', `${passport.id}-2`)), false);
+});
+
+test('different requests with the same code word create separate magnets', async (t) => {
+  const { projectsDir, projectDir, folder } = makeVideoProject(t);
+  const P = ['--projects-dir', projectsDir];
+  const first = addDecision(projectDir, { type: 'create', offerId: null, codeWord: 'ГАЙД',
+    params: { ...PARAMS, promiseConfirmed: false } });
+  const second = addDecision(projectDir, { type: 'create', offerId: null, codeWord: 'ГАЙД',
+    params: { ...PARAMS, promiseConfirmed: false } });
+  assert.equal((await run(['create', ...P, '--from', folder, first.id, '--title', 'Первый'])).code, 0);
+  assert.equal((await run(['create', ...P, '--from', folder, second.id, '--title', 'Второй'])).code, 0);
+  const magnets = library.findByCodeWord(projectsDir, 'ГАЙД');
+  assert.equal(magnets.length, 2);
+  assert.ok(magnets.some((item) => item.id.endsWith('-2') && item.request.decisionId === second.id));
+});
+
 test('create rejects a missing offer identity but permits an explicit manual request', async (t) => {
   const { projectsDir, projectDir, folder } = makeVideoProject(t);
   const P = ['--projects-dir', projectsDir];

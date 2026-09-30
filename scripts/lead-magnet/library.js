@@ -8,7 +8,7 @@ const requestsSchema = require('../../schema/lead-magnet-requests.schema.json');
 const { resolveProjectPath, slugifyProjectName } = require('../project/workspace');
 const { ensureDirectory, hashFile, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
 const { isSafeName } = require('../pult/names');
-const { LEAD_MAGNET_ID, LIBRARY_DIR, TEXT_FILES, formatAjvErrors, normalizeCodeWord } = require('./constants');
+const { DECISION_ID, LEAD_MAGNET_ID, LIBRARY_DIR, TEXT_FILES, formatAjvErrors, normalizeCodeWord } = require('./constants');
 const { normalizeText } = require('./text');
 
 const ajv = new Ajv({ allErrors: true });
@@ -47,6 +47,9 @@ function revisionFile(projectsDir, id, n, relative) {
 function readLeadMagnet(projectsDir, id) {
   const value = readJsonIfExists(passportPath(projectsDir, id), PASSPORT);
   if (value === undefined) throw new Error(`лид-магнит ${id} не найден`);
+  if (value && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'request')) {
+    value.request = null;
+  }
   if (!validatePassport(value) || value.id !== id) throw new Error(`${PASSPORT}: не соответствует схеме`);
   return value;
 }
@@ -71,6 +74,11 @@ function assertFolder(folder) {
 function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
   const codeWord = normalizeCodeWord(input.codeWord);
   const folder = assertFolder(input.videoFolder);
+  const request = input.request === undefined ? null : input.request;
+  if (request !== null && (typeof request !== 'object' || Array.isArray(request)
+    || !isSafeName(request.folder) || request.folder !== folder || !DECISION_ID.test(request.decisionId))) {
+    throw new Error('лид-магнит: неверный запрос');
+  }
   const createdAt = now();
   ensureDirectory(libraryRoot(projectsDir));
   const prefix = `${datePrefix(createdAt)}_`;
@@ -91,6 +99,7 @@ function createLeadMagnet(projectsDir, input, { now = () => new Date() } = {}) {
     version: 1,
     id,
     title: input.title,
+    request,
     codeWords: [codeWord],
     promise: { ...input.promise, acknowledged: [] },
     units: input.units,
