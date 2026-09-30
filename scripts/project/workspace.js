@@ -1955,6 +1955,7 @@ module.exports = {
   resolveProjectPath,
   runRenderLifecycle,
   saveDraftRevision,
+  stageOwnedSiblingFile,
   slugifyProjectName,
   validateProjectManifest,
   withProjectMutation,

@@ -5,8 +5,8 @@ const { randomBytes } = require('node:crypto');
 const Ajv = require('ajv');
 
 const schema = require('../../schema/lead-magnet-comments.schema.json');
-const { resolveProjectPath } = require('../project/workspace');
-const { ensureDirectory, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
+const { captureProjectDirectoryGuard, resolveProjectPath, stageOwnedSiblingFile } = require('../project/workspace');
+const { ensureDirectory, readJsonIfExists } = require('../pult/files');
 const { leadMagnetDir, readLeadMagnet } = require('./library');
 const { LIBRARY_DIR } = require('./constants');
 
@@ -54,7 +54,17 @@ function readLeadMagnetComments(projectsDir, id) {
 function writeComments(projectsDir, id, comments) {
   const value = { version: 1, comments };
   if (!validateFile(value)) throw new Error('правка лид-магнита: неверные данные');
-  writeJsonAtomic(commentsPath(projectsDir, id), value);
+  const destination = commentsPath(projectsDir, id);
+  ensureDirectory(path.dirname(destination));
+  const guard = captureProjectDirectoryGuard(projectsDir, destination, fs, LABEL);
+  const stage = stageOwnedSiblingFile(destination, `${JSON.stringify(value, null, 2)}\n`, {
+    purpose: 'comments', assertParentCurrent: guard.assertCurrent, verifyPublishedIdentity: true,
+  });
+  try {
+    stage.commitReplace();
+  } finally {
+    stage.cleanupTemp();
+  }
 }
 
 function isPng(bytes) {
@@ -63,7 +73,11 @@ function isPng(bytes) {
 }
 
 function addLeadMagnetComment(projectsDir, id, input, { now = () => new Date(), id: makeId = () => `c-${randomBytes(4).toString('hex')}` } = {}) {
-  readLeadMagnet(projectsDir, id);
+  const passport = readLeadMagnet(projectsDir, id);
+  if (!passport.revisions.some((revision) => revision.n === input.revision
+    && (revision.status === 'draft' || revision.status === 'approved') && revision.pageSha256)) {
+    throw new Error('правка лид-магнита: ревизия не опубликована для просмотра');
+  }
   const text = typeof input.text === 'string' ? input.text.trim() : '';
   const comment = {
     id: makeId(),
@@ -80,15 +94,46 @@ function addLeadMagnetComment(projectsDir, id, input, { now = () => new Date(), 
     throw new Error('правка лид-магнита: неверные данные');
   }
   // Снимок – подсказка агенту «где это». Не PNG или слишком большой – правка остаётся без снимка.
+  let snapshotStage = null;
+  let snapshotGuard = null;
   if (input.target && input.target.kind === 'block' && isPng(input.snapshotBytes)) {
     ensureDirectory(path.dirname(commentsPath(projectsDir, id)));
     const framesDir = framesPath(projectsDir, id);
     ensureDirectory(framesDir);
-    fs.writeFileSync(snapshotFile(projectsDir, id, comment.id), input.snapshotBytes,
-      { flag: 'wx', mode: 0o644 });
+    const destination = snapshotFile(projectsDir, id, comment.id);
+    snapshotGuard = captureProjectDirectoryGuard(projectsDir, destination, fs, 'снимок правки');
+    snapshotStage = stageOwnedSiblingFile(destination, input.snapshotBytes, {
+      purpose: 'snapshot', assertParentCurrent: snapshotGuard.assertCurrent,
+      verifyPublishedIdentity: true,
+    });
+    try {
+      snapshotStage.commitNoReplace();
+    } catch (error) {
+      try {
+        snapshotGuard.assertCurrent();
+        snapshotStage.removeCommitted();
+      } catch (cleanupError) {
+        error.cleanupError = cleanupError;
+      }
+      throw error;
+    } finally {
+      snapshotStage.cleanupTemp();
+    }
     comment.snapshot = snapshotPathFor(comment.id);
   }
-  writeComments(projectsDir, id, next);
+  try {
+    writeComments(projectsDir, id, next);
+  } catch (error) {
+    if (snapshotStage) {
+      try {
+        snapshotGuard.assertCurrent();
+        snapshotStage.removeCommitted();
+      } catch (cleanupError) {
+        error.cleanupError = cleanupError;
+      }
+    }
+    throw error;
+  }
   return comment;
 }
 

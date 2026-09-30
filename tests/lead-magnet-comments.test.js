@@ -12,15 +12,58 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 const NOW = () => new Date('2026-09-30T13:00:00.000Z');
 const BLOCK = { kind: 'block', blockId: 'step-2', view: 'phone', rect: { x: 10, y: 400, w: 370, h: 180 } };
 
-function setup(t) {
+function setup(t, { publish = true } = {}) {
   const { projectsDir, folder } = makeVideoProject(t);
   const { id } = library.createLeadMagnet(projectsDir, {
     codeWord: 'ГАЙД', title: 'Сайт', promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder }, units: UNITS,
     params: { format: 'guide', audience: '', design: { mode: 'brand', take: { composition: true, colors: false, fonts: false }, likeId: null, note: '', references: [] }, texts: ['dm'], wishes: '', promiseConfirmed: true },
     videoFolder: folder,
   });
+  if (publish) publishDraft(projectsDir, id);
   return { projectsDir, id };
 }
+
+function publishDraft(projectsDir, id, { started = false } = {}) {
+  const dir = started ? library.revisionDir(projectsDir, id, 1)
+    : library.startRevision(projectsDir, id, { now: NOW }).dir;
+  fs.writeFileSync(path.join(dir, 'page.html'), '<!doctype html><html><body>ok</body></html>');
+  fs.writeFileSync(path.join(dir, 'page.pdf'), '%PDF-1.7');
+  fs.writeFileSync(path.join(dir, 'content.md'), '# ok');
+  fs.writeFileSync(path.join(dir, 'facts.json'), JSON.stringify({ version: 1, checkedAt: 'x', items: [] }));
+  fs.writeFileSync(path.join(dir, 'texts', 'dm.txt'), 'Привет');
+  const pageSha256 = require('../scripts/pult/files').hashFile(path.join(dir, 'page.html'));
+  fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({ version: 1, checkedAt: 'x', pageSha256, ok: true, items: [] }));
+  library.publishRevision(projectsDir, id, 1, { now: NOW });
+}
+
+function swapAtWrite(t, destination, ancestor, outside) {
+  const originalOpen = fs.openSync;
+  const originalWrite = fs.writeFileSync;
+  let swapped = false;
+  const swap = (candidate) => {
+    if (swapped || typeof candidate !== 'string' || !candidate.startsWith(destination)) return;
+    if (candidate === destination && destination.endsWith('.json')) return;
+    fs.renameSync(ancestor, outside);
+    fs.symlinkSync(outside, ancestor);
+    swapped = true;
+  };
+  fs.openSync = (candidate, ...args) => { swap(candidate); return originalOpen(candidate, ...args); };
+  fs.writeFileSync = (candidate, ...args) => { swap(candidate); return originalWrite(candidate, ...args); };
+  t.after(() => { fs.openSync = originalOpen; fs.writeFileSync = originalWrite; });
+  return () => swapped;
+}
+
+test('comments require a published revision; a draft is reviewable', (t) => {
+  const { projectsDir, id } = setup(t, { publish: false });
+  const input = { revision: 1, target: BLOCK, text: 'поправь' };
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id, input), /ревизи/);
+  library.startRevision(projectsDir, id, { now: NOW });
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id, input), /ревизи/);
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id, { ...input, revision: 2 }), /ревизи/);
+  assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
+  publishDraft(projectsDir, id, { started: true });
+  assert.equal(comments.addLeadMagnetComment(projectsDir, id, input).revision, 1);
+});
 
 test('block comment keeps revision, block, view, rect and a PNG snapshot', (t) => {
   const { projectsDir, id } = setup(t);
@@ -107,4 +150,67 @@ test('deleting a comment rejects a symlinked snapshot without losing the comment
   assert.throws(() => comments.deleteLeadMagnetComment(projectsDir, id, comment.id), /symbolic link/);
   assert.deepEqual(fs.readFileSync(outside), PNG);
   assert.equal(comments.readLeadMagnetComments(projectsDir, id).length, 1);
+});
+
+test('snapshot bytes cannot escape when frames is swapped at the write boundary', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const frames = path.join(magnet, 'pult', 'frames');
+  fs.mkdirSync(path.dirname(frames));
+  fs.mkdirSync(frames);
+  const outside = path.join(path.dirname(projectsDir), 'moved-frames');
+  const swapped = swapAtWrite(t, path.join(frames, 'c-00000006.png'), frames, outside);
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-00000006' }), /identity changed|symbolic link/);
+  assert.equal(swapped(), true);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('JSON bytes cannot escape when pult is swapped at the write boundary', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const pult = path.join(magnet, 'pult');
+  fs.mkdirSync(pult);
+  const outside = path.join(path.dirname(projectsDir), 'moved-pult');
+  const swapped = swapAtWrite(t, path.join(pult, 'comments.json'), pult, outside);
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: { kind: 'text', text: 'dm' }, text: 'x' },
+    { now: NOW, id: () => 'c-00000007' }), /identity changed|symbolic link/);
+  assert.equal(swapped(), true);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('failed JSON persistence removes its owned PNG; foreign replacement survives', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const snapshot = path.join(magnet, 'pult', 'frames', 'c-00000008.png');
+  const originalRename = fs.renameSync;
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(magnet, 'pult', 'comments.json')) {
+      assert.deepEqual(fs.readFileSync(snapshot), PNG);
+      throw new Error('injected JSON persistence failure');
+    }
+    return originalRename(source, destination);
+  };
+  t.after(() => { fs.renameSync = originalRename; });
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-00000008' }), /injected JSON persistence failure/);
+  assert.equal(fs.existsSync(snapshot), false);
+  assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
+
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(magnet, 'pult', 'comments.json')) {
+      fs.unlinkSync(snapshot);
+      fs.writeFileSync(snapshot, 'foreign');
+      throw new Error('injected JSON persistence failure');
+    }
+    return originalRename(source, destination);
+  };
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-00000008' }), /injected JSON persistence failure/);
+  assert.equal(fs.readFileSync(snapshot, 'utf8'), 'foreign');
+  assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
 });
