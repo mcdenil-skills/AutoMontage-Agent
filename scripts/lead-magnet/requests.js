@@ -99,6 +99,9 @@ function checkParams(projectDir, params, { hasOffer }) {
 function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-${randomBytes(4).toString('hex')}` } = {}) {
   if (!REQUIRED_BY_TYPE[input.type]) throw new Error('лид-магнит: неизвестное решение');
   if (!hasRequiredFields(input)) throw new Error('лид-магнит: обязательные поля решения не заполнены');
+  if (input.type === 'promise-keep' && typeof input.offerId !== 'string') {
+    throw new Error('лид-магнит: обязательный id обещания не указан');
+  }
   const createdAt = now().toISOString();
   const decision = { id: id(), type: input.type, createdAt, status: 'new' };
   for (const field of REQUIRED_BY_TYPE[input.type]) decision[field] = input[field];

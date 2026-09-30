@@ -107,7 +107,7 @@ test('promise-keep acknowledges a disappeared offer with null', (t) => {
   assert.equal(card(library.readLeadMagnet(projectsDir, magnet.id)).status, 'ready');
 });
 
-test('promise-keep without an offer id cannot mutate a passport or write a decision', (t) => {
+test('promise-keep without a usable offer id cannot mutate a passport or write a decision', (t) => {
   const { projectDir, projectsDir, folder } = withOffer(t);
   const magnet = library.createLeadMagnet(projectsDir, {
     codeWord: 'ГАЙД', title: 'Готовый гайд', promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder },
@@ -118,6 +118,7 @@ test('promise-keep without an offer id cannot mutate a passport or write a decis
   for (const omitted of [
     { type: 'promise-keep', leadMagnetId: magnet.id },
     { type: 'promise-keep', offerId: undefined, leadMagnetId: magnet.id },
+    { type: 'promise-keep', offerId: null, leadMagnetId: magnet.id },
   ]) {
     assert.throws(() => addDecision(projectDir, omitted, { now: NOW, id: ID }), /обязательн|формат/);
     assert.deepEqual(fs.readFileSync(passportPath), before);
