@@ -71,6 +71,7 @@ test('block comment keeps revision, block, view, rect and a PNG snapshot', (t) =
   assert.equal(comment.text, 'короче');
   assert.equal(comment.snapshot, 'pult/frames/c-0000000a.png');
   assert.deepEqual(fs.readFileSync(path.join(library.leadMagnetDir(projectsDir, id), 'pult', 'frames', 'c-0000000a.png')), PNG);
+  assert.deepEqual(fs.readdirSync(path.join(library.leadMagnetDir(projectsDir, id), 'pult', 'frames')), ['c-0000000a.png']);
   assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), [comment]);
 });
 
@@ -213,4 +214,86 @@ test('failed JSON persistence removes its owned PNG; foreign replacement survive
     { now: NOW, id: () => 'c-00000008' }), /injected JSON persistence failure/);
   assert.equal(fs.readFileSync(snapshot, 'utf8'), 'foreign');
   assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
+});
+
+test('snapshot identity stays pinned until JSON persistence finishes', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const frames = path.join(magnet, 'pult', 'frames');
+  const snapshot = path.join(frames, 'c-00000009.png');
+  const originalRename = fs.renameSync;
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(magnet, 'pult', 'comments.json')) {
+      // A live second link prevents Linux from recycling the snapshot inode
+      // after a concurrent unlink and replacement at the same path.
+      assert.equal(fs.statSync(snapshot).nlink, 2);
+      fs.unlinkSync(snapshot);
+      fs.writeFileSync(snapshot, 'foreign');
+      throw new Error('injected JSON persistence failure');
+    }
+    return originalRename(source, destination);
+  };
+  t.after(() => { fs.renameSync = originalRename; });
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-00000009' }), /injected JSON persistence failure/);
+  assert.equal(fs.readFileSync(snapshot, 'utf8'), 'foreign');
+  assert.deepEqual(fs.readdirSync(frames), ['c-00000009.png']);
+  assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
+});
+
+test('failed snapshot rollback still clears its temporary link', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const frames = path.join(magnet, 'pult', 'frames');
+  const snapshot = path.join(frames, 'c-0000000b.png');
+  const originalRename = fs.renameSync;
+  const originalUnlink = fs.unlinkSync;
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(magnet, 'pult', 'comments.json')) {
+      throw new Error('injected JSON persistence failure');
+    }
+    return originalRename(source, destination);
+  };
+  fs.unlinkSync = (candidate) => {
+    if (candidate === snapshot) throw new Error('injected snapshot rollback failure');
+    return originalUnlink(candidate);
+  };
+  t.after(() => { fs.renameSync = originalRename; fs.unlinkSync = originalUnlink; });
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-0000000b' }), /injected JSON persistence failure/);
+  assert.deepEqual(fs.readdirSync(frames), ['c-0000000b.png']);
+  assert.deepEqual(comments.readLeadMagnetComments(projectsDir, id), []);
+});
+
+test('snapshot cleanup never follows a swapped frames directory', (t) => {
+  const { projectsDir, id } = setup(t);
+  const magnet = library.leadMagnetDir(projectsDir, id);
+  const frames = path.join(magnet, 'pult', 'frames');
+  const moved = path.join(path.dirname(projectsDir), 'moved-comment-frames');
+  const outside = path.join(path.dirname(projectsDir), 'outside-comment-frames');
+  const originalRename = fs.renameSync;
+  let foreignLink;
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(magnet, 'pult', 'comments.json')) {
+      const temporary = fs.readdirSync(frames).find((name) => name.includes('.tmp-snapshot-'));
+      assert.ok(temporary);
+      originalRename(frames, moved);
+      fs.mkdirSync(outside);
+      foreignLink = path.join(outside, temporary);
+      fs.linkSync(path.join(moved, temporary), foreignLink);
+      fs.symlinkSync(outside, frames);
+    }
+    return originalRename(source, destination);
+  };
+  t.after(() => { fs.renameSync = originalRename; });
+  assert.throws(() => comments.addLeadMagnetComment(projectsDir, id,
+    { revision: 1, target: BLOCK, text: 'x', snapshotBytes: PNG },
+    { now: NOW, id: () => 'c-0000000c' }), /directory identity changed/);
+  const stored = comments.readLeadMagnetComments(projectsDir, id);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].id, 'c-0000000c');
+  assert.throws(() => comments.deleteLeadMagnetComment(projectsDir, id, stored[0].id), /symbolic link/);
+  assert.deepEqual(fs.readFileSync(foreignLink), PNG);
 });

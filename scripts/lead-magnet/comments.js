@@ -104,7 +104,7 @@ function addLeadMagnetComment(projectsDir, id, input, { now = () => new Date(), 
     snapshotGuard = captureProjectDirectoryGuard(projectsDir, destination, fs, 'снимок правки');
     snapshotStage = stageOwnedSiblingFile(destination, input.snapshotBytes, {
       purpose: 'snapshot', assertParentCurrent: snapshotGuard.assertCurrent,
-      verifyPublishedIdentity: true,
+      verifyPublishedIdentity: true, retainTemporaryLink: true,
     });
     try {
       snapshotStage.commitNoReplace();
@@ -114,16 +114,20 @@ function addLeadMagnetComment(projectsDir, id, input, { now = () => new Date(), 
         snapshotStage.removeCommitted();
       } catch (cleanupError) {
         error.cleanupError = cleanupError;
+      } finally {
+        try { snapshotStage.cleanupTemp(); } catch (cleanupError) {
+          if (!error.cleanupError) error.cleanupError = cleanupError;
+        }
       }
       throw error;
-    } finally {
-      snapshotStage.cleanupTemp();
     }
     comment.snapshot = snapshotPathFor(comment.id);
   }
+  let persistenceError = null;
   try {
     writeComments(projectsDir, id, next);
   } catch (error) {
+    persistenceError = error;
     if (snapshotStage) {
       try {
         snapshotGuard.assertCurrent();
@@ -133,7 +137,16 @@ function addLeadMagnetComment(projectsDir, id, input, { now = () => new Date(), 
       }
     }
     throw error;
+  } finally {
+    if (snapshotStage) {
+      try { snapshotStage.cleanupTemp(); } catch (cleanupError) {
+        if (persistenceError) {
+          if (!persistenceError.cleanupError) persistenceError.cleanupError = cleanupError;
+        } else throw cleanupError;
+      }
+    }
   }
+  if (snapshotStage) snapshotGuard.assertCurrent();
   return comment;
 }
 

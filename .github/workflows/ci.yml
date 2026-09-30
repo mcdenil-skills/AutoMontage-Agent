@@ -67,6 +67,9 @@ jobs:
       - name: Проверить публичное дерево на личные данные и медиа
         run: npm run check:privacy
 
+      - name: Установить Chromium для Node-тестов лид-магнитов
+        run: npx playwright install --with-deps chromium
+
       - name: Запустить тесты
         run: npm test
 

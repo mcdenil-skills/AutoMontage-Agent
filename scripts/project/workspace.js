@@ -246,6 +246,7 @@ function stageOwnedSiblingFile(destination, data, {
   writeToHandle = null,
   assertParentCurrent = null,
   verifyPublishedIdentity = false,
+  retainTemporaryLink = false,
 } = {}) {
   const bytes = writeToHandle
     ? null
@@ -324,14 +325,24 @@ function stageOwnedSiblingFile(destination, data, {
       }
       if (assertParentCurrent) assertParentCurrent();
       assertStageCurrent();
-      fileSystem.unlinkSync(temporaryPath);
+      if (!retainTemporaryLink) fileSystem.unlinkSync(temporaryPath);
     },
     commit(target = destination) {
       this.commitReplace(target);
     },
     cleanupTemp() {
+      if (retainTemporaryLink && assertParentCurrent) {
+        try { assertParentCurrent(); } catch { return false; }
+      }
       const current = lstatIfPresent(fileSystem, temporaryPath);
-      if (current && sameFileIdentity(identity, current)) fileSystem.unlinkSync(temporaryPath);
+      if (current && current.isFile() && !current.isSymbolicLink()
+        && sameFileIdentity(identity, current)) {
+        if (retainTemporaryLink && assertParentCurrent) {
+          try { assertParentCurrent(); } catch { return false; }
+        }
+        fileSystem.unlinkSync(temporaryPath);
+      }
+      return true;
     },
     removeCommitted() {
       if (!committedPath) return;

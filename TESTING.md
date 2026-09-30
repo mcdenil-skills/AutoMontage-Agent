@@ -412,7 +412,8 @@ node scripts/benchmark-preview.js \
 ## 7. CI
 
 `.github/workflows/ci.yml` сохраняет обычный Node 20 job с `npm ci`, `npm run check:privacy`,
-`npm test` и `npm run check:release` на pull request и push в `main`. Отдельный browser job выполняет
+установкой Playwright Chromium, `npm test` и `npm run check:release` на pull request и push в `main`.
+Chromium нужен тестам лид-магнитов, входящим в `npm test`. Отдельный browser job выполняет
 `npm ci --no-audit --no-fund`, устанавливает Playwright Chromium и запускает
 `npm run test:review-ui`. Оба Linux job явно устанавливают системный FFmpeg, проверяют
 `ffmpeg`, `ffprobe`, `libwebp`, `libx264`, `libvpx`, `libopus` и AAC до тестов: отсутствие
@@ -805,7 +806,10 @@ node scripts/cli.js lead-magnet --help
 каталога во время запуска Chromium без записи наружу, устаревшие тексты/обещание/единицы при
 approval, перенос количества и типа из offer через CLI в новую проверку, красный отчёт при
 отсутствующих/повреждённых фактах и восстановление после исправления. Отсутствующий Chromium
-устанавливается командой выше.
+устанавливается командой выше. Тесты комментариев дополнительно проверяют откат PNG при
+ошибке записи JSON, очистку временной ссылки после сбоя отката и сохранение чужой замены
+даже при повторном использовании inode в Linux. Подмена каталога при очистке не должна
+удалять файл за пределами проекта и не должна возвращать успех для непригодного снимка.
 До части 1B браузерный интерфейс лид-магнита и HMAC-билет человеческого утверждения ещё
 требуют отдельной проверки. Подробный путь: [docs/LEAD-MAGNET.md](docs/LEAD-MAGNET.md).
 
