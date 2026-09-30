@@ -9,6 +9,7 @@ const { resolveProjectPath } = require('../project/workspace');
 const { hashBytes, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
 const { openReadOnlyFlags } = require('../filesystem-capabilities');
 const { formatAjvErrors, normalizeCodeWord } = require('./constants');
+const library = require('./library');
 const { readOffers } = require('./offers');
 const { normalizeReferenceUrl, REFERENCE_LIMITS, REFS_DIR, sniffReference } = require('./references');
 
@@ -101,9 +102,10 @@ function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-
   const decision = { id: id(), type: input.type, createdAt, status: 'new' };
   for (const field of REQUIRED_BY_TYPE[input.type]) decision[field] = input[field];
   if (Object.hasOwn(decision, 'codeWord') && decision.codeWord !== null) decision.codeWord = normalizeCodeWord(decision.codeWord);
+  let offer = null;
   if (Object.hasOwn(decision, 'offerId') && decision.offerId !== null) {
-    const offer = readOffers(projectDir).find((item) => item.id === decision.offerId);
-    if (!offer) throw new Error('лид-магнит: такого обещания у ролика нет');
+    offer = readOffers(projectDir).find((item) => item.id === decision.offerId) || null;
+    if (!offer && decision.type !== 'promise-keep') throw new Error('лид-магнит: такого обещания у ролика нет');
     if (Object.hasOwn(decision, 'codeWord') && decision.codeWord !== offer.codeWord) {
       throw new Error('лид-магнит: кодовое слово не совпадает с обещанием ролика');
     }
@@ -117,6 +119,12 @@ function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-
   }
   const value = { version: 1, decisions: [...readDecisions(projectDir), decision] };
   if (!validateFile(value)) throw new Error(`лид-магнит: решение не соответствует схеме: ${formatAjvErrors(validateFile.errors)}`);
+  const projectsDir = path.dirname(projectDir);
+  if (decision.type === 'link') {
+    library.linkVideo(projectsDir, decision.leadMagnetId, { folder: path.basename(projectDir), codeWord: decision.codeWord });
+  } else if (decision.type === 'promise-keep') {
+    library.acknowledgePromise(projectsDir, decision.leadMagnetId, offer ? offer.quote : null);
+  }
   writeJsonAtomic(decisionsPath(projectDir), value);
   return decision;
 }

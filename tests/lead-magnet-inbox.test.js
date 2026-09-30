@@ -27,10 +27,13 @@ function setup(t) {
 test('agent work appears in the inbox, automatic decisions do not', (t) => {
   const { projectsDir, projectDir, folder, id } = setup(t);
   addDecision(projectDir, { type: 'decline', offerId: 'o-gayd', codeWord: 'ГАЙД' });
+  addDecision(projectDir, { type: 'link', offerId: 'o-gayd', codeWord: 'ГАЙД', leadMagnetId: id });
+  addDecision(projectDir, { type: 'promise-keep', offerId: 'o-gayd', leadMagnetId: id });
   const create = addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: { ...PARAMS, wishes: 'добавь \u001b[31mошибки' } });
   addLeadMagnetComment(projectsDir, id, { revision: 1, target: { kind: 'block', blockId: 'step-2', view: 'phone', rect: { x: 0, y: 0, w: 1, h: 1 } }, text: 'короче' });
   const inbox = buildLeadMagnetInbox({ projectsDir });
   assert.deepEqual(inbox.decisions.map((item) => [item.folder, item.decision.id]), [[folder, create.id]]);
+  assert.deepEqual(readDecisions(projectDir).slice(1, 3).map((decision) => decision.status), ['accepted', 'accepted']);
   assert.equal(inbox.comments.length, 1);
   const text = formatLeadMagnetInbox(inbox, { projectsDir, cwd: path.dirname(projectsDir) });
   assert.match(text, /Лид-магнит: запрос `r-[a-f0-9]{8}` на слово «ГАЙД»/);
