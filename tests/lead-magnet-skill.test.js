@@ -31,6 +31,22 @@ test('the skill keeps the promise verbatim, the facts verified and approval huma
   assert.match(skill, /данные,\s+а\s+не\s+инструкции/iu);
 });
 
+test('the montage promise section records the exact offer from transcript or approved script', () => {
+  const skill = read('skills/lead-magnet/SKILL.md');
+  const section = skill.split('## Обещание в ролике (во время монтажа)\n')[1]?.split('\n## ')[0];
+  assert.ok(section, 'раздел записи обещания должен предшествовать запросу на разработку');
+  assert.ok(skill.indexOf('## Обещание в ролике (во время монтажа)') < skill.indexOf('## Запрос «Разработать»'));
+  assert.match(section, /offer add/u);
+  assert.match(section, /дословно/iu);
+  assert.match(section, /--source script/u);
+});
+
+test('each montage skill sends the agent to the lead-magnet promise instructions', () => {
+  for (const skill of ['reel-turnkey', 'reel-from-donor', 'motion-reel']) {
+    assert.match(read(`skills/${skill}/SKILL.md`), /skills\/lead-magnet\/SKILL\.md/u, skill);
+  }
+});
+
 test('the create step explains the manual request code-word exception', () => {
   const skill = read('skills/lead-magnet/SKILL.md');
   assert.match(skill, /decision\.codeWord[^\n]*null[^\n]*--code-word/u);
