@@ -344,7 +344,53 @@ function createLeadMagnetRoutes({
     sendJson(response, 200, { deleted: true });
   }
 
+  // Утверждение – только по пропуску той ревизии, которую показала страница, и только после
+  // галочки. Пропуск выдаётся лишь для зелёной ревизии в статусе «посмотрите и утвердите».
+  async function postApprove(request, response) {
+    const body = await readJsonBody(request);
+    if (!exactKeys(body, ['id', 'ticket', 'confirmViewed'])) throw bad();
+    if (body.confirmViewed !== true) {
+      throw new PultRequestError(400, 'CONFIRMATION_REQUIRED', 'Отметьте, что посмотрели страницу и тексты');
+    }
+    const passport = passportOr404(body.id);
+    const n = passport.current;
+    if (n === null) throw changed();
+    const readiness = revisionReadiness(projectsDir, passport, n);
+    const expected = readiness.pageSha256 ? approvalTicket(passport.id, n, readiness.pageSha256) : null;
+    if (!expected || !safeTokenEqual(body.ticket, expected)) throw changed();
+    try {
+      approveLeadMagnet(projectsDir, passport.id, { revision: n, expectedPageSha256: readiness.pageSha256, confirmViewed: true });
+    } catch (error) {
+      const code = error && error.code;
+      if (code === 'REVISION_CHANGED' || code === 'PAGE_CHANGED') throw changed();
+      if (code === 'CHECK_FAILED') throw new PultRequestError(422, 'LM_CHECK_FAILED', 'Проверка каркаса или фактов не пройдена – агент исправит');
+      if (code === 'PENDING_COMMENTS') throw new PultRequestError(409, 'LM_PENDING_COMMENTS', 'Есть правки, которые ждут агента');
+      logger.error(`Пульт: лид-магнит не утверждён (${errorName(error)})`);
+      throw error;
+    }
+    sendJson(response, 201, { ok: true });
+  }
+
+  async function postReveal(request, response) {
+    const body = await readJsonBody(request);
+    if (!exactKeys(body, ['id', 'file']) || !REVEAL_FILES.includes(body.file)) throw bad();
+    const passport = passportOr404(body.id);
+    const { revision, list } = filesView(passport);
+    if (revision === null || !list.includes(body.file)) throw notFound();
+    const target = checkedFile(projectsDir, revisionDir(projectsDir, passport.id, revision), body.file);
+    try {
+      await revealImpl(target);
+    } catch (error) {
+      logger.error(`Пульт: не удалось открыть папку лид-магнита (${errorName(error)})`);
+      throw new PultRequestError(409, 'REVEAL_FAILED', 'Не удалось открыть папку');
+    }
+    sendJson(response, 200, { ok: true });
+  }
+
   const POST_ROUTES = new Map([
+    ['/api/lead-magnet/approve', (url, request, response) => postApprove(request, response)],
+    ['/api/lead-magnet/reveal', (url, request, response) => postReveal(request, response)],
+
     ['/api/lead-magnet/comment', (url, request, response) => postComment(request, response)],
     ['/api/lead-magnet/comment/delete', (url, request, response) => postCommentDelete(request, response)],
 

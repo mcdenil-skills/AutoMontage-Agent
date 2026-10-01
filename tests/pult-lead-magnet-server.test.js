@@ -264,3 +264,96 @@ test('a block comment gets a snapshot from the QA screenshot; a text comment has
   assert.equal((await post(session, '/api/lead-magnet/comment/delete', { id, commentId: onBlock.id })).status, 200);
   assert.equal((await post(session, '/api/lead-magnet/comment/delete', { id, commentId: 'c-zzzzzzzz' })).status, 400);
 });
+
+test('approval needs the checkbox and the ticket of the viewed revision', async (t) => {
+  const { projectsDir, id, n, session, state } = await publishedMagnet(t);
+  const ticket = state.magnets[0].revision.approvalTicket;
+  assert.ok(ticket);
+  const approve = (body) => post(session, '/api/lead-magnet/approve', { id, ticket, confirmViewed: true, ...body });
+  assert.equal((await approve({ confirmViewed: false })).status, 400);
+  const stale = await approve({ ticket: 'stale' });
+  assert.deepEqual([stale.status, stale.json.code], [409, 'LM_CHANGED']);
+  assert.equal((await approve({})).status, 201);
+  assert.equal(library.readLeadMagnet(projectsDir, id).approved, n);
+  const after = (await get(session, '/api/lead-magnet?key=clip')).json.magnets[0];
+  assert.deepEqual([after.status, after.revision.approvalTicket], ['ready', null]);
+  assert.equal((await approve({})).status, 409);
+});
+
+test('a comment that arrives before approval and a red check both block it', async (t) => {
+  const { id, n, session, state } = await publishedMagnet(t);
+  const { approvalTicket: ticket } = state.magnets[0].revision;
+  await post(session, '/api/lead-magnet/comment', { id, revision: n, target: { kind: 'text', text: 'dm' }, text: 'короче' });
+  const pending = await post(session, '/api/lead-magnet/approve', { id, ticket, confirmViewed: true });
+  assert.deepEqual([pending.status, pending.json.code], [409, 'LM_PENDING_COMMENTS']);
+
+  const projectsDir = root(t);
+  const redId = addLeadMagnetFor(projectsDir, 'clip');
+  publishCheckedRevision(projectsDir, redId, { ok: false });
+  const red = await start(t, projectsDir);
+  const redState = (await get(red.session, '/api/lead-magnet?key=clip')).json.magnets[0];
+  assert.equal(redState.revision.approvalTicket, null);
+  assert.equal(redState.revision.ready, false);
+  assert.equal((await post(red.session, '/api/lead-magnet/approve', { id: redId, ticket: 'x', confirmViewed: true })).status, 409);
+});
+
+test('«Показать в папке» opens only whitelisted files of the shown revision', async (t) => {
+  const { id, session, calls, state } = await publishedMagnet(t);
+  assert.deepEqual(state.magnets[0].files, {
+    revision: 1, list: ['page.html', 'page.pdf', 'texts/dm.txt', 'texts/telegram.txt', 'texts/instagram.txt'],
+  });
+  assert.equal((await post(session, '/api/lead-magnet/reveal', { id, file: 'page.pdf' })).status, 200);
+  assert.match(calls.reveal[0], /v01[\\/]page\.pdf$/);
+  assert.equal((await post(session, '/api/lead-magnet/reveal', { id, file: '../lead-magnet.json' })).status, 400);
+  assert.equal((await post(session, '/api/lead-magnet/reveal', { id: '2026.01.01_net', file: 'page.pdf' })).status, 404);
+});
+
+test('approval rejects changed page bytes, a newer revision and a newly red check', async (t) => {
+  for (const change of ['page', 'revision', 'check']) {
+    const { projectsDir, id, dir, session, state } = await publishedMagnet(t);
+    const ticket = state.magnets[0].revision.approvalTicket;
+    if (change === 'page') fs.appendFileSync(path.join(dir, 'page.html'), '<!-- changed -->');
+    if (change === 'revision') publishCheckedRevision(projectsDir, id);
+    if (change === 'check') {
+      const file = path.join(dir, 'qa', 'check.json');
+      const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+      fs.writeFileSync(file, JSON.stringify({ ...report, ok: false }));
+    }
+    const result = await post(session, '/api/lead-magnet/approve', { id, ticket, confirmViewed: true });
+    assert.deepEqual([result.status, result.json.code], change === 'check' ? [422, 'LM_CHECK_FAILED'] : [409, 'LM_CHANGED']);
+    assert.equal(library.readLeadMagnet(projectsDir, id).approved, null);
+  }
+});
+
+test('approval and reveal require authentication, origin and exact request bodies', async (t) => {
+  const { id, session, state, calls, projectsDir } = await publishedMagnet(t);
+  const bodies = {
+    approve: { id, ticket: state.magnets[0].revision.approvalTicket, confirmViewed: true },
+    reveal: { id, file: 'page.pdf' },
+  };
+  for (const [action, json] of Object.entries(bodies)) {
+    const url = `/api/lead-magnet/${action}`;
+    assert.equal((await request(session, url, { method: 'POST', origin: session.origin, token: null, json })).status, 401);
+    assert.equal((await request(session, url, { method: 'POST', origin: 'https://example.com', json })).status, 403);
+    assert.equal((await post(session, url, { ...json, extra: true })).status, 400);
+  }
+  assert.equal(library.readLeadMagnet(projectsDir, id).approved, null);
+  assert.deepEqual(calls.reveal, []);
+});
+
+test('reveal rejects symlinks and missing files and reports opener failures without paths', async (t) => {
+  const { id, dir, session, calls } = await publishedMagnet(t);
+  fs.unlinkSync(path.join(dir, 'page.pdf'));
+  fs.symlinkSync(path.join(dir, 'content.md'), path.join(dir, 'page.pdf'));
+  assert.equal((await post(session, '/api/lead-magnet/reveal', { id, file: 'page.pdf' })).status, 404);
+  fs.unlinkSync(path.join(dir, 'texts', 'dm.txt'));
+  assert.equal((await post(session, '/api/lead-magnet/reveal', { id, file: 'texts/dm.txt' })).status, 404);
+  assert.deepEqual(calls.reveal, []);
+  const projectsDir = root(t);
+  const failedId = addLeadMagnetFor(projectsDir, 'clip');
+  publishCheckedRevision(projectsDir, failedId);
+  const failed = await start(t, projectsDir, { revealImpl: async () => { throw new Error(`cannot open ${projectsDir}`); } });
+  const result = await post(failed.session, '/api/lead-magnet/reveal', { id: failedId, file: 'page.pdf' });
+  assert.deepEqual([result.status, result.json.code], [409, 'REVEAL_FAILED']);
+  assert.equal(JSON.stringify([result.json, failed.calls.logs]).includes(projectsDir), false);
+});
