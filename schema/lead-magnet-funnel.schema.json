@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Auto-reply funnel state for a lead magnet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "provider", "codeWord", "exists", "automationName", "checkedAt"],
+  "properties": {
+    "version": { "const": 1 },
+    "provider": { "enum": ["chatplace"] },
+    "codeWord": { "type": "string", "pattern": "^[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 -]{0,39}$" },
+    "exists": { "type": "boolean" },
+    "automationName": { "type": ["string", "null"], "maxLength": 120 },
+    "checkedAt": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet review comments",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "comments"],
+  "properties": {
+    "version": { "const": 1 },
+    "comments": {
+      "type": "array", "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "createdAt", "revision", "target", "text", "snapshot", "status"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^c-[a-f0-9]{8}$" },
+          "createdAt": { "type": "string", "minLength": 1 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 99 },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "blockId", "view", "rect"],
+                "properties": {
+                  "kind": { "const": "block" },
+                  "blockId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,60}$" },
+                  "view": { "enum": ["desktop", "phone"] },
+                  "rect": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["x", "y", "w", "h"],
+                    "properties": {
+                      "x": { "type": "number", "minimum": 0 }, "y": { "type": "number", "minimum": 0 },
+                      "w": { "type": "number", "minimum": 0 }, "h": { "type": "number", "minimum": 0 }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "text"],
+                "properties": { "kind": { "const": "text" }, "text": { "enum": ["dm", "telegram", "instagram"] } }
+              }
+            ]
+          },
+          "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "snapshot": { "type": ["string", "null"], "pattern": "^pult/frames/c-[a-f0-9]{8}\\.png$" },
+          "status": { "enum": ["new", "accepted"] },
+          "acceptedAt": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

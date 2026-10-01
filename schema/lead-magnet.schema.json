@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet passport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "title", "codeWords", "request", "promise", "units", "params", "videos", "revisions", "current", "approved", "createdAt", "updatedAt"],
+  "properties": {
+    "version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^\\d{4}\\.\\d{2}\\.\\d{2}_[a-z0-9-]{1,80}$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "request": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": false, "required": ["folder", "decisionId"],
+          "properties": {
+            "folder": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "decisionId": { "type": "string", "pattern": "^r-[a-f0-9]{8}$" }
+          }
+        }
+      ]
+    },
+    "codeWords": {
+      "type": "array", "uniqueItems": true, "maxItems": 10,
+      "items": { "type": "string", "pattern": "^[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 -]{0,39}$" }
+    },
+    "promise": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quote", "startSec", "endSec", "sourceFolder", "acknowledged"],
+      "properties": {
+        "quote": { "type": ["string", "null"], "maxLength": 600 },
+        "startSec": { "type": ["number", "null"], "minimum": 0 },
+        "endSec": { "type": ["number", "null"], "minimum": 0 },
+        "sourceFolder": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
+        "acknowledged": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 600 } }
+      }
+    },
+    "units": {
+      "type": "array", "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "count", "label"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,30}$" },
+          "count": { "type": ["integer", "null"], "minimum": 1, "maximum": 500 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      }
+    },
+    "params": { "$ref": "lead-magnet-requests.schema.json#/definitions/params" },
+    "videos": { "type": "array", "uniqueItems": true, "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 255 } },
+    "revisions": {
+      "type": "array", "maxItems": 99,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["n", "dir", "status", "pageSha256", "createdAt"],
+        "properties": {
+          "n": { "type": "integer", "minimum": 1, "maximum": 99 },
+          "dir": { "type": "string", "pattern": "^v\\d{2}$" },
+          "status": { "enum": ["building", "draft", "approved"] },
+          "pageSha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "createdAt": { "type": "string", "minLength": 1 },
+          "publishedAt": { "type": "string", "minLength": 1 },
+          "approvedAt": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "current": { "type": ["integer", "null"], "minimum": 1 },
+    "approved": { "type": ["integer", "null"], "minimum": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Макеты: лид-магнит в пульте</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Токены повторяют pult/styles.css, чтобы макет читался как продолжение пульта. */
+:root {
+  color-scheme: dark;
+  --background: 220 10% 7%;
+  --foreground: 42 24% 92%;
+  --card: 220 9% 10%;
+  --card-raised: 220 8% 13%;
+  --muted-foreground: 42 10% 68%;
+  --border: 214 8% 24%;
+  --amber: 36 88% 57%;
+  --amber-soft: 36 56% 18%;
+  --teal: 174 58% 54%;
+  --teal-soft: 174 45% 14%;
+  --danger: 5 74% 62%;
+  --radius: 0.8rem;
+  font-family: 'Onest', ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground)); line-height: 1.45; }
+button, input, textarea, select { font: inherit; color: inherit; }
+.muted { color: hsl(var(--muted-foreground)); }
+.small { font-size: .85rem; }
+
+/* Навигация по макетам – не часть пульта. */
+.mock-nav { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+  padding: .8rem 1rem; background: hsl(0 0% 0% / .85); border-bottom: 1px dashed hsl(var(--border)); }
+.mock-nav strong { margin-right: .5rem; }
+.mock-nav button { padding: .4rem .8rem; border-radius: 999px; border: 1px solid hsl(var(--border)); background: transparent; cursor: pointer; }
+.mock-nav button[aria-pressed="true"] { background: hsl(var(--amber-soft)); border-color: hsl(var(--amber)); }
+.screen { display: none; padding: 1rem; max-width: 1180px; margin: 0 auto; }
+.screen.is-active { display: block; }
+.note { margin: 0 0 1rem; padding: .7rem .9rem; border: 1px solid hsl(var(--teal) / .45); background: hsl(var(--teal-soft)); border-radius: .6rem; font-size: .92rem; }
+
+/* Пульт */
+.pult-header { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: center; padding: .9rem 1.2rem;
+  border: 1px solid hsl(var(--border)); border-radius: var(--radius) var(--radius) 0 0; background: hsl(var(--card)); }
+.pult-header h1 { margin: 0; font-size: 1.2rem; }
+.search { flex: 1 1 12rem; padding: .5rem .8rem; border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--background)); }
+.tabs { display: flex; gap: .4rem; }
+.tab { padding: .4rem .75rem; border-radius: 999px; border: 1px solid hsl(var(--border)); background: transparent; }
+.tab.on { background: hsl(var(--amber-soft)); border-color: hsl(var(--amber)); }
+.frame { border: 1px solid hsl(var(--border)); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); padding: 1.2rem; background: hsl(var(--background)); }
+.section-title { margin: 0 0 .7rem; font-size: 1rem; color: hsl(var(--muted-foreground)); }
+.section-title.waiting { color: hsl(var(--amber)); }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+.card { border: 1px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(var(--card)); overflow: hidden; }
+.thumb { aspect-ratio: 9/12; background: linear-gradient(160deg, hsl(220 20% 20%), hsl(220 10% 12%)); position: relative; }
+.thumb span { position: absolute; left: .6rem; bottom: .6rem; font-size: .75rem; padding: .15rem .45rem; border-radius: .4rem; background: hsl(0 0% 0% / .55); }
+.card__body { padding: .7rem .8rem .9rem; display: grid; gap: .3rem; }
+.card__title { font-weight: 600; }
+.badge { display: inline-block; width: fit-content; font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; border: 1px solid hsl(var(--border)); }
+.badge.waiting { border-color: hsl(var(--amber)); color: hsl(var(--amber)); }
+.badge.working { border-color: hsl(var(--teal)); color: hsl(var(--teal)); }
+.badge.ready { border-color: hsl(120 40% 55%); color: hsl(120 40% 65%); }
+.lm-tag { width: fit-content; font-size: .8rem; padding: .15rem .55rem; border-radius: 999px; background: hsl(var(--amber-soft)); border: 1px solid hsl(var(--amber) / .6); }
+.lm-tag.done { background: transparent; border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+
+.back { background: none; border: 0; color: hsl(var(--muted-foreground)); padding: 0; cursor: pointer; }
+.detail-head { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; align-items: center; justify-content: space-between; margin: .6rem 0 1rem; }
+.detail-head h2 { margin: 0; font-size: 1.25rem; }
+.seg { display: inline-flex; border: 1px solid hsl(var(--border)); border-radius: 999px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: .45rem .9rem; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: hsl(var(--amber-soft)); }
+.detail { display: grid; gap: 1.2rem; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+@media (max-width: 860px) { .detail { grid-template-columns: 1fr; } }
+.player { aspect-ratio: 9/14; max-height: 560px; margin: 0 auto; width: 100%; max-width: 360px; border-radius: var(--radius);
+  background: linear-gradient(170deg, hsl(220 18% 18%), hsl(220 10% 9%)); display: grid; place-items: center; color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); }
+.side { display: grid; gap: .9rem; align-content: start; align-self: start; }
+.block { border: 1px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(var(--card)); padding: .9rem 1rem; display: grid; gap: .6rem; }
+.block h3 { margin: 0; font-size: .95rem; }
+.offer { border-color: hsl(var(--amber) / .7); background: linear-gradient(180deg, hsl(var(--amber-soft) / .7), hsl(var(--card))); }
+.quote { margin: 0; padding: .55rem .75rem; border-left: 3px solid hsl(var(--amber)); background: hsl(0 0% 0% / .25); border-radius: .35rem; font-style: italic; }
+.row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.btn { padding: .55rem .95rem; border-radius: .6rem; border: 1px solid hsl(var(--border)); background: hsl(var(--card-raised)); cursor: pointer; }
+.btn:hover { border-color: hsl(var(--muted-foreground)); }
+.btn.primary { background: hsl(var(--amber)); color: hsl(220 10% 8%); border-color: hsl(var(--amber)); font-weight: 600; }
+.btn.ghost { background: transparent; }
+.btn.link { border: 0; background: none; padding: .2rem 0; color: hsl(var(--teal)); text-decoration: underline; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.hint { font-size: .85rem; padding: .45rem .65rem; border-radius: .45rem; background: hsl(var(--teal-soft)); }
+.dropdown { display: none; border: 1px solid hsl(var(--border)); border-radius: .6rem; background: hsl(var(--card-raised)); padding: .5rem; gap: .35rem; }
+.dropdown.open { display: grid; }
+.dd-item { display: flex; justify-content: space-between; gap: .6rem; padding: .45rem .55rem; border-radius: .45rem; cursor: pointer; }
+.dd-item:hover { background: hsl(var(--amber-soft)); }
+.dd-item.match { outline: 1px solid hsl(var(--amber) / .6); }
+
+/* Модальное окно */
+.overlay { position: relative; margin-top: 1rem; padding: 1.5rem; border-radius: var(--radius); background: hsl(0 0% 0% / .6);
+  border: 1px dashed hsl(var(--border)); }
+.modal { max-width: 720px; margin: 0 auto; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 1rem; box-shadow: 0 30px 80px hsl(0 0% 0% / .5); }
+.modal__head { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.2rem; border-bottom: 1px solid hsl(var(--border)); }
+.modal__head h3 { margin: 0; font-size: 1.1rem; }
+.modal__body { padding: 1rem 1.2rem; display: grid; gap: 1.05rem; }
+.modal__foot { display: flex; justify-content: flex-end; gap: .6rem; padding: .9rem 1.2rem; border-top: 1px solid hsl(var(--border)); }
+.field { display: grid; gap: .4rem; }
+.field > label, .field > .label { font-weight: 600; font-size: .92rem; }
+.field .num { color: hsl(var(--amber)); margin-right: .35rem; }
+.input { width: 100%; padding: .5rem .7rem; border-radius: .55rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); }
+textarea.input { min-height: 3.2rem; resize: vertical; }
+.choices { display: flex; flex-wrap: wrap; gap: .45rem; }
+.choice { display: inline-flex; gap: .4rem; align-items: center; padding: .4rem .7rem; border-radius: 999px; border: 1px solid hsl(var(--border)); cursor: pointer; font-size: .92rem; }
+.choice:has(input:checked) { border-color: hsl(var(--amber)); background: hsl(var(--amber-soft)); }
+.choice input { accent-color: hsl(var(--amber)); }
+.check { display: flex; gap: .5rem; align-items: flex-start; }
+.check input { margin-top: .25rem; accent-color: hsl(var(--amber)); }
+.drop { display: grid; place-items: center; gap: .3rem; text-align: center; padding: 1.1rem; border: 1.5px dashed hsl(var(--muted-foreground) / .6); border-radius: .7rem; background: hsl(0 0% 100% / .02); }
+.files { display: flex; flex-wrap: wrap; gap: .45rem; }
+.file { display: inline-flex; gap: .45rem; align-items: center; font-size: .85rem; padding: .3rem .55rem; border-radius: .45rem; background: hsl(var(--card-raised)); border: 1px solid hsl(var(--border)); }
+.file b { font-weight: 500; }
+.ref-panel { display: none; gap: .6rem; padding: .8rem; border-radius: .7rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); }
+.ref-panel.show { display: grid; }
+
+/* Вкладка проверки */
+.viewer { border: 1px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(var(--card)); padding: .8rem; display: grid; gap: .7rem; align-self: start; align-content: start; }
+.viewer__bar { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: space-between; align-items: center; }
+.glass { display: grid; place-items: start center; padding: 1rem; border-radius: .7rem; background: repeating-linear-gradient(45deg, hsl(220 8% 11%), hsl(220 8% 11%) 10px, hsl(220 8% 12.5%) 10px, hsl(220 8% 12.5%) 20px); max-height: 640px; overflow: auto; }
+.page { width: 100%; max-width: 760px; background: #F7F3EC; color: #1d1d1f; border-radius: .5rem; font-family: 'Onest', sans-serif; }
+.page.phone { max-width: 390px; border: 10px solid #111; border-radius: 1.6rem; }
+.pg-head { padding: 1.4rem 1.4rem 1rem; background: #1d1d1f; color: #f7f3ec; border-radius: .4rem .4rem 0 0; }
+.page.phone .pg-head { border-radius: .9rem .9rem 0 0; }
+.pg-logo { display: inline-block; font-size: .7rem; letter-spacing: .08em; padding: .2rem .5rem; border: 1px dashed #f7f3ec88; border-radius: .3rem; margin-bottom: .8rem; }
+.pg-head h4 { margin: 0 0 .3rem; font-size: 1.5rem; line-height: 1.15; }
+.pg-stats { display: flex; gap: .9rem; flex-wrap: wrap; margin-top: .7rem; font-size: .8rem; opacity: .85; }
+.pg-body { padding: 1rem 1.2rem 1.4rem; display: grid; gap: .8rem; }
+.pg-step { border-left: 4px solid #D9772E; background: #fff; padding: .7rem .8rem; border-radius: .4rem; position: relative; }
+.pg-step h5 { margin: 0 0 .3rem; font-size: 1rem; }
+.pg-step p { margin: 0 0 .4rem; font-size: .88rem; }
+.pg-code { display: flex; justify-content: space-between; gap: .5rem; align-items: center; background: #1d1d1f; color: #e8e2d6; font-family: ui-monospace, monospace; font-size: .78rem; padding: .5rem .6rem; border-radius: .35rem; }
+.pg-code button { border: 0; background: #D9772E; color: #fff; border-radius: .3rem; font-size: .72rem; padding: .25rem .45rem; }
+.pg-cta { background: #1d1d1f; color: #f7f3ec; padding: .9rem; border-radius: .5rem; text-align: center; }
+.pg-cta b { display: block; margin-bottom: .45rem; }
+.pg-cta span { display: inline-block; margin: .2rem; padding: .35rem .6rem; border-radius: .35rem; background: #D9772E; font-size: .8rem; }
+.review-on .pg-step:hover, .review-on .pg-cta:hover, .review-on .pg-head:hover { outline: 2px dashed hsl(36 88% 57%); outline-offset: 2px; cursor: crosshair; }
+.pg-pin { position: absolute; right: -.5rem; top: -.5rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: hsl(36 88% 57%); color: #111; font-size: .75rem; font-weight: 700; display: grid; place-items: center; }
+.texts { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.text-card { border: 1px solid hsl(var(--border)); border-radius: .6rem; padding: .6rem .7rem; background: hsl(var(--background)); display: grid; gap: .35rem; font-size: .85rem;; align-content: start; }
+.meter { height: .35rem; border-radius: 999px; background: hsl(var(--border)); overflow: hidden; }
+.meter i { display: block; height: 100%; background: hsl(var(--teal)); }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; font-size: .88rem; }
+.checklist li::before { content: "✓ "; color: hsl(120 45% 60%); font-weight: 700; }
+.checklist li.bad::before { content: "✕ "; color: hsl(var(--danger)); }
+.comment { border: 1px solid hsl(var(--border)); border-radius: .6rem; padding: .55rem .65rem; font-size: .88rem; display: grid; gap: .25rem; background: hsl(var(--background)); }
+.comment .meta { font-size: .78rem; color: hsl(var(--muted-foreground)); }
+.diff { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .diff { grid-template-columns: 1fr; } }
+.diff .quote.old { border-left-color: hsl(var(--muted-foreground)); text-decoration: line-through; opacity: .75; }
+.legend { font-size: .82rem; margin-top: .6rem; }
+</style>
+</head>
+<body>
+
+<nav class="mock-nav" aria-label="Макеты">
+  <strong>Макеты · лид-магнит в пульте</strong>
+  <button type="button" data-go="s1" aria-pressed="true">1 · Вопрос «Да / Нет»</button>
+  <button type="button" data-go="s2" aria-pressed="false">2 · Окно параметров</button>
+  <button type="button" data-go="s3" aria-pressed="false">3 · Проверка и утверждение</button>
+  <button type="button" data-go="s4" aria-pressed="false">4 · Редкие случаи</button>
+</nav>
+
+<!-- ============ 1. Вопрос ============ -->
+<section class="screen is-active" id="s1">
+  <p class="note">Агент нашёл в расшифровке обещание. Раздел ролика не меняется: он остаётся «В работе». На обложке появляется метка, внутри карточки — плашка с цитатой и тремя кнопками. Нажмите «Уже есть готовый ▾», чтобы увидеть библиотеку.</p>
+  <header class="pult-header">
+    <h1>Пульт роликов</h1>
+    <input class="search" placeholder="Поиск по роликам" aria-label="Поиск">
+    <div class="tabs"><span class="tab on">Ролики</span><span class="tab">Архив</span></div>
+  </header>
+  <div class="frame">
+    <h3 class="section-title waiting">Ждёт меня · 1</h3>
+    <div class="grid" style="margin-bottom:1.4rem">
+      <article class="card"><div class="thumb"><span>0:48</span></div><div class="card__body">
+        <span class="badge waiting">Ждёт меня</span><span class="card__title">Нейросеть для таблиц</span>
+        <span class="muted small">Посмотрите preview и утвердите</span></div></article>
+    </div>
+    <h3 class="section-title">В работе · 2</h3>
+    <div class="grid" style="margin-bottom:1.6rem">
+      <article class="card" style="outline:2px solid hsl(var(--amber)/.6)"><div class="thumb"><span>1:12</span></div><div class="card__body">
+        <span class="badge working">В работе</span><span class="card__title">Сайт за один вечер</span>
+        <span class="muted small">Оригинал: агент готовит preview</span>
+        <span class="lm-tag">🎁 Лид-магнит?</span></div></article>
+      <article class="card"><div class="thumb"><span>0:55</span></div><div class="card__body">
+        <span class="badge working">В работе</span><span class="card__title">Три ошибки в промптах</span>
+        <span class="muted small">Ждёт агента: 2 правки</span>
+        <span class="lm-tag done">🎁 Лид-магнит: агент готовит</span></div></article>
+    </div>
+
+    <button class="back" type="button">← Все ролики</button>
+    <div class="detail-head">
+      <h2>Сайт за один вечер</h2>
+      <div class="seg" role="group" aria-label="Вкладки карточки">
+        <button type="button" aria-pressed="true">Видео</button><button type="button" aria-pressed="false" disabled title="Появится после «Разработать»">Лид-магнит</button>
+      </div>
+    </div>
+    <div class="detail">
+      <div class="player">▶ preview ролика</div>
+      <div class="side">
+        <div class="block offer">
+          <h3>🎁 В ролике есть обещание · 1:04</h3>
+          <p class="quote">«…напишите ГАЙД в комментариях, и я пришлю пошаговую инструкцию и все пять промптов из ролика»</p>
+          <div class="row small"><button class="btn link" type="button">▶ послушать</button><span class="muted">кодовое слово: <b>ГАЙД</b></span></div>
+          <div class="hint">Для слова ГАЙД уже есть утверждённый лид-магнит от 12.09 — можно не делать заново.</div>
+          <strong>Разработать лид-магнит для этого ролика?</strong>
+          <div class="row">
+            <button class="btn primary" type="button" data-go="s2">Разработать новый</button>
+            <button class="btn" type="button" id="dd-toggle" aria-expanded="false">Уже есть готовый ▾</button>
+            <button class="btn ghost" type="button">Нет</button>
+          </div>
+          <div class="dropdown" id="dd">
+            <input class="input" placeholder="Найти лид-магнит" aria-label="Найти лид-магнит">
+            <div class="dd-item match"><span>ГАЙД · «Сайт без кода: 7 шагов»</span><span class="muted small">12.09 · 3 ролика</span></div>
+            <div class="dd-item"><span>ПРОМПТЫ · «20 промптов для таблиц»</span><span class="muted small">02.09 · 1 ролик</span></div>
+            <div class="dd-item"><span>ЧЕК · «Чек-лист запуска бота»</span><span class="muted small">21.08 · 4 ролика</span></div>
+            <span class="muted small">Выбор привязывает ролик к лид-магниту. Агенту ничего делать не нужно.</span>
+          </div>
+          <span class="muted small">«Нет» больше не спрашивает про слово ГАЙД. Передумали — кнопка «Лид-магнит» в действиях ниже.</span>
+        </div>
+        <div class="block">
+          <span class="badge working">В работе</span>
+          <span>Агент готовит preview</span>
+        </div>
+        <div class="block">
+          <h3>Действия</h3>
+          <div class="row"><button class="btn" type="button">Показать в папке</button><button class="btn" type="button">Открыть проверку монтажа</button><button class="btn" type="button">🎁 Лид-магнит</button><button class="btn ghost" type="button">В архив</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. Окно параметров ============ -->
+<section class="screen" id="s2">
+  <p class="note">Все поля агент заполнил заранее по расшифровке. Без правок это одна галочка и «Отправить агенту». Попробуйте переключить «Дизайн» на «По референсу».</p>
+  <div class="overlay">
+    <div class="modal" role="dialog" aria-labelledby="m-title">
+      <div class="modal__head"><h3 id="m-title">Лид-магнит «ГАЙД»</h3><button class="btn ghost" type="button" aria-label="Закрыть">✕</button></div>
+      <div class="modal__body">
+        <div class="field">
+          <span class="label"><span class="num">1</span>Обещание из ролика · 1:04 <button class="btn link small" type="button">▶ послушать</button></span>
+          <p class="quote">«…и я пришлю пошаговую инструкцию и все пять промптов из ролика»</p>
+          <label class="check"><input type="checkbox" id="promise-ok"><span>Делаем ровно под это обещание: <b>пошаговая инструкция + 5 промптов</b></span></label>
+        </div>
+        <div class="field"><label for="kw"><span class="num">2</span>Кодовое слово</label><input class="input" id="kw" value="ГАЙД"></div>
+        <div class="field">
+          <span class="label"><span class="num">3</span>Формат</span>
+          <div class="choices">
+            <label class="choice"><input type="radio" name="fmt" checked> Гайд по шагам</label>
+            <label class="choice"><input type="radio" name="fmt"> Набор промптов</label>
+            <label class="choice"><input type="radio" name="fmt"> Чек-лист</label>
+            <label class="choice"><input type="radio" name="fmt"> Шпаргалка на один экран</label>
+          </div>
+          <span class="hint">Агент советует «Гайд по шагам»: в обещании и инструкция, и промпты — промпты станут частью шагов.</span>
+        </div>
+        <div class="field"><label for="aud"><span class="num">4</span>Для кого</label><input class="input" id="aud" value="Новички без опыта в коде, которые хотят свой сайт"></div>
+        <div class="field">
+          <span class="label"><span class="num">5</span>Дизайн</span>
+          <div class="choices" id="design">
+            <label class="choice"><input type="radio" name="dz" value="brand" checked> Мой стиль</label>
+            <label class="choice"><input type="radio" name="dz" value="ref"> По референсу</label>
+            <label class="choice"><input type="radio" name="dz" value="new"> Новый дизайн под тему</label>
+            <label class="choice"><input type="radio" name="dz" value="like"> Как прошлый лид-магнит ▾</label>
+          </div>
+          <div class="ref-panel" id="ref-panel">
+            <div class="drop">
+              <span>Перетащите картинку, PDF или HTML-файл</span>
+              <span class="muted small">PNG · JPG · WebP до 15 МБ · PDF до 30 МБ · HTML до 5 МБ</span>
+              <div class="row"><button class="btn" type="button">Выбрать файл</button><button class="btn" type="button">🔗 Вставить ссылку</button></div>
+            </div>
+            <div class="files">
+              <span class="file">🖼 <b>notion-guide.png</b> 1,2 МБ <button class="btn ghost small" type="button" aria-label="Убрать">✕</button></span>
+              <span class="file">🔗 <b>example.com/guide</b> <button class="btn ghost small" type="button" aria-label="Убрать">✕</button></span>
+            </div>
+            <div class="field">
+              <span class="label small">Что взять из референса</span>
+              <div class="choices">
+                <label class="choice"><input type="checkbox" checked> Композицию и подачу</label>
+                <label class="choice"><input type="checkbox"> Цвета</label>
+                <label class="choice"><input type="checkbox"> Шрифты</label>
+              </div>
+              <span class="muted small">У вас есть свой стиль, поэтому по умолчанию берём только композицию. Отметьте цвета и шрифты — и они заменят ваши. Логотип, блок призыва в конце, кнопки «Скопировать» и мобильная вёрстка останутся в любом случае.</span>
+            </div>
+            <div class="field"><label class="small" for="like">Что нравится</label><textarea class="input" id="like">Крупные номера шагов и карточки с тенью</textarea></div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label"><span class="num">6</span>Тексты для раздачи</span>
+          <div class="choices">
+            <label class="choice"><input type="checkbox" checked> Сообщение в личку <span class="muted small">≤ 1000</span></label>
+            <label class="choice"><input type="checkbox" checked> Пост в Telegram <span class="muted small">≤ 1024</span></label>
+            <label class="choice"><input type="checkbox" checked> Подпись Instagram <span class="muted small">≤ 2200</span></label>
+          </div>
+        </div>
+        <div class="field"><label for="wish"><span class="num">7</span>Пожелания <span class="muted small">(необязательно)</span></label><textarea class="input" id="wish" placeholder="Например: добавить блок «частые ошибки»"></textarea></div>
+      </div>
+      <div class="modal__foot">
+        <button class="btn ghost" type="button">Отмена</button>
+        <button class="btn primary" type="button" id="send" disabled>Отправить агенту</button>
+      </div>
+    </div>
+  </div>
+  <p class="legend muted">«Отправить агенту» станет активной после галочки обещания. Кнопка записывает запрос во входящие — сам пульт ничего не генерирует.</p>
+</section>
+
+<!-- ============ 3. Проверка ============ -->
+<section class="screen" id="s3">
+  <p class="note">Страница показана «за стеклом»: кнопки на ней работают, но она не видит ни пульт, ни интернет. Переключите «Телефон 390» и «Режим правок», затем кликните по блоку страницы.</p>
+  <button class="back" type="button">← Все ролики</button>
+  <div class="detail-head">
+    <h2>Сайт за один вечер</h2>
+    <div class="seg" role="group" aria-label="Вкладки карточки"><button type="button" aria-pressed="false">Видео</button><button type="button" aria-pressed="true">Лид-магнит 🎁</button></div>
+  </div>
+  <div class="detail">
+    <div class="viewer">
+      <div class="viewer__bar">
+        <div class="seg" role="group" aria-label="Вид"><button type="button" data-view="desk" aria-pressed="true">🖥 Компьютер</button><button type="button" data-view="phone" aria-pressed="false">📱 Телефон 390</button></div>
+        <label class="check small"><input type="checkbox" id="review-mode"><span>Режим правок — кликните по блоку</span></label>
+        <span class="muted small">Версия v02 · было v01</span>
+      </div>
+      <div class="glass">
+        <div class="page" id="page">
+          <div class="pg-head" data-block="Шапка">
+            <span class="pg-logo">ВАШ ЛОГОТИП</span>
+            <div style="font-size:.72rem;opacity:.7;margin-bottom:.3rem">Пошаговая инструкция по видео</div>
+            <h4>Сайт без кода за один вечер</h4>
+            <div style="font-size:.9rem;opacity:.85">Семь шагов и пять промптов из ролика — копируйте и повторяйте</div>
+            <div class="pg-stats"><span>⏱ 2 часа</span><span>🧩 5 промптов</span><span>💸 0 ₽</span></div>
+          </div>
+          <div class="pg-body">
+            <div class="pg-step" data-block="Шаг 1"><h5>Шаг 1. Опишите сайт одной фразой</h5><p>Как вывеска над магазином: прохожий за секунду понимает, что внутри.</p><div class="pg-code"><span>Промпт 1: Опиши мой сайт…</span><button type="button">Скопировать</button></div></div>
+            <div class="pg-step" data-block="Шаг 2"><h5>Шаг 2. Соберите первую страницу</h5><p>Сначала каркас, потом краска — как ремонт.</p><div class="pg-code"><span>Промпт 2: Сделай страницу…</span><button type="button">Скопировать</button></div><span class="pg-pin" title="Правка №1">1</span></div>
+            <div class="pg-step" data-block="Шаг 3"><h5>Шаг 3. Проверьте на телефоне</h5><p>Большинство зрителей откроют ссылку с телефона.</p></div>
+            <div class="pg-cta" data-block="Блок призыва"><b>Понравилось? Дальше — больше</b><span>Кнопка 1 из бренд-пака</span><span>Кнопка 2 из бренд-пака</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="texts">
+        <div class="text-card"><b>Сообщение в личку</b><div class="meter"><i style="width:78%"></i></div><span class="muted">780 / 1000</span><button class="btn small" type="button">Скопировать</button></div>
+        <div class="text-card"><b>Пост в Telegram</b><div class="meter"><i style="width:91%"></i></div><span class="muted">932 / 1024</span><button class="btn small" type="button">Скопировать</button></div>
+        <div class="text-card"><b>Подпись Instagram</b><div class="meter"><i style="width:52%"></i></div><span class="muted">1140 / 2200</span><button class="btn small" type="button">Скопировать</button></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="block"><span class="badge waiting">Ждёт меня</span><span>Лид-магнит: посмотрите и утвердите</span><span class="muted small">Обещание 1:04 · кодовое слово ГАЙД · используется в 2 роликах</span></div>
+      <div class="block">
+        <h3>Каркас · проверено автоматически</h3>
+        <ul class="checklist">
+          <li>Обещание выполнено: инструкция + 5 из 5 промптов</li>
+          <li>Блок призыва в конце страницы</li>
+          <li>Телефон 390 px: без прокрутки вбок</li>
+          <li>«Скопировать» у всех 5 промптов</li>
+          <li>Логотип (требует бренд-пак)</li>
+        </ul>
+        <h3>Факты · 9 ссылок, 2 команды</h3>
+        <ul class="checklist"><li>Все ссылки открываются, команды проверены 30.09 14:10</li></ul>
+      </div>
+      <div class="block">
+        <h3>Правки</h3>
+        <div id="comment-form" class="field" hidden>
+          <span class="small">К блоку <b id="c-block">—</b> · <span id="c-view">компьютер</span></span>
+          <textarea class="input" placeholder="Что поправить"></textarea>
+          <button class="btn" type="button">Добавить правку</button>
+        </div>
+        <div class="comment"><span class="meta">№1 · «Шаг 2» · телефон · ждёт агента</span>Промпт не помещается в строку — перенести на две</div>
+        <div class="comment"><span class="meta">Подпись Instagram · принята в v02</span>Убрать хэштеги в конце</div>
+      </div>
+      <div class="block">
+        <label class="check"><input type="checkbox" id="viewed"><span>Я просмотрел страницу на компьютере и телефоне и все тексты</span></label>
+        <button class="btn primary" type="button" id="approve" disabled>Утверждаю лид-магнит</button>
+        <span class="muted small">Кнопка заблокирована, пока есть правки «ждёт агента», красный пункт каркаса или непроверенный факт.</span>
+      </div>
+      <div class="block">
+        <h3>Файлы</h3>
+        <div class="files"><span class="file">🌐 <b>page.html</b></span><span class="file">📄 <b>page.pdf</b></span><span class="file">✉️ <b>3 текста</b></span></div>
+        <div class="row"><button class="btn" type="button">Показать в папке</button><button class="btn" type="button">Скопировать для агента</button></div>
+      </div>
+      <div class="block">
+        <h3>Воронка автоответа</h3>
+        <span class="small">Chatplace: на слово <b>ГАЙД</b> воронка <b style="color:hsl(120 45% 65%)">есть</b> · проверено 30.09 14:12</span>
+        <span class="muted small">Этап 2: «Подключить / обновить воронку» — агент покажет план изменений, запись в сервис только после вашего «Применить».</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. Редкие случаи ============ -->
+<section class="screen" id="s4">
+  <p class="note">Три ситуации, которые пульт обязан показать честно.</p>
+  <div class="detail" style="grid-template-columns:repeat(auto-fit,minmax(20rem,1fr))">
+    <div class="block">
+      <h3>⚠️ Обещание в ролике изменилось</h3>
+      <span class="muted small">После правок ролика агент нашёл другую цитату. Лид-магнит утверждён под старую.</span>
+      <div class="diff">
+        <p class="quote old">«…пришлю инструкцию и все пять промптов»</p>
+        <p class="quote">«…пришлю инструкцию и семь промптов»</p>
+      </div>
+      <div class="row"><button class="btn primary" type="button">Обновить под новое</button><button class="btn" type="button">Оставить как есть</button></div>
+      <span class="muted small">Агент ничего не переделывает сам: ваша кнопка — его задание.</span>
+    </div>
+    <div class="block">
+      <h3>В ролике нет призыва к действию</h3>
+      <span class="muted small">Плашки нет. В действиях карточки остаётся тихая кнопка — если материал всё же нужен (например, для поста).</span>
+      <div class="row"><button class="btn" type="button">🎁 Лид-магнит</button></div>
+    </div>
+    <div class="block">
+      <h3>Утвердить нельзя: факт не подтвердился</h3>
+      <ul class="checklist">
+        <li>8 ссылок открываются</li>
+        <li class="bad">Ссылка на шаблон отвечает 404 — агент заменит или уберёт</li>
+      </ul>
+      <button class="btn primary" type="button" disabled>Утверждаю лид-магнит</button>
+      <span class="muted small">Как невыбранный B-roll у видео: сначала исправление, потом утверждение.</span>
+    </div>
+    <div class="block">
+      <h3>Первый раз, своего стиля нет (этап 2)</h3>
+      <span class="small">Короткая анкета перед окном параметров:</span>
+      <div class="field"><label class="small" for="nick">Как вас подписать</label><input class="input" id="nick" placeholder="Имя или ник"></div>
+      <div class="field"><label class="small" for="links">Ссылки для блока призыва</label><input class="input" id="links" placeholder="Канал, сайт, бот"></div>
+      <div class="field"><span class="label small">Тема</span><div class="choices"><label class="choice"><input type="radio" name="th" checked> Светлая</label><label class="choice"><input type="radio" name="th"> Тёмная</label><label class="choice"><input type="radio" name="th"> Тёплая</label></div></div>
+      <span class="muted small">Логотип — по желанию. Ответы сохраняются только на этом компьютере.</span>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Переключение макетов
+  const navButtons = document.querySelectorAll('[data-go]');
+  function go(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.toggle('is-active', s.id === id));
+    document.querySelectorAll('.mock-nav [data-go]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.go === id)));
+    window.scrollTo({ top: 0 });
+  }
+  navButtons.forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+
+  // Выпадающий список «Уже есть готовый»
+  const ddToggle = document.getElementById('dd-toggle');
+  const dd = document.getElementById('dd');
+  ddToggle.addEventListener('click', () => {
+    const open = dd.classList.toggle('open');
+    ddToggle.setAttribute('aria-expanded', String(open));
+  });
+
+  // Окно параметров: референс и галочка обещания
+  const refPanel = document.getElementById('ref-panel');
+  document.querySelectorAll('input[name="dz"]').forEach(r => r.addEventListener('change', () => {
+    refPanel.classList.toggle('show', r.checked && r.value === 'ref');
+  }));
+  const promiseOk = document.getElementById('promise-ok');
+  const send = document.getElementById('send');
+  promiseOk.addEventListener('change', () => { send.disabled = !promiseOk.checked; });
+
+  // Проверка: компьютер / телефон
+  const page = document.getElementById('page');
+  document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+    page.classList.toggle('phone', b.dataset.view === 'phone');
+    document.querySelectorAll('[data-view]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    document.getElementById('c-view').textContent = b.dataset.view === 'phone' ? 'телефон 390' : 'компьютер';
+  }));
+
+  // Режим правок: клик по блоку
+  const reviewMode = document.getElementById('review-mode');
+  const form = document.getElementById('comment-form');
+  reviewMode.addEventListener('change', () => page.classList.toggle('review-on', reviewMode.checked));
+  page.querySelectorAll('[data-block]').forEach(el => el.addEventListener('click', e => {
+    if (!reviewMode.checked) return;
+    e.preventDefault();
+    form.hidden = false;
+    document.getElementById('c-block').textContent = '«' + el.dataset.block + '»';
+    form.querySelector('textarea').focus();
+  }));
+
+  // Утверждение
+  const viewed = document.getElementById('viewed');
+  const approve = document.getElementById('approve');
+  viewed.addEventListener('change', () => { approve.disabled = !viewed.checked; });
+</script>
+</body>
+</html>

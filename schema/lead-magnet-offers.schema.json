@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet offers found in a video project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "offers"],
+  "properties": {
+    "version": { "const": 1 },
+    "offers": { "type": "array", "maxItems": 20, "items": { "$ref": "#/definitions/offer" } }
+  },
+  "definitions": {
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "count", "label"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,30}$" },
+        "count": { "type": ["integer", "null"], "minimum": 1, "maximum": 500 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "offer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "codeWord", "kind", "quote", "source", "startSec", "endSec", "units", "suggest", "detectedAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^o-[a-z0-9-]{1,60}$" },
+        "codeWord": { "type": "string", "pattern": "^[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 -]{0,39}$" },
+        "kind": { "enum": ["comment-keyword", "dm"] },
+        "quote": { "type": "string", "minLength": 5, "maxLength": 600 },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "sha256"],
+          "properties": {
+            "kind": { "enum": ["transcript", "script"] },
+            "path": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        },
+        "startSec": { "type": ["number", "null"], "minimum": 0 },
+        "endSec": { "type": ["number", "null"], "minimum": 0 },
+        "units": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/definitions/unit" } },
+        "suggest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "audience"],
+          "properties": {
+            "format": { "enum": ["guide", "prompts", "checklist", "cheatsheet"] },
+            "audience": { "type": "string", "maxLength": 200 }
+          }
+        },
+        "detectedAt": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

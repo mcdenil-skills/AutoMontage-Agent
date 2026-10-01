@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lead magnet automatic check report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "checkedAt", "pageSha256", "factsSha256", "inputSha256", "ok", "items"],
+  "allOf": [{ "if": { "properties": { "ok": { "const": true } } }, "then": { "properties": { "factsSha256": { "type": "string" } } } }],
+  "properties": {
+    "version": { "const": 1 },
+    "checkedAt": { "type": "string", "minLength": 1 },
+    "pageSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "inputSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "factsSha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "ok": { "type": "boolean" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "ok", "message"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z-]{1,40}$" },
+          "ok": { "type": "boolean" },
+          "message": { "type": "string", "maxLength": 400 }
+        }
+      }
+    }
+  }
+}

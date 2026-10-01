@@ -31,6 +31,7 @@ function help() {
   automontage pult                    открыть «Пульт роликов» со всеми роликами
   automontage pult --install-shortcut создать значок пульта (macOS/Windows)
   automontage inbox                   правки и утверждения из пульта для агента
+  automontage lead-magnet --help      лид-магниты: обещание, сборка, проверка (для агента)
   automontage preview --project-dir . --brief brief/v01-draft.lesson.json
                                       собрать настоящий Remotion-предпросмотр draft
   automontage takes add --project-dir . --file take2.mp4 [--file take3.mp4]
@@ -211,11 +212,15 @@ function main(argv = process.argv.slice(2)) {
     process.exit(0);
   }
 
-  // пульт роликов и входящие агента: отдельные скрипты, аргументы не попадают в build.js
-  if (argv[0] === 'pult' || argv[0] === 'inbox') {
-    const script = argv[0] === 'pult' ? 'cli.js' : 'inbox.js';
+  // пульт роликов, входящие и лид-магниты: отдельные скрипты, аргументы не попадают в build.js
+  if (argv[0] === 'pult' || argv[0] === 'inbox' || argv[0] === 'lead-magnet') {
+    const script = {
+      pult: ['pult', 'cli.js'],
+      inbox: ['pult', 'inbox.js'],
+      'lead-magnet': ['lead-magnet', 'cli.js'],
+    }[argv[0]];
     try {
-      execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'pult', script), ...argv.slice(1)], {
+      execFileSync(process.execPath, [path.join(ROOT, 'scripts', ...script), ...argv.slice(1)], {
         stdio: 'inherit', cwd: process.cwd(), shell: false,
       });
     } catch (error) { process.exit(error.status || 1); }
