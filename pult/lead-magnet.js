@@ -84,7 +84,7 @@ function lmOfferBanner(variant, leadState, offer, getVideo) {
   const picker = lmLibraryPicker(variant, leadState, offer);
   const choices = el('div', 'lm-row');
   choices.append(
-    button('Разработать новый', async () => { lmOpenWizard(variant, leadState, offer); }, 'primary'),
+    button('Разработать новый', async () => { lmOpenWizard(variant, leadState, offer, getVideo); }, 'primary'),
     button('Уже есть готовый ▾', async () => { picker.hidden = !picker.hidden; }, 'secondary'),
     button('Нет', () => lmDecide(variant, { type: 'decline', offerId: offer.offerId, codeWord: offer.codeWord }), 'secondary'),
   );
@@ -194,21 +194,36 @@ async function lmUploadReference(variant, file) {
   return payload.reference;
 }
 
-function lmOpenWizard(variant, leadState, offer) {
+function lmOpenWizard(variant, leadState, offer, getVideo) {
   const dialog = el('dialog', 'lm-dialog');
   dialog.dataset.lmWizard = '';
   const references = [];
+  let activeUploads = 0;
+  let pendingSlots = 0;
+  let submitting = false;
   const errorLine = el('p', 'lm-error');
   errorLine.dataset.lmWizardError = '';
-  const say = (message) => { errorLine.textContent = message; };
+  const say = (message) => {
+    if (message) errorLine.textContent = [errorLine.textContent, message].filter(Boolean).join(' ');
+  };
   const body = el('div', 'lm-dialog__body');
 
   let promise = null;
   if (offer) {
     promise = lmChoice('checkbox', 'lm-promise', 'yes', `Делаем ровно под это обещание: ${lmUnitsText(offer.units)}`, false);
     promise.input.dataset.lmPromise = '';
+    const promiseParts = [el('blockquote', 'lm-quote', `«${offer.quote}»`)];
+    if (offer.startSec !== null) {
+      promiseParts.push(button('▶ послушать', async () => {
+        const video = getVideo && getVideo();
+        if (!video) return;
+        video.currentTime = offer.startSec;
+        await video.play();
+      }, 'link-button'));
+    }
+    promiseParts.push(promise.wrap);
     body.append(lmFieldset(1, `Обещание из ролика${offer.startSec === null ? '' : ` · ${lmClock(offer.startSec)}`}`,
-      [el('blockquote', 'lm-quote', `«${offer.quote}»`), promise.wrap]));
+      promiseParts));
   }
   const codeWord = lmTextInput(offer ? offer.codeWord : '', 'Кодовое слово', { maxLength: 40 });
   codeWord.readOnly = Boolean(offer);
@@ -269,7 +284,7 @@ function lmOpenWizard(variant, leadState, offer) {
   send.dataset.lmSend = '';
   const validate = () => {
     const mode = designMode();
-    send.disabled = Boolean(offer && !promise.input.checked) || !codeWord.value.trim()
+    send.disabled = submitting || activeUploads > 0 || Boolean(offer && !promise.input.checked) || !codeWord.value.trim()
       || (mode === 'reference' && !references.length) || (mode === 'like' && !likeSelect.value);
   };
   const drawChips = () => {
@@ -280,20 +295,28 @@ function lmOpenWizard(variant, leadState, offer) {
     }));
   };
   const addFiles = async (files) => {
-    for (const file of files) {
-      if (references.length >= LM_MAX_REFERENCES) {
-        say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`);
-        break;
-      }
-      try {
-        references.push({ reference: await lmUploadReference(variant, file), label: `📎 ${file.name}` });
-        say('');
-      } catch (error) {
-        say(`${file.name}: ${error.message}`);
-      }
-    }
-    drawChips();
+    activeUploads += 1;
     validate();
+    try {
+      for (const file of files) {
+        if (references.length + pendingSlots >= LM_MAX_REFERENCES) {
+          say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`);
+          break;
+        }
+        pendingSlots += 1;
+        try {
+          references.push({ reference: await lmUploadReference(variant, file), label: `📎 ${file.name}` });
+        } catch (error) {
+          say(`${file.name}: ${error.message}`);
+        } finally {
+          pendingSlots -= 1;
+        }
+      }
+    } finally {
+      activeUploads -= 1;
+      drawChips();
+      validate();
+    }
   };
   fileInput.addEventListener('change', () => {
     const files = [...fileInput.files];
@@ -310,10 +333,9 @@ function lmOpenWizard(variant, leadState, offer) {
   const addUrl = button('Добавить ссылку', async () => {
     const value = urlInput.value.trim();
     if (!/^https?:\/\/\S+$/i.test(value)) { say('Нужна ссылка вида https://…'); return; }
-    if (references.length >= LM_MAX_REFERENCES) { say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`); return; }
+    if (references.length + pendingSlots >= LM_MAX_REFERENCES) { say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`); return; }
     references.push({ reference: { kind: 'url', url: value }, label: `🔗 ${value}` });
     urlInput.value = '';
-    say('');
     drawChips();
     validate();
   }, 'secondary');
@@ -332,7 +354,9 @@ function lmOpenWizard(variant, leadState, offer) {
 
   const close = () => { if (dialog.open) dialog.close(); dialog.remove(); };
   send.addEventListener('click', async () => {
-    send.disabled = true;
+    if (submitting || send.disabled) return;
+    submitting = true;
+    validate();
     const mode = designMode();
     const params = {
       format: formats.find((item) => item.input.checked).input.value,
@@ -360,6 +384,7 @@ function lmOpenWizard(variant, leadState, offer) {
       await refresh();
     } catch (error) {
       say(error.message);
+      submitting = false;
       validate();
     }
   });

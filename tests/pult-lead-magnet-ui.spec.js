@@ -143,3 +143,113 @@ test('a broken upload is explained inside the wizard', async ({ page }) => {
   await wizard.locator('[data-lm-file]').setInputFiles({ name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ not an image') });
   await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('не поддерживается');
 });
+
+test('the wizard waits for every selected reference before sending', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('[data-lm-promise]').check();
+  await wizard.locator('.lm-choice', { hasText: 'По референсу' }).click();
+  const file = { name: 'ref.png', mimeType: 'image/png', buffer: PNG_BYTES };
+  await wizard.locator('[data-lm-file]').setInputFiles(file);
+  await expect(wizard.locator('[data-lm-chips]')).toContainText('ref.png');
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet/reference?**', async (route) => {
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await wizard.locator('[data-lm-file]').setInputFiles({ ...file, name: 'second.png' });
+  await pending;
+  await expect(wizard.locator('[data-lm-send]')).toBeDisabled();
+  release();
+  await expect(wizard.locator('[data-lm-chips]')).toContainText('second.png');
+  await expect(wizard.locator('[data-lm-send]')).toBeEnabled();
+});
+
+test('editing while a create decision is pending cannot send it twice', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('[data-lm-promise]').check();
+  let posts = 0;
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet/decision', async (route) => {
+    posts += 1;
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await wizard.locator('[data-lm-send]').click();
+  await pending;
+  await wizard.locator('[data-lm-wishes]').fill('Проверить текст');
+  await expect(wizard.locator('[data-lm-send]')).toBeDisabled();
+  expect(posts).toBe(1);
+  release();
+  await expect(wizard).toHaveCount(0);
+  expect(readDecisions(path.join(projectsDir, 'clip')).filter((item) => item.type === 'create')).toHaveLength(1);
+});
+
+test('pending uploads reserve a reference slot and earlier upload errors remain visible', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('.lm-choice', { hasText: 'По референсу' }).click();
+  const url = wizard.getByRole('textbox', { name: 'Ссылка на референс' });
+  const addUrl = wizard.getByRole('button', { name: 'Добавить ссылку' });
+  for (let n = 0; n < 4; n += 1) {
+    await url.fill(`https://example.com/${n}`);
+    await addUrl.click();
+  }
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet/reference?**', async (route) => {
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await wizard.locator('[data-lm-file]').setInputFiles({ name: 'fifth.png', mimeType: 'image/png', buffer: PNG_BYTES });
+  await pending;
+  await url.fill('https://example.com/sixth');
+  await addUrl.click();
+  release();
+  await expect(wizard.locator('[data-lm-chips] li')).toHaveCount(5);
+  await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('до 5');
+});
+
+test('a later successful upload does not erase an earlier error', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('.lm-choice', { hasText: 'По референсу' }).click();
+  await wizard.locator('[data-lm-file]').setInputFiles({ name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ not an image') });
+  await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('virus.exe');
+  await wizard.locator('[data-lm-file]').setInputFiles({ name: 'ref.png', mimeType: 'image/png', buffer: PNG_BYTES });
+  await expect(wizard.locator('[data-lm-chips]')).toContainText('ref.png');
+  await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('virus.exe');
+});
+
+test('the promise quote in the wizard can seek the current video', async ({ page }) => {
+  await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
+  await startWith();
+  const offersFile = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
+  const offers = JSON.parse(fs.readFileSync(offersFile, 'utf8'));
+  offers.offers[0].startSec = 60;
+  offers.offers[0].endSec = 63.9;
+  fs.writeFileSync(offersFile, JSON.stringify(offers));
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await expect(wizard).toContainText('1:00');
+  await wizard.getByRole('button', { name: '▶ послушать' }).click();
+  await expect(page.locator('[data-player]')).toHaveJSProperty('currentTime', 60);
+});
