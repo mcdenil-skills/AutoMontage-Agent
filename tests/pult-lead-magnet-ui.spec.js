@@ -288,6 +288,38 @@ test('a new lead revision appears while the waiting card summary stays the same'
   await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит: посмотрите и утвердите');
 });
 
+test('an older initial response cannot replace a newer revision in the same open tab', async ({ page }) => {
+  const { id } = await startWith(withDraft);
+  await openClip(page);
+  let releaseOld;
+  let oldFetched;
+  const oldPending = new Promise((resolve) => { oldFetched = resolve; });
+  let requests = 0;
+  await page.route('**/api/lead-magnet?**', async (route) => {
+    requests += 1;
+    if (requests === 1) {
+      const oldResponse = await route.fetch();
+      oldFetched();
+      await new Promise((resolve) => { releaseOld = resolve; });
+      await route.fulfill({ response: oldResponse });
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
+  await oldPending;
+  publishCheckedRevision(projectsDir, id, { page: goodPage({ title: 'Новая версия' }) });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Новая версия');
+  await expect(page.locator('.lm-viewer')).toContainText('Версия v02');
+  const oldResponse = page.waitForResponse('**/api/lead-magnet?**');
+  releaseOld();
+  await oldResponse;
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Новая версия');
+  await expect(page.locator('.lm-viewer')).toContainText('Версия v02');
+});
+
 test('a late lead state response cannot update a tab that was closed', async ({ page }) => {
   const { id } = await startWith(withDraft);
   await openLeadTab(page);

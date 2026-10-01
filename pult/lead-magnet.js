@@ -441,15 +441,29 @@ function lmTabFingerprint(leadState) {
   return JSON.stringify({ error: leadState.error, pending: leadState.pending, magnets: leadState.magnets });
 }
 
+function lmNextLoad(container) {
+  container.lmPollRequest = (container.lmPollRequest || 0) + 1;
+  return container.lmPollRequest;
+}
+
+function lmIsCurrentLoad(container, variant, cardId, request) {
+  return container.isConnected && document.querySelector('.lm-tab') === container
+    && state.openCardId === cardId && state.detailTab === 'lead'
+    && shownDetail.key === variant.key && container.lmPollRequest === request;
+}
+
 async function lmPollTab(container, variant) {
   if (!container || !container.isConnected) return;
   const cardId = state.openCardId;
-  const request = (container.lmPollRequest || 0) + 1;
-  container.lmPollRequest = request;
-  const leadState = await lmLoadState(variant);
-  if (!container.isConnected || document.querySelector('.lm-tab') !== container
-    || state.openCardId !== cardId || state.detailTab !== 'lead'
-    || shownDetail.key !== variant.key || container.lmPollRequest !== request) return;
+  const request = lmNextLoad(container);
+  let leadState;
+  try {
+    leadState = await lmLoadState(variant);
+  } catch (error) {
+    if (lmIsCurrentLoad(container, variant, cardId, request)) throw error;
+    return;
+  }
+  if (!lmIsCurrentLoad(container, variant, cardId, request)) return;
   const fingerprint = lmTabFingerprint(leadState);
   if (fingerprint !== container.lmFingerprint) {
     lmRenderTab(container, variant, leadState);
@@ -458,16 +472,18 @@ async function lmPollTab(container, variant) {
 }
 
 async function lmRenderTab(container, variant, loadedState = null) {
+  const cardId = state.openCardId;
+  const request = lmNextLoad(container);
   container.replaceChildren(el('p', 'hint', 'Загружаю лид-магнит…'));
   let leadState;
   try {
     leadState = loadedState || await lmLoadState(variant);
   } catch (error) {
-    if (!container.isConnected) return;
+    if (!lmIsCurrentLoad(container, variant, cardId, request)) return;
     container.replaceChildren(el('p', 'lm-error', error.message));
     return;
   }
-  if (!container.isConnected) return;
+  if (!lmIsCurrentLoad(container, variant, cardId, request)) return;
   container.lmFingerprint = lmTabFingerprint(leadState);
   lmActive = null;
   container.replaceChildren();
