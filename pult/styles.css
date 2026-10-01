@@ -179,3 +179,23 @@ button, input, textarea { font: inherit; color: inherit; }
   /* На узком экране липкая шапка отъедает слишком много и без того тесной высоты. */
   .pult-header { position: static; }
 }
+
+.lm-dialog { width: min(46rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; color: inherit; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 1rem; }
+.lm-dialog::backdrop { background: hsl(0 0% 0% / 0.6); }
+.lm-dialog__head, .lm-dialog__foot { display: flex; align-items: center; gap: 0.6rem; padding: 0.9rem 1.1rem; }
+.lm-dialog__head { justify-content: space-between; border-bottom: 1px solid hsl(var(--border)); }
+.lm-dialog__head h3 { margin: 0; }
+.lm-dialog__foot { justify-content: flex-end; border-top: 1px solid hsl(var(--border)); }
+.lm-dialog__foot .lm-error { margin-right: auto; }
+.lm-dialog__body { display: flex; flex-direction: column; gap: 1rem; padding: 1rem 1.1rem; }
+.lm-field { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+.lm-field legend { padding: 0; margin-bottom: 0.45rem; font-weight: 600; font-size: 0.92rem; }
+.lm-choices { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.lm-choice { display: inline-flex; gap: 0.4rem; align-items: center; padding: 0.35rem 0.7rem; border: 1px solid hsl(var(--border)); border-radius: 999px; cursor: pointer; font-size: 0.9rem; }
+.lm-choice:has(input:checked) { border-color: hsl(var(--amber)); background: hsl(var(--amber-soft)); }
+.lm-choice input { accent-color: hsl(var(--amber)); }
+.lm-reference, .lm-like { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.8rem; background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: 0.7rem; }
+.lm-drop { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 1rem; text-align: center; border: 1.5px dashed hsl(var(--muted-foreground) / 0.6); border-radius: 0.7rem; }
+.lm-drop[data-over] { border-color: hsl(var(--amber)); }
+.lm-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; list-style: none; margin: 0; padding: 0; }
+.lm-chip { display: inline-flex; gap: 0.4rem; align-items: center; padding: 0.25rem 0.55rem; border-radius: 0.45rem; background: hsl(var(--card-raised)); font-size: 0.85rem; }

@@ -139,7 +139,241 @@ function lmActionButton(variant) {
   });
 }
 
-// Окно параметров – задача 3. До неё кнопка честно говорит, что окна ещё нет.
-function lmOpenWizard() {
-  notify('Окно параметров появится в следующей задаче.', 'error');
+const LM_REFERENCE_LIMITS_MB = { 'image/png': 15, 'image/jpeg': 15, 'image/webp': 15, 'application/pdf': 30, 'text/html': 5 };
+const LM_MAX_REFERENCES = 5;
+
+function lmChoice(type, name, value, label, checked) {
+  const wrap = el('label', 'lm-choice');
+  const input = el('input');
+  input.type = type;
+  input.name = name;
+  input.value = value;
+  input.checked = checked;
+  wrap.append(input, el('span', '', label));
+  return { wrap, input };
+}
+
+function lmChoices(items) {
+  const row = el('div', 'lm-choices');
+  row.append(...items.map((item) => item.wrap));
+  return row;
+}
+
+function lmFieldset(number, legend, children) {
+  const box = el('fieldset', 'lm-field');
+  box.append(el('legend', '', number ? `${number}. ${legend}` : legend), ...children);
+  return box;
+}
+
+function lmTextInput(value, label, { multiline = false, maxLength = 0 } = {}) {
+  const input = el(multiline ? 'textarea' : 'input');
+  if (multiline) input.rows = 2;
+  else input.type = 'text';
+  input.value = value || '';
+  if (maxLength) input.maxLength = maxLength;
+  input.setAttribute('aria-label', label);
+  return input;
+}
+
+// Референс уходит сырыми байтами: сервер сам определяет тип по сигнатуре и хранит файл по SHA-256.
+async function lmUploadReference(variant, file) {
+  const limit = LM_REFERENCE_LIMITS_MB[file.type];
+  if (limit && file.size > limit * 1024 * 1024) throw new Error(`файл больше ${limit} МБ`);
+  let response;
+  try {
+    response = await fetch(`/api/lead-magnet/reference?key=${encodeURIComponent(variant.key)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+  } catch (_) {
+    throw new Error('пульт не отвечает – откройте его снова значком «Пульт роликов»');
+  }
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error((payload && payload.message) || 'файл не загрузился');
+  return payload.reference;
+}
+
+function lmOpenWizard(variant, leadState, offer) {
+  const dialog = el('dialog', 'lm-dialog');
+  dialog.dataset.lmWizard = '';
+  const references = [];
+  const errorLine = el('p', 'lm-error');
+  errorLine.dataset.lmWizardError = '';
+  const say = (message) => { errorLine.textContent = message; };
+  const body = el('div', 'lm-dialog__body');
+
+  let promise = null;
+  if (offer) {
+    promise = lmChoice('checkbox', 'lm-promise', 'yes', `Делаем ровно под это обещание: ${lmUnitsText(offer.units)}`, false);
+    promise.input.dataset.lmPromise = '';
+    body.append(lmFieldset(1, `Обещание из ролика${offer.startSec === null ? '' : ` · ${lmClock(offer.startSec)}`}`,
+      [el('blockquote', 'lm-quote', `«${offer.quote}»`), promise.wrap]));
+  }
+  const codeWord = lmTextInput(offer ? offer.codeWord : '', 'Кодовое слово', { maxLength: 40 });
+  codeWord.readOnly = Boolean(offer);
+  codeWord.dataset.lmCodeWord = '';
+  body.append(lmFieldset(2, 'Кодовое слово', [codeWord]));
+
+  const suggested = offer ? offer.suggest.format : 'guide';
+  const formats = Object.entries(LM_FORMAT_LABELS).map(([value, label]) => lmChoice('radio', 'lm-format', value, label, value === suggested));
+  const formatParts = [lmChoices(formats)];
+  if (offer) formatParts.push(el('p', 'lm-hint', `Агент советует «${LM_FORMAT_LABELS[suggested]}».`));
+  body.append(lmFieldset(3, 'Формат', formatParts));
+
+  const audience = lmTextInput(offer ? offer.suggest.audience : '', 'Для кого', { maxLength: 200 });
+  body.append(lmFieldset(4, 'Для кого', [audience]));
+
+  const designs = Object.entries(LM_DESIGN_LABELS).map(([value, label]) => lmChoice('radio', 'lm-design', value, label, value === 'brand'));
+  const designMode = () => designs.find((item) => item.input.checked).input.value;
+
+  const referencePanel = el('div', 'lm-reference');
+  referencePanel.hidden = true;
+  referencePanel.dataset.lmReference = '';
+  const fileInput = el('input');
+  fileInput.type = 'file';
+  fileInput.multiple = true;
+  fileInput.accept = '.png,.jpg,.jpeg,.webp,.pdf,.html,.htm';
+  fileInput.dataset.lmFile = '';
+  fileInput.setAttribute('aria-label', 'Файл референса');
+  const drop = el('div', 'lm-drop');
+  drop.append(el('span', '', 'Перетащите картинку, PDF или HTML-файл'), el('span', 'hint', 'PNG, JPG, WebP до 15 МБ · PDF до 30 МБ · HTML до 5 МБ'), fileInput);
+  const urlInput = lmTextInput('', 'Ссылка на референс', { maxLength: 2048 });
+  urlInput.placeholder = 'https://…';
+  const chips = el('ul', 'lm-chips');
+  chips.dataset.lmChips = '';
+  const take = {
+    composition: lmChoice('checkbox', 'lm-take', 'composition', 'Композицию и подачу', leadState.brand.defaultTake.composition),
+    colors: lmChoice('checkbox', 'lm-take', 'colors', 'Цвета', leadState.brand.defaultTake.colors),
+    fonts: lmChoice('checkbox', 'lm-take', 'fonts', 'Шрифты', leadState.brand.defaultTake.fonts),
+  };
+  const takeHint = el('p', 'hint', leadState.brand.source === 'pack'
+    ? 'У вас свой стиль, поэтому по умолчанию берём только композицию. Логотип, блок призыва, кнопки «Скопировать» и мобильная вёрстка останутся в любом случае.'
+    : 'Своего стиля нет – берём из референса всё. Блок призыва, кнопки «Скопировать» и мобильная вёрстка останутся в любом случае.');
+  const note = lmTextInput('', 'Что нравится в референсе', { multiline: true, maxLength: 500 });
+
+  const likePanel = el('div', 'lm-like');
+  likePanel.hidden = true;
+  const likeSelect = el('select');
+  likeSelect.setAttribute('aria-label', 'Образец');
+  likeSelect.append(new Option('Выберите утверждённый лид-магнит', ''), ...leadState.library.map((item) => new Option(`${item.codeWords.join(', ')} · ${item.title}`, item.id)));
+  likePanel.append(leadState.library.length ? likeSelect : el('p', 'hint', 'Утверждённых лид-магнитов пока нет.'));
+
+  const texts = Object.entries(LM_TEXT_LABELS).map(([value, label]) => lmChoice('checkbox', 'lm-texts', value, label, true));
+  const wishes = lmTextInput('', 'Пожелания', { multiline: true, maxLength: 1000 });
+  wishes.placeholder = 'Например: добавить блок «частые ошибки»';
+  wishes.dataset.lmWishes = '';
+
+  const send = el('button', 'primary', 'Отправить агенту');
+  send.type = 'button';
+  send.dataset.lmSend = '';
+  const validate = () => {
+    const mode = designMode();
+    send.disabled = Boolean(offer && !promise.input.checked) || !codeWord.value.trim()
+      || (mode === 'reference' && !references.length) || (mode === 'like' && !likeSelect.value);
+  };
+  const drawChips = () => {
+    chips.replaceChildren(...references.map((item, index) => {
+      const chip = el('li', 'lm-chip');
+      chip.append(el('span', '', item.label), button('✕', async () => { references.splice(index, 1); drawChips(); validate(); }, 'link-button'));
+      return chip;
+    }));
+  };
+  const addFiles = async (files) => {
+    for (const file of files) {
+      if (references.length >= LM_MAX_REFERENCES) {
+        say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`);
+        break;
+      }
+      try {
+        references.push({ reference: await lmUploadReference(variant, file), label: `📎 ${file.name}` });
+        say('');
+      } catch (error) {
+        say(`${file.name}: ${error.message}`);
+      }
+    }
+    drawChips();
+    validate();
+  };
+  fileInput.addEventListener('change', () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    addFiles(files);
+  });
+  drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.dataset.over = ''; });
+  drop.addEventListener('dragleave', () => { delete drop.dataset.over; });
+  drop.addEventListener('drop', (event) => {
+    event.preventDefault();
+    delete drop.dataset.over;
+    addFiles([...event.dataTransfer.files]);
+  });
+  const addUrl = button('Добавить ссылку', async () => {
+    const value = urlInput.value.trim();
+    if (!/^https?:\/\/\S+$/i.test(value)) { say('Нужна ссылка вида https://…'); return; }
+    if (references.length >= LM_MAX_REFERENCES) { say(`Можно приложить до ${LM_MAX_REFERENCES} референсов.`); return; }
+    references.push({ reference: { kind: 'url', url: value }, label: `🔗 ${value}` });
+    urlInput.value = '';
+    say('');
+    drawChips();
+    validate();
+  }, 'secondary');
+  const urlRow = el('div', 'lm-row');
+  urlRow.append(urlInput, addUrl);
+  referencePanel.append(drop, urlRow, chips,
+    lmFieldset(null, 'Что взять из референса', [lmChoices(Object.values(take)), takeHint]),
+    lmFieldset(null, 'Что нравится', [note]));
+  designs.forEach((item) => item.input.addEventListener('change', () => {
+    referencePanel.hidden = designMode() !== 'reference';
+    likePanel.hidden = designMode() !== 'like';
+  }));
+  body.append(lmFieldset(5, 'Дизайн', [lmChoices(designs), referencePanel, likePanel]));
+  body.append(lmFieldset(6, 'Тексты для раздачи', [lmChoices(texts)]));
+  body.append(lmFieldset(7, 'Пожелания (необязательно)', [wishes]));
+
+  const close = () => { if (dialog.open) dialog.close(); dialog.remove(); };
+  send.addEventListener('click', async () => {
+    send.disabled = true;
+    const mode = designMode();
+    const params = {
+      format: formats.find((item) => item.input.checked).input.value,
+      audience: audience.value.trim(),
+      design: {
+        mode,
+        take: { composition: take.composition.input.checked, colors: take.colors.input.checked, fonts: take.fonts.input.checked },
+        likeId: mode === 'like' ? likeSelect.value : null,
+        note: mode === 'reference' ? note.value.trim() : '',
+        references: mode === 'reference' ? references.map((item) => item.reference) : [],
+      },
+      texts: texts.filter((item) => item.input.checked).map((item) => item.input.value),
+      wishes: wishes.value.trim(),
+      promiseConfirmed: Boolean(promise && promise.input.checked),
+    };
+    try {
+      await api('/api/lead-magnet/decision', {
+        method: 'POST',
+        body: {
+          key: variant.key, type: 'create', offerId: offer ? offer.offerId : null, codeWord: offer ? offer.codeWord : codeWord.value.trim(), params,
+        },
+      });
+      close();
+      notify('Запрос отправлен агенту. Скопируйте фразу для агента – он соберёт черновик.');
+      await refresh();
+    } catch (error) {
+      say(error.message);
+      validate();
+    }
+  });
+
+  const head = el('div', 'lm-dialog__head');
+  head.append(el('h3', '', offer ? `Лид-магнит «${offer.codeWord}»` : 'Новый лид-магнит'), button('✕', async () => close(), 'link-button'));
+  const foot = el('div', 'lm-dialog__foot');
+  foot.append(errorLine, button('Отмена', async () => close(), 'secondary'), send);
+  dialog.append(head, body, foot);
+  dialog.addEventListener('input', validate);
+  dialog.addEventListener('change', validate);
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog);
+  validate();
+  dialog.showModal();
+  return dialog;
 }

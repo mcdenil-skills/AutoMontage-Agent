@@ -105,3 +105,41 @@ test('«Уже есть готовый» links the approved lead magnet in one c
   await expect(page.locator('[data-lm-offer]')).toHaveCount(0);
   expect(library.readLeadMagnet(projectsDir, libraryId).videos).toEqual(['other', 'clip']);
 });
+
+test('the wizard needs the promise checkbox and sends parameters with an uploaded reference', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await expect(wizard).toBeVisible();
+  await expect(wizard.locator('[data-lm-code-word]')).toHaveValue('ГАЙД');
+  const send = wizard.locator('[data-lm-send]');
+  await expect(send).toBeDisabled();
+  await wizard.locator('[data-lm-promise]').check();
+  await expect(send).toBeEnabled();
+  await expect(wizard.locator('[data-lm-reference]')).toBeHidden();
+  await wizard.locator('.lm-choice', { hasText: 'По референсу' }).click();
+  await expect(wizard.locator('[data-lm-reference]')).toBeVisible();
+  await expect(send).toBeDisabled();
+  await wizard.locator('[data-lm-file]').setInputFiles({ name: 'ref.png', mimeType: 'image/png', buffer: PNG_BYTES });
+  await expect(wizard.locator('[data-lm-chips]')).toContainText('ref.png');
+  await expect(send).toBeEnabled();
+  await wizard.locator('[data-lm-wishes]').fill('Добавь блок «частые ошибки»');
+  await send.click();
+  await expect(wizard).toHaveCount(0);
+  const create = readDecisions(path.join(projectsDir, 'clip')).find((decision) => decision.type === 'create');
+  expect(create.params.design.mode).toBe('reference');
+  expect(create.params.design.references[0].path).toMatch(/^pult\/lead-magnet-refs\/[a-f0-9]{64}\.png$/);
+  expect(create.params.wishes).toBe('Добавь блок «частые ошибки»');
+  expect(create.params.promiseConfirmed).toBe(true);
+});
+
+test('a broken upload is explained inside the wizard', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('.lm-choice', { hasText: 'По референсу' }).click();
+  await wizard.locator('[data-lm-file]').setInputFiles({ name: 'virus.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ not an image') });
+  await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('не поддерживается');
+});
