@@ -135,3 +135,20 @@ test('an archived group card prefixes the honest next step with the variant labe
   const card = sections.archive[0];
   assert.equal(card.nextStep, 'Вариант А: Утверждено, в архиве – агент соберёт финал по вашей просьбе');
 });
+
+test('a lead magnet moves the card to its more urgent section without touching the video', () => {
+  const sections = buildCards(scan([
+    entry({ folder: 'done', leadMagnet: { ask: false, status: 'waiting', nextStep: 'Лид-магнит: посмотрите и утвердите' } }),
+    entry({ folder: 'busy', status: 'working', nextStep: 'Агент готовит preview', leadMagnet: { ask: true, status: null, nextStep: null } }),
+    entry({ folder: 'calm', leadMagnet: { ask: false, status: 'ready', nextStep: 'Лид-магнит утверждён' } }),
+  ]));
+  const done = sections.waiting.find((card) => card.id === 'folder:done');
+  assert.equal(done.nextStep, 'Лид-магнит: посмотрите и утвердите');
+  assert.equal(done.variants[0].status, 'ready');
+  const busy = sections.working.find((card) => card.id === 'folder:busy');
+  assert.equal(busy.leadMagnetAsk, true);
+  assert.equal(busy.nextStep, 'Агент готовит preview');
+  const calm = sections.ready.find((card) => card.id === 'folder:calm');
+  assert.equal(calm.nextStep, 'Готов – можно забирать');
+  assert.equal(calm.leadMagnetAsk, false);
+});

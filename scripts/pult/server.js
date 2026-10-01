@@ -9,6 +9,7 @@ const { buildCards, cardIdFor } = require('./cards');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalog');
 const { addComment, deleteComment, readComments } = require('./comments');
 const { hashFile } = require('./files');
+const { attachLeadMagnets } = require('./lead-magnet-view');
 const {
   PultRequestError,
   hasUnsafePath,
@@ -88,6 +89,7 @@ async function startPultServer({
   captureImpl = null,
   onIdle = () => {},
   logger = console,
+  env = process.env,
 } = {}) {
   const resolvedRoot = path.resolve(root);
   const resolvedProjectsDir = path.resolve(projectsDir);
@@ -215,11 +217,14 @@ async function startPultServer({
       thumbUrl: videoFile ? `/media/thumb?${versioned}` : null,
       meta: playable ? probeMedia(resolvedProjectsDir, videoFile, mediaOptions) : null,
       history: entry.history.map((item, index) => ({ label: item.label, url: `/media/history?${query}&index=${index}` })),
+      // Лёгкая сводка лид-магнита (lead-magnet-view.js): без путей и хешей.
+      leadMagnet: entry.leadMagnet || null,
     };
   }
 
   function browserCards() {
-    const sections = buildCards(scanProjects({ projectsDir: resolvedProjectsDir }), {
+    const scan = scanProjects({ projectsDir: resolvedProjectsDir });
+    const sections = buildCards({ ...scan, entries: attachLeadMagnets(resolvedProjectsDir, scan.entries) }, {
       archived: readPultState(resolvedProjectsDir).archived,
     });
     const mapCard = (card) => ({ ...card, variants: card.variants.map(browserVariant) });

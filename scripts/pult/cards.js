@@ -35,6 +35,13 @@ function byUrgency(left, right) {
     || right.updatedAt.localeCompare(left.updatedAt);
 }
 
+// Лид-магнит – вторая работа по тому же ролику: карточка встаёт в раздел самого срочного
+// из двух дел, но статус и подпись самого видео у варианта не меняются.
+function urgencyOf(variant) {
+  const leadStatus = variant.leadMagnet && variant.leadMagnet.status;
+  return leadStatus && STATUS_ORDER[leadStatus] < STATUS_ORDER[variant.status] ? leadStatus : variant.status;
+}
+
 function buildCards(scan, { archived = [] } = {}) {
   const archivedIds = new Set(archived);
   const groups = new Map();
@@ -47,14 +54,17 @@ function buildCards(scan, { archived = [] } = {}) {
   }
   const cards = [...groups].map(([id, variants]) => {
     const status = variants
-      .map((variant) => variant.status)
+      .map(urgencyOf)
       .sort((left, right) => STATUS_ORDER[left] - STATUS_ORDER[right])[0];
-    const lead = variants.find((variant) => variant.status === status);
+    const lead = variants.find((variant) => urgencyOf(variant) === status);
+    // Видео той же срочности важнее подписи лид-магнита: его подпись и показываем.
+    const leadNext = lead.status === status ? lead.nextStep : lead.leadMagnet.nextStep;
     return {
       id,
       title: variants[0].group ? variants[0].group.title : variants[0].title,
       status,
-      nextStep: variants.length > 1 ? `${lead.variantLabel}: ${lead.nextStep}` : lead.nextStep,
+      nextStep: variants.length > 1 ? `${lead.variantLabel}: ${leadNext}` : leadNext,
+      leadMagnetAsk: variants.some((variant) => Boolean(variant.leadMagnet && variant.leadMagnet.ask)),
       // Ключ самого срочного варианта – по нему UI (Task 15) открывает вкладку и берёт
       // факты для лица карточки. Порядок variants при этом не трогаем – это порядок вкладок.
       leadKey: lead.key,
