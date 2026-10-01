@@ -10,6 +10,7 @@ const library = require('./library');
 const { DECISION_ID } = require('./constants');
 const { addOffer, readOffers } = require('./offers');
 const { readDecisions } = require('./requests');
+const { writeScaffold } = require('./scaffold');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -20,6 +21,7 @@ const HELP = `automontage lead-magnet – команды агента для л�
             [--source script --script <файл в папке ролика>]
   create --from <папка ролика> <r-id> --title "<название>" [--code-word <слово без обещания>]
   revision start --id <id>          revision publish --id <id> --revision <n>
+  revision scaffold --id <id> --revision <n> [--force yes]
   check --id <id> --revision <n>
   link --id <id> --folder <папка ролика> --code-word <слово>
   promise update --id <id> --from <папка ролика>
@@ -115,6 +117,12 @@ const COMMANDS = {
   'revision start': (flags, write) => {
     const { n, dir } = library.startRevision(flags.projectsDir, need(flags, 'id'));
     write(`Ревизия ${n}: ${dir}`);
+  },
+  'revision scaffold': (flags, write) => {
+    const written = writeScaffold(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')), { force: flags.force === 'yes' });
+    write(written.length
+      ? `Заготовка: ${written.join(', ')}. Заполни все места с data-lm-todo.`
+      : 'Файлы уже есть – заготовка не перезаписана (добавь --force yes, если нужно).');
   },
   'revision publish': (flags, write) => {
     const passport = library.publishRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));

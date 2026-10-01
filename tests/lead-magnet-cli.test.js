@@ -14,6 +14,20 @@ async function run(argv) {
   return { code, out: lines.join('\n') };
 }
 
+test('revision scaffold writes files and does not overwrite them on replay', async (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir } = library.startRevision(projectsDir, id);
+  const args = ['revision', 'scaffold', '--projects-dir', projectsDir, '--id', id, '--revision', String(n)];
+  const first = await run(args);
+  assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /Заготовка: page\.html, content\.md/);
+  assert.equal(fs.existsSync(path.join(dir, 'page.html')), true);
+  assert.equal(fs.existsSync(path.join(dir, 'content.md')), true);
+  const second = await run(args);
+  assert.equal(second.code, 0, second.out);
+  assert.match(second.out, /Файлы уже есть/);
+});
+
 test('agent flow: offer → create from request → revision start → link → list', async (t) => {
   const { projectsDir, projectDir, folder } = makeVideoProject(t);
   const P = ['--projects-dir', projectsDir];
