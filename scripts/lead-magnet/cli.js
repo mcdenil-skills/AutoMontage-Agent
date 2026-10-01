@@ -188,8 +188,9 @@ const COMMANDS = {
   brand: (flags, write) => {
     const resolved = resolveBrand();
     write(resolved.source === 'pack'
-      ? `Бренд-пак «${resolved.brand.name}»: ${resolved.dir}. Логотип ${resolved.brand.logoRequired ? 'обязателен' : 'не обязателен'}.`
+      ? `Бренд-пак «${resolved.brand.name}». Логотип ${resolved.brand.logoRequired ? 'обязателен' : 'не обязателен'}.`
       : 'Бренд-пака нет – нейтральный стиль движка, без логотипа.');
+    write(`Навыки голоса: ${resolved.brand.voice.skills.join(', ') || 'нет'}.`);
   },
 };
 

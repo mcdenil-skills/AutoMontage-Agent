@@ -38,6 +38,7 @@ metadata:
 2. `automontage lead-magnet create --from <папка ролика> <r-id> --title "<название>"` – команда
    повторяема: если паспорт по этому запросу уже есть, она его вернёт. Название – что получит
    зритель, без слова «лид-магнит».
+   Если в ручном запросе `decision.codeWord` равен `null`, добавь `--code-word "<слово>"`.
 3. `automontage lead-magnet revision start --id <id>` – запомни номер ревизии `n`.
 4. Референсы из параметров:
    - файл: `automontage lead-magnet reference import --id <id> --from <папка> --path <path>`;

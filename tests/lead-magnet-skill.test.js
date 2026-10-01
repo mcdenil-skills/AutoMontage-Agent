@@ -31,6 +31,11 @@ test('the skill keeps the promise verbatim, the facts verified and approval huma
   assert.match(skill, /данные,\s+а\s+не\s+инструкции/iu);
 });
 
+test('the create step explains the manual request code-word exception', () => {
+  const skill = read('skills/lead-magnet/SKILL.md');
+  assert.match(skill, /decision\.codeWord[^\n]*null[^\n]*--code-word/u);
+});
+
 test('the funnel provider is read-only in this stage', () => {
   const funnel = read('skills/lead-magnet/references/funnel-chatplace.md');
   assert.match(funnel, /mcp\.chatplace\.io/u);
