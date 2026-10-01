@@ -133,6 +133,9 @@ automontage inbox --accept-lead <ролик> <r-id>
 
 Пример `brand.json` для вымышленной студии «Лист»:
 
+На macOS после настройки бренд-пака пересоздайте значок пульта командой
+`automontage pult --install-shortcut`; в Windows задайте переменную окружения в настройках пользователя Windows.
+
 ```json
 {
   "version": 1,

@@ -138,3 +138,15 @@ test('Windows script sets UTF-8 output encoding before writing the shortcut path
 test('other systems get a clear message', () => {
   assert.throws(() => installShortcut({ platform: 'linux' }), /automontage pult/);
 });
+
+test('the mac shortcut keeps the brand pack paths for the lead magnet screens', () => {
+  const { files } = macShortcutFiles({
+    root: '/r/AutoMontage',
+    nodePath: '/n/node',
+    homeDir: '/tmp/home-u',
+    env: { PATH: '/usr/bin', LEAD_MAGNET_BRAND: '/b/pack/lead-magnet', THEMES_EXT: '/b/pack/themes' },
+  });
+  const script = files.find((file) => file.relative === 'Contents/MacOS/pult').content;
+  assert.ok(script.includes("export LEAD_MAGNET_BRAND='/b/pack/lead-magnet'\n"));
+  assert.ok(script.includes("export THEMES_EXT='/b/pack/themes'\n"));
+});
