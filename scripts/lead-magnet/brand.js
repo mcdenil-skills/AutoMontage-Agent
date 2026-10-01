@@ -15,6 +15,13 @@ function loadPack(dir) {
   const brand = readJsonIfExists(path.join(dir, 'brand.json'), 'brand.json бренд-пака');
   if (brand === undefined) throw new Error(`бренд-пак лид-магнитов не найден: ${dir}`);
   if (!validateBrand(brand)) throw new Error(`бренд-пак лид-магнитов: ${formatAjvErrors(validateBrand.errors)}`);
+  for (const social of brand.socials) {
+    let url;
+    try { url = new URL(social.url); } catch (_) { url = null; }
+    if (!url || url.protocol !== 'https:' || url.username || url.password) {
+      throw new Error('бренд-пак лид-магнитов: соцсети требуют адрес https:// без пароля');
+    }
+  }
   const inside = (stored, label) => {
     try {
       return resolveProjectPath(dir, stored, { label, mustExist: true, type: 'file' });

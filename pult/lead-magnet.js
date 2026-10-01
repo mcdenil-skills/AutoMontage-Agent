@@ -289,7 +289,7 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
   const validate = () => {
     const mode = designMode();
     send.disabled = submitting || activeUploads > 0 || Boolean(offer && !promise.input.checked) || !codeWord.value.trim()
-      || (mode === 'reference' && !references.length) || (mode === 'like' && !likeSelect.value);
+      || (mode === 'reference' && !references.length) || (mode === 'like' && !likeSelect.value) || !validCall();
   };
   const drawChips = () => {
     chips.replaceChildren(...references.map((item, index) => {
@@ -356,6 +356,36 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
   body.append(lmFieldset(6, 'Тексты для раздачи', [lmChoices(texts)]));
   body.append(lmFieldset(7, 'Пожелания (необязательно)', [wishes]));
 
+  const brandCall = leadState.brand.call.buttons.length
+    ? `Призыв бренд-пака: ${leadState.brand.call.buttons.join(', ')}`
+    : 'Призыв бренд-пака';
+  const calls = [
+    lmChoice('radio', 'lm-cta', 'brand', brandCall, true),
+    lmChoice('radio', 'lm-cta', 'link', 'Своя ссылка (практикум, вебинар)', false),
+    lmChoice('radio', 'lm-cta', 'none', 'Без призыва – только соцсети', false),
+  ];
+  const last = leadState.lastLink || { title: 'Хочешь разобраться глубже?', label: 'Бесплатный практикум', url: '' };
+  const ctaTitle = lmTextInput(last.title, 'Заголовок над кнопкой', { maxLength: 120 });
+  const ctaLabel = lmTextInput(last.label, 'Надпись на кнопке', { maxLength: 60 });
+  const ctaUrl = lmTextInput(last.url, 'Ссылка', { maxLength: 500 });
+  ctaUrl.placeholder = 'https://…';
+  ctaUrl.dataset.lmCtaUrl = '';
+  const linkPanel = el('div', 'lm-reference');
+  linkPanel.hidden = true;
+  linkPanel.append(ctaTitle, ctaLabel, ctaUrl, el('p', 'hint', 'К ссылке добавятся UTM-метки бренд-пака.'));
+  const callMode = () => calls.find((item) => item.input.checked).input.value;
+  calls.forEach((item) => item.input.addEventListener('change', () => { linkPanel.hidden = callMode() !== 'link'; }));
+  const socialsHint = leadState.brand.socials.length
+    ? `Внизу всегда: ${leadState.brand.socials.join(' · ')}`
+    : 'Соцсети внизу страницы задаются в бренд-паке.';
+  body.append(lmFieldset(8, 'Куда ведём в конце', [lmChoices(calls), linkPanel, el('p', 'hint', socialsHint)]));
+  const validCall = () => {
+    if (callMode() !== 'link') return true;
+    let url;
+    try { url = new URL(ctaUrl.value.trim()); } catch (_) { return false; }
+    return Boolean(ctaTitle.value.trim() && ctaLabel.value.trim() && url.protocol === 'https:' && !url.username && !url.password);
+  };
+
   const close = () => { if (dialog.open) dialog.close(); dialog.remove(); };
   send.addEventListener('click', async () => {
     if (submitting || send.disabled) return;
@@ -374,6 +404,7 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
       },
       texts: texts.filter((item) => item.input.checked).map((item) => item.input.value),
       wishes: wishes.value.trim(),
+      cta: { mode: callMode(), title: ctaTitle.value.trim(), label: ctaLabel.value.trim(), url: ctaUrl.value.trim() },
       promiseConfirmed: Boolean(promise && promise.input.checked),
     };
     try {

@@ -23,7 +23,10 @@ function macShortcutFiles({ root, nodePath, homeDir, env = process.env }) {
   const appDir = path.posix.join(homeDir, 'Applications', `${SHORTCUT_NAME}.app`);
   const lines = ['#!/bin/sh'];
   if (env.PATH) lines.push(`export PATH=${shellQuote(env.PATH)}`);
-  if (env.AUTOMONTAGE_FFMPEG_DIR) lines.push(`export AUTOMONTAGE_FFMPEG_DIR=${shellQuote(env.AUTOMONTAGE_FFMPEG_DIR)}`);
+  // Пути, которые пульт читает из окружения: ffmpeg и приватный бренд-пак (темы, лид-магниты).
+  for (const name of ['AUTOMONTAGE_FFMPEG_DIR', 'LEAD_MAGNET_BRAND', 'THEMES_EXT']) {
+    if (env[name]) lines.push(`export ${name}=${shellQuote(env[name])}`);
+  }
   // `brew upgrade node` меняет версионный путь в Cellar – записанный nodePath может исчезнуть.
   // Тогда ищем node на сохранённом PATH, чтобы значок не переставал работать молча.
   lines.push(`NODE=${shellQuote(nodePath)}`);

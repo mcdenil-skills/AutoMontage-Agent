@@ -43,18 +43,38 @@ function logoHtml(resolved) {
   return `<span class="lm-logo" data-lm="logo"><img src="data:${mime};base64,${data}" alt="${escapeHtml(resolved.brand.name)}"></span>`;
 }
 
+// Простые значки соцсетей (currentColor), чтобы страница оставалась самодостаточной.
+const SOCIAL_ICONS = {
+  telegram: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21.5 3.6 2.9 10.8c-1.3.5-1.3 1.3-.2 1.6l4.8 1.5 1.8 5.6c.2.6.4.8.9.8.4 0 .6-.2.9-.4l2.3-2.2 4.7 3.5c.9.5 1.5.2 1.7-.8l3.1-14.7c.3-1.3-.5-1.9-1.4-1.5ZM9.4 14.3l8.7-5.5c.4-.3.8-.1.5.2l-7.2 6.5-.3 3.1-1.7-4.3Z"/></svg>',
+  instagram: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17.3" cy="6.7" r="1.2" fill="currentColor"/></svg>',
+  youtube: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4" fill="currentColor"/><path d="M10 9v6l5-3-5-3Z" fill="var(--text)"/></svg>',
+  vk: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="currentColor"/><path d="M6.5 8.5h2.2c.1 2.9 1.4 4.1 2.4 4.4V8.5h2.1v2.5c1-.1 2-1.3 2.4-2.5h2.1c-.3 1.6-1.5 2.8-2.4 3.3.9.4 2.2 1.5 2.7 3.4h-2.3c-.5-1.5-1.6-2.6-2.5-2.7v2.7h-.3c-4.4 0-6.9-3-7-8Z" fill="var(--text)"/></svg>',
+  site: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
+
+function withUtm(rawUrl, utm) {
+  if (!utm) return rawUrl;
+  const url = new URL(rawUrl);
+  for (const [key, value] of new URLSearchParams(utm.slice(1))) url.searchParams.set(key, value);
+  return url.href;
+}
+
 function ctaHtml(brand, passport) {
-  const { cta } = brand;
-  const utm = cta.utm ? cta.utm.replace('{campaign}', slugifyProjectName(passport.codeWords[0])) : '';
-  const buttons = cta.buttons.map((item) => {
-    const url = utm ? new URL(item.url) : null;
-    if (url) for (const [key, value] of new URLSearchParams(utm.slice(1))) url.searchParams.set(key, value);
-    return `<a class="lm-cta__button" href="${escapeHtml(url ? url.href : item.url)}">${escapeHtml(item.label)}</a>`;
-  }).join('');
+  const call = passport.params.cta || { mode: 'brand' };
+  const utm = brand.cta.utm ? brand.cta.utm.replace('{campaign}', slugifyProjectName(passport.codeWords[0])) : '';
+  const button = (label, url) => `<a class="lm-cta__button" href="${escapeHtml(withUtm(url, utm))}">${escapeHtml(label)}</a>`;
+  let head = '';
+  if (call.mode === 'link') {
+    head = `<h2>${escapeHtml(call.title)}</h2>\n<div class="lm-cta__buttons">${button(call.label, call.url)}</div>`;
+  } else if (call.mode === 'brand') {
+    const buttons = brand.cta.buttons.map((item) => button(item.label, item.url)).join('');
+    head = `<h2>${escapeHtml(brand.cta.title)}</h2>\n${brand.cta.text ? `<p>${escapeHtml(brand.cta.text)}</p>` : ''}\n${buttons ? `<div class="lm-cta__buttons">${buttons}</div>` : ''}`;
+  }
+  const socials = brand.socials.map((item) => `<a class="lm-social" data-lm-social="${item.network}" href="${escapeHtml(item.url)}">${SOCIAL_ICONS[item.network]}<span>${escapeHtml(item.label)}</span></a>`).join('');
+  const body = (head || socials) ? head : '<p>Сохраните страницу – она пригодится.</p>';
   return `<section class="lm-cta" data-lm-block="cta" data-lm="cta">
-<h2>${escapeHtml(cta.title)}</h2>
-${cta.text ? `<p>${escapeHtml(cta.text)}</p>` : ''}
-${buttons ? `<div class="lm-cta__buttons">${buttons}</div>` : ''}
+${body}
+${socials ? `<nav class="lm-socials" aria-label="Соцсети">${socials}</nav>` : ''}
 </section>`;
 }
 
@@ -118,6 +138,9 @@ h2{font-size:clamp(21px,5vw,28px)}
 .lm-cta{margin-top:28px;padding:22px 16px;text-align:center;background:var(--text);color:var(--bg);border-radius:16px}
 .lm-cta__buttons{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:14px}
 .lm-cta__button{display:inline-block;padding:12px 16px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600}
+.lm-socials{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:18px}
+.lm-social{display:inline-flex;gap:6px;align-items:center;color:var(--bg);text-decoration:none;font-weight:600}
+.lm-social svg{width:22px;height:22px;flex:none}
 img{max-width:100%;height:auto}
 @media print{[data-lm-copy]{display:none}.lm-code{padding-bottom:14px}.lm-page{max-width:none}}`;
 }

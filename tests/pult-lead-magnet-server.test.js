@@ -105,7 +105,7 @@ test('the video state lists the offer, brand defaults and the approved library, 
   assert.equal(response.status, 200);
   const state = response.json;
   assert.deepEqual(state.offers.map((offer) => [offer.codeWord, offer.state, offer.quote]), [['ГАЙД', 'ask', QUOTE]]);
-  assert.deepEqual(state.brand, { source: 'neutral', name: 'Нейтральный', logoRequired: false, defaultTake: { composition: true, colors: true, fonts: true } });
+  assert.deepEqual(state.brand, { call: { title: 'Понравилось?', buttons: [] }, socials: [], source: 'neutral', name: 'Нейтральный', logoRequired: false, defaultTake: { composition: true, colors: true, fonts: true } });
   assert.deepEqual(state.library.map((item) => item.id), [libraryId]);
   assert.deepEqual(state.magnets, []);
   assert.equal(JSON.stringify(state).includes(projectsDir), false);
@@ -482,4 +482,16 @@ test('approval accepts an unchanged or explicitly acknowledged source promise', 
       assert.equal(library.readLeadMagnet(projectsDir, id).approved, n);
     });
   }
+});
+
+test('the state offers the last custom link and the brand call', async (t) => {
+  const projectsDir = root(t);
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  const passport = library.readLeadMagnet(projectsDir, id);
+  library.savePassport(projectsDir, { ...passport, params: { ...passport.params, cta: { mode: 'link', title: 'Глубже?', label: 'Практикум', url: 'https://example.com/p' } } }, () => new Date());
+  const { session } = await start(t, projectsDir);
+  const state = (await get(session, '/api/lead-magnet?key=clip')).json;
+  assert.deepEqual(state.lastLink, { title: 'Глубже?', label: 'Практикум', url: 'https://example.com/p' });
+  assert.deepEqual(Object.keys(state.brand.call).sort(), ['buttons', 'title']);
+  assert.ok(Array.isArray(state.brand.socials));
 });

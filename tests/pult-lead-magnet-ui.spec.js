@@ -5,9 +5,11 @@ const path = require('node:path');
 const { test, expect } = require('playwright/test');
 
 const { approveLeadMagnet } = require('../scripts/lead-magnet/approve');
+const { resolveBrand } = require('../scripts/lead-magnet/brand');
 const library = require('../scripts/lead-magnet/library');
 const { addOffer } = require('../scripts/lead-magnet/offers');
 const { readDecisions } = require('../scripts/lead-magnet/requests');
+const { scaffoldPage } = require('../scripts/lead-magnet/scaffold');
 const { startPultServer } = require('../scripts/pult/server');
 const { addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
 const {
@@ -258,6 +260,25 @@ async function openLeadTab(page) {
   await openClip(page);
   await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
 }
+
+test('copy buttons of a scaffolded page work inside the sandbox', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await startWith((dir) => {
+    const id = addLeadMagnetFor(dir, 'clip');
+    const html = scaffoldPage(library.readLeadMagnet(dir, id), resolveBrand({ env: {} }))
+      .replace(/ data-lm-todo/g, '')
+      .replace('Промпт или команда', 'Сделай мне сайт за вечер');
+    publishCheckedRevision(dir, id, { page: html });
+    return { id };
+  });
+  await openLeadTab(page);
+  const frame = page.frameLocator('[data-lm-frame]');
+  await frame.locator('[data-lm-copy]').first().click();
+  await expect(frame.locator('[data-lm-copy]').first()).toHaveText('Скопировано ✓');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Сделай мне сайт за вечер');
+  await frame.locator('[data-lm-step="step-1"]').check();
+  await expect(frame.locator('[data-lm-step="step-1"]')).toBeChecked();
+});
 
 test('a changed promise shows both quotes and «Оставить как есть» settles it', async ({ page }) => {
   await startWith((dir) => {
@@ -710,3 +731,43 @@ test('wizard playback failure is explained inside the dialog', async ({ page }) 
   await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('Не удалось воспроизвести видео');
   await expect(wizard.locator('[data-lm-wizard-error]')).not.toContainText('NotAllowedError');
 });
+
+test('the wizard sends the chosen closing call and prefills the last custom link', async ({ page }) => {
+  await startWith((dir) => {
+    const id = addLeadMagnetFor(dir, 'clip');
+    const passport = library.readLeadMagnet(dir, id);
+    library.savePassport(dir, { ...passport, params: { ...passport.params, cta: { mode: 'link', title: 'Глубже?', label: 'Практикум', url: 'https://example.com/p' } } }, () => new Date());
+    return { id };
+  });
+  await openClip(page);
+  await page.locator('.actions button', { hasText: '🎁 Лид-магнит' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('[data-lm-code-word]').fill('ГАЙД');
+  await wizard.locator('.lm-choice', { hasText: 'Своя ссылка' }).click();
+  await expect(wizard.locator('[data-lm-cta-url]')).toHaveValue('https://example.com/p');
+  await wizard.locator('[data-lm-cta-url]').fill('http://bad');
+  await expect(wizard.locator('[data-lm-send]')).toBeDisabled();
+  await wizard.locator('[data-lm-cta-url]').fill('https://user:password@example.com');
+  await expect(wizard.locator('[data-lm-send]')).toBeDisabled();
+  await wizard.locator('[data-lm-cta-url]').fill('https://example.com/new');
+  await wizard.locator('[data-lm-send]').click();
+  await expect(wizard).toHaveCount(0);
+  const create = readDecisions(path.join(projectsDir, 'clip')).find((decision) => decision.type === 'create');
+  expect(create.params.cta).toEqual({ mode: 'link', title: 'Глубже?', label: 'Практикум', url: 'https://example.com/new' });
+});
+
+for (const mode of ['brand', 'none']) {
+  test(`the wizard sends the ${mode} closing call without custom fields`, async ({ page }) => {
+    await startWith();
+    await openClip(page);
+    await page.locator('.actions button', { hasText: '🎁 Лид-магнит' }).click();
+    const wizard = page.locator('[data-lm-wizard]');
+    await wizard.locator('[data-lm-code-word]').fill('ГАЙД');
+    if (mode === 'none') await wizard.locator('.lm-choice', { hasText: 'Без призыва' }).click();
+    await expect(wizard.locator('[data-lm-cta-url]')).toBeHidden();
+    await wizard.locator('[data-lm-send]').click();
+    await expect(wizard).toHaveCount(0);
+    const create = readDecisions(path.join(projectsDir, 'clip')).find((decision) => decision.type === 'create');
+    expect(create.params.cta).toEqual({ mode, title: '', label: '', url: '' });
+  });
+}

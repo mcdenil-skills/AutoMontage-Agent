@@ -50,3 +50,13 @@ test('an explicit broken pack is an error, a missing sibling falls back to neutr
   fs.mkdirSync(path.join(base, 'only-themes', 'themes'), { recursive: true });
   assert.equal(resolveBrand({ env: { THEMES_EXT: path.join(base, 'only-themes', 'themes') } }).source, 'neutral');
 });
+
+test('social addresses require https; a valid social is accepted', (t) => {
+  const dir = tmp(t);
+  for (const url of ['http://example.com', 'javascript:alert(1)', 'https://']) {
+    writePack(dir, { socials: [{ network: 'telegram', label: 'Telegram', url }] });
+    assert.throws(() => resolveBrand({ env: { LEAD_MAGNET_BRAND: dir } }), /бренд-пак/);
+  }
+  writePack(dir, { socials: [{ network: 'telegram', label: 'Telegram', url: 'https://t.me/example' }] });
+  assert.equal(resolveBrand({ env: { LEAD_MAGNET_BRAND: dir } }).brand.socials.length, 1);
+});

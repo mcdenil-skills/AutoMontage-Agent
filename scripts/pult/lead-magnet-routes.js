@@ -129,10 +129,12 @@ function createLeadMagnetRoutes({
     try {
       const resolved = resolveBrand({ env });
       return {
+        call: { title: resolved.brand.cta.title, buttons: resolved.brand.cta.buttons.map((item) => item.label) },
+        socials: resolved.brand.socials.map((item) => item.label),
         source: resolved.source, name: resolved.brand.name, logoRequired: resolved.brand.logoRequired, defaultTake: defaultTake(resolved),
       };
     } catch (_) {
-      return { source: 'error', name: null, logoRequired: false, defaultTake: { composition: true, colors: true, fonts: true } };
+      return { call: { title: '', buttons: [] }, socials: [], source: 'error', name: null, logoRequired: false, defaultTake: { composition: true, colors: true, fonts: true } };
     }
   }
 
@@ -204,7 +206,9 @@ function createLeadMagnetRoutes({
     const index = buildLeadMagnetIndex(projectsDir);
     const view = folderLeadMagnet(projectsDir, entry.folder, index);
     const passports = new Map(index.entries.map((passport) => [passport.id, passport]));
+    const lastCall = index.entries.find((item) => item.params.cta?.mode === 'link')?.params.cta;
     return {
+      lastLink: lastCall ? { title: lastCall.title, label: lastCall.label, url: lastCall.url } : null,
       brand: brandView(), status: view.status, nextStep: view.nextStep, error: view.error,
       offers: view.offers, pending: view.pending,
       magnets: view.magnets.map((summary) => (summary.error ? summary : magnetView(passports.get(summary.id), summary))),

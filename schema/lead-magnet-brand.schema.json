@@ -3,7 +3,7 @@
   "title": "Lead magnet brand pack",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "name", "logoRequired", "logo", "tokens", "fontFiles", "cta", "voice", "examples"],
+  "required": ["version", "name", "logoRequired", "logo", "tokens", "fontFiles", "cta", "socials", "voice", "examples"],
   "properties": {
     "version": { "const": 1 },
     "name": { "type": "string", "minLength": 1, "maxLength": 80 },
@@ -59,6 +59,19 @@
           }
         },
         "utm": { "type": ["string", "null"], "pattern": "^\\?utm_[A-Za-z0-9_=&{}.-]{1,200}$" }
+      }
+    },
+    "socials": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["network", "label", "url"],
+        "properties": {
+          "network": { "enum": ["telegram", "instagram", "youtube", "vk", "site"] },
+          "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "url": { "type": "string", "pattern": "^https://", "maxLength": 500 }
+        }
       }
     },
     "voice": {
