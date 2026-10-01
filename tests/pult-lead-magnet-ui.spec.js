@@ -238,6 +238,62 @@ test('a later successful upload does not erase an earlier error', async ({ page 
   await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('virus.exe');
 });
 
+function withDraft(dir, options = {}) {
+  const id = addLeadMagnetFor(dir, 'clip');
+  publishCheckedRevision(dir, id, options);
+  return { id };
+}
+
+async function openLeadTab(page) {
+  await openClip(page);
+  await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
+}
+
+test('the lead tab shows the sandboxed page on desktop and phone width', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  const frame = page.frameLocator('[data-lm-frame]');
+  await expect(frame.locator('h1')).toHaveText('Сайт без кода');
+  await expect(page.locator('[data-lm-frame]')).toHaveAttribute('data-view', 'desktop');
+  await page.locator('[data-lm-view="phone"]').click();
+  await expect(page.locator('[data-lm-frame]')).toHaveAttribute('data-view', 'phone');
+  expect(await page.locator('[data-lm-frame]').evaluate((node) => node.style.width)).toBe('390px');
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит: посмотрите и утвердите');
+  await expect(page.locator('[data-lm-text="dm"]')).toContainText('6 / 1000');
+});
+
+test('approval needs the checkbox and then shows the files', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  const approveBox = page.locator('[data-lm-approve]');
+  const approve = approveBox.locator('button', { hasText: 'Утверждаю лид-магнит' });
+  await expect(approve).toBeDisabled();
+  await approveBox.locator('input[type="checkbox"]').check();
+  await approve.click();
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит утверждён');
+  const pdf = page.locator('[data-lm-files] li', { hasText: 'PDF' });
+  await pdf.locator('button').click();
+  await expect.poll(() => calls.reveal.at(-1) || '').toMatch(/v01[\\/]page\.pdf$/);
+});
+
+test('a red check shows its items and offers no approval', async ({ page }) => {
+  await startWith((dir) => withDraft(dir, { ok: false }));
+  await openLeadTab(page);
+  await expect(page.locator('[data-lm-checks] [data-ok="false"]').first()).toBeVisible();
+  await expect(page.locator('[data-lm-approve] button', { hasText: 'Утверждаю' })).toHaveCount(0);
+});
+
+test('the sandboxed page reaches neither the pult, nor its parent, nor storage', async ({ page }) => {
+  const probe = '<p id="probe">…</p><script>(async () => { const out = [];'
+    + "try { await fetch('/api/cards'); out.push('fetch-open'); } catch (e) { out.push('fetch-blocked'); }"
+    + "try { void parent.document.title; out.push('parent-open'); } catch (e) { out.push('parent-blocked'); }"
+    + "try { void localStorage.length; out.push('storage-open'); } catch (e) { out.push('storage-blocked'); }"
+    + "document.getElementById('probe').textContent = out.join(' '); })();</script>";
+  await startWith((dir) => withDraft(dir, { page: goodPage({ extra: probe }) }));
+  await openLeadTab(page);
+  await expect(page.frameLocator('[data-lm-frame]').locator('#probe')).toHaveText('fetch-blocked parent-blocked storage-blocked');
+});
+
 test('the promise quote in the wizard can seek the current video', async ({ page }) => {
   await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
   await startWith();

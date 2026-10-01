@@ -402,3 +402,290 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
   dialog.showModal();
   return dialog;
 }
+
+
+const LM_CHECK_LABELS = {
+  promise: 'Обещание выполнено',
+  cta: 'Блок призыва в конце',
+  'phone-width': 'Телефон 390 px',
+  'copy-buttons': 'Кнопки «Скопировать»',
+  logo: 'Логотип',
+  header: 'Шапка без слова «лид-магнит»',
+  'self-contained': 'Страница без интернета',
+  blocks: 'Разметка блоков',
+  texts: 'Тексты в лимитах',
+  facts: 'Факты проверены',
+};
+const LM_FILE_LABELS = {
+  'page.html': 'Страница (HTML)',
+  'page.pdf': 'PDF',
+  'texts/dm.txt': 'Текст в личку',
+  'texts/telegram.txt': 'Пост в Telegram',
+  'texts/instagram.txt': 'Подпись Instagram',
+};
+// Какой лид-магнит открыт во вкладке, если у ролика их несколько (разные кодовые слова).
+const lmChosen = new Map();
+// Активная страница за стеклом: только её сообщения принимаются (задача 5).
+let lmActive = null;
+
+async function lmCopyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify('Скопировано.');
+  } catch (_) {
+    notify('Не удалось скопировать – выделите текст и нажмите ⌘C / Ctrl+C', 'error');
+  }
+}
+
+async function lmRenderTab(container, variant) {
+  container.replaceChildren(el('p', 'hint', 'Загружаю лид-магнит…'));
+  let leadState;
+  try {
+    leadState = await lmLoadState(variant);
+  } catch (error) {
+    container.replaceChildren(el('p', 'lm-error', error.message));
+    return;
+  }
+  lmActive = null;
+  container.replaceChildren();
+  if (leadState.error) container.append(el('p', 'lm-error', leadState.error));
+  for (const broken of leadState.magnets.filter((magnet) => magnet.error)) {
+    container.append(el('p', 'lm-error', `«${broken.title}»: ${broken.nextStep}`));
+  }
+  const magnets = leadState.magnets.filter((magnet) => !magnet.error);
+  if (!magnets.length) {
+    const word = leadState.pending.find(Boolean);
+    const text = leadState.pending.length ? `Агент готовит лид-магнит${word ? ` «${word}»` : ''}.` : 'Лид-магнита у этого ролика пока нет.';
+    const next = el('p', 'detail__next', text);
+    next.dataset.lmStatus = '';
+    container.append(next, lmHandoff(variant, null));
+    return;
+  }
+  const magnet = magnets.find((item) => item.id === lmChosen.get(variant.key)) || magnets[0];
+  if (magnets.length > 1) {
+    const pills = el('div', 'variant-tabs');
+    for (const option of magnets) {
+      const pill = el('button', 'variant-tab', option.codeWords.join(', '));
+      pill.type = 'button';
+      pill.setAttribute('aria-pressed', String(option.id === magnet.id));
+      pill.addEventListener('click', () => { lmChosen.set(variant.key, option.id); lmRenderTab(container, variant); });
+      pills.append(pill);
+    }
+    container.append(pills);
+  }
+  const layout = el('div', 'detail');
+  const main = el('div', 'lm-main');
+  const side = el('div', 'detail__side');
+  const comments = lmCommentsPanel(magnet);
+  main.append(lmViewer(magnet, (target) => comments.setTarget(target)), lmTextsPanel(magnet, comments));
+  const badge = el('p', `badge badge--${magnet.status}`, LM_STATUS_LABELS[magnet.status]);
+  const next = el('p', 'detail__next', magnet.nextStep);
+  next.dataset.lmStatus = '';
+  side.append(badge, next);
+  if (magnet.promiseChanged) side.append(lmPromisePanel(variant, leadState, magnet));
+  side.append(lmChecksPanel(magnet), comments.box, lmApprovePanel(magnet), lmFilesPanel(magnet));
+  if (magnet.funnel) side.append(lmFunnelPanel(variant, magnet));
+  side.append(lmHandoff(variant, magnet));
+  layout.append(main, side);
+  container.append(layout);
+}
+
+function lmViewer(magnet, onBlock) {
+  const box = el('div', 'lm-viewer');
+  const { revision } = magnet;
+  if (!revision || !revision.pageUrl) {
+    const empty = el('div', 'player player--empty');
+    empty.append(el('p', 'player__label', 'Страница появится, когда агент покажет первую версию.'));
+    box.append(empty);
+    return box;
+  }
+  let view = 'desktop';
+  let reviewing = false;
+  const wrap = el('div', 'lm-frame-wrap');
+  const frame = el('iframe', 'lm-frame');
+  frame.title = 'Страница лид-магнита';
+  frame.setAttribute('sandbox', 'allow-scripts');
+  frame.setAttribute('allow', 'clipboard-write');
+  frame.referrerPolicy = 'no-referrer';
+  frame.dataset.lmFrame = '';
+  frame.dataset.view = view;
+  frame.src = revision.pageUrl;
+  wrap.append(frame);
+  const layoutFrame = () => {
+    const width = view === 'phone' ? 390 : 1280;
+    const available = wrap.clientWidth || width;
+    const scale = Math.min(1, available / width);
+    frame.style.width = `${width}px`;
+    frame.style.height = `${Math.round((wrap.clientHeight || 600) / scale)}px`;
+    frame.style.transform = `scale(${scale})`;
+    frame.style.left = `${Math.max(0, (available - width * scale) / 2)}px`;
+    frame.dataset.view = view;
+  };
+  const sendReview = () => {
+    // Страница в песочнице без своего origin: адресовать сообщение можно только '*'.
+    if (frame.contentWindow) frame.contentWindow.postMessage({ type: 'lm-review', on: reviewing }, '*');
+  };
+  const bar = el('div', 'lm-row');
+  const views = el('div', 'detail-tabs');
+  const viewButtons = [['desktop', '🖥 Компьютер'], ['phone', '📱 Телефон 390']].map(([key, label]) => {
+    const tab = el('button', 'detail-tab', label);
+    tab.type = 'button';
+    tab.dataset.lmView = key;
+    tab.setAttribute('aria-pressed', String(key === view));
+    tab.addEventListener('click', () => {
+      view = key;
+      viewButtons.forEach((other) => other.setAttribute('aria-pressed', String(other === tab)));
+      layoutFrame();
+    });
+    return tab;
+  });
+  views.append(...viewButtons);
+  const reviewToggle = lmChoice('checkbox', 'lm-review', 'on', 'Режим правок – кликните по блоку', false);
+  reviewToggle.input.dataset.lmReviewMode = '';
+  reviewToggle.input.addEventListener('change', () => { reviewing = reviewToggle.input.checked; sendReview(); });
+  frame.addEventListener('load', sendReview);
+  bar.append(views, reviewToggle.wrap, el('span', 'hint', `Версия ${lmRevisionLabel(revision.n)}`));
+  box.append(bar, wrap);
+  new ResizeObserver(layoutFrame).observe(wrap);
+  layoutFrame();
+  lmActive = { frame, view: () => view, onBlock };
+  return box;
+}
+
+function lmTextsPanel(magnet, comments) {
+  const box = el('div', 'lm-texts');
+  if (!magnet.revision) return box;
+  for (const item of magnet.revision.texts) {
+    const card = el('div', 'lm-text');
+    card.dataset.lmText = item.kind;
+    const meter = el('div', 'lm-meter');
+    const fill = el('i');
+    fill.style.width = `${Math.min(100, Math.round((item.length / item.limit) * 100))}%`;
+    meter.append(fill);
+    if (item.length > item.limit) meter.dataset.over = '';
+    const row = el('div', 'lm-row');
+    row.append(
+      button('Скопировать', () => lmCopyText(item.text), 'secondary'),
+      button('Правка к тексту', async () => comments.setTarget({ kind: 'text', text: item.kind }), 'link-button'),
+    );
+    card.append(el('strong', '', LM_TEXT_LABELS[item.kind]), meter, el('span', 'hint', `${item.length} / ${item.limit}`),
+      el('p', 'lm-text__body', item.text || '—'), row);
+    box.append(card);
+  }
+  return box;
+}
+
+function lmChecksPanel(magnet) {
+  const box = el('div', 'lm-panel');
+  box.append(el('h3', '', 'Проверка'));
+  const { revision } = magnet;
+  if (!revision) {
+    box.append(el('p', 'hint', 'Агент ещё не показал первую версию.'));
+    return box;
+  }
+  const list = el('ul', 'lm-checks');
+  list.dataset.lmChecks = '';
+  for (const item of revision.items) {
+    const row = el('li', '', `${item.ok ? '✓' : '✕'} ${LM_CHECK_LABELS[item.id] || item.id}: ${item.message}`);
+    row.dataset.ok = String(item.ok);
+    list.append(row);
+  }
+  if (!revision.items.length) list.append(el('li', 'hint', 'Отчёта проверки нет – агент запустит её.'));
+  box.append(list, el('p', revision.facts.ok ? 'hint' : 'lm-error', `Факты: ${revision.facts.message}`));
+  return box;
+}
+
+function lmApprovePanel(magnet) {
+  const box = el('div', 'lm-panel');
+  box.dataset.lmApprove = '';
+  box.append(el('h3', '', 'Утверждение'));
+  if (magnet.status === 'ready') {
+    box.append(el('p', 'hint', 'Лид-магнит утверждён. Файлы – в блоке ниже.'));
+    return box;
+  }
+  const ticket = magnet.revision && magnet.revision.approvalTicket;
+  if (!ticket) {
+    box.append(el('p', 'hint', 'Утвердить можно, когда проверка зелёная и нет правок, которые ждут агента.'));
+    return box;
+  }
+  const viewed = lmChoice('checkbox', 'lm-viewed', 'yes', 'Я просмотрел страницу на компьютере и телефоне и все тексты', false);
+  const approve = el('button', 'primary', 'Утверждаю лид-магнит');
+  approve.type = 'button';
+  approve.disabled = true;
+  viewed.input.addEventListener('change', () => { approve.disabled = !viewed.input.checked; });
+  approve.addEventListener('click', async () => {
+    approve.disabled = true;
+    try {
+      await api('/api/lead-magnet/approve', { method: 'POST', body: { id: magnet.id, ticket, confirmViewed: true } });
+      notify('Лид-магнит утверждён. Файлы и тексты – в блоке «Файлы».');
+      await refresh();
+    } catch (error) {
+      if (error.code === 'LM_CHANGED') {
+        await refresh();
+        notify('Появилась новая версия лид-магнита – посмотрите её перед утверждением.', 'error');
+        return;
+      }
+      notify(error.message, 'error');
+      approve.disabled = !viewed.input.checked;
+    }
+  });
+  box.append(viewed.wrap, approve);
+  return box;
+}
+
+function lmFilesPanel(magnet) {
+  const box = el('div', 'lm-panel');
+  box.dataset.lmFiles = '';
+  box.append(el('h3', '', magnet.files.revision ? `Файлы · ${lmRevisionLabel(magnet.files.revision)}` : 'Файлы'));
+  if (!magnet.files.list.length) {
+    box.append(el('p', 'hint', 'Файлов пока нет.'));
+    return box;
+  }
+  const list = el('ul', 'plain-list');
+  for (const file of magnet.files.list) {
+    const row = el('li', 'plain-list__row');
+    row.append(el('span', '', LM_FILE_LABELS[file] || file),
+      button('Показать в папке', () => api('/api/lead-magnet/reveal', { method: 'POST', body: { id: magnet.id, file } }), 'link-button'));
+    list.append(row);
+  }
+  box.append(list);
+  return box;
+}
+
+function lmFunnelPanel(variant, magnet) {
+  const box = el('div', 'lm-panel');
+  const { funnel } = magnet;
+  const provider = funnel.provider === 'chatplace' ? 'Chatplace' : funnel.provider;
+  box.append(el('h3', '', 'Воронка автоответа'),
+    el('p', '', `${provider}: на слово ${magnet.codeWords[0]} воронка ${funnel.exists ? 'есть' : 'не найдена'}${funnel.automationName ? ` («${funnel.automationName}»)` : ''} · проверено ${new Date(funnel.checkedAt).toLocaleString('ru-RU')}`),
+    button('Проверить ещё раз', () => lmDecide(variant, { type: 'funnel-check', leadMagnetId: magnet.id }), 'secondary'));
+  return box;
+}
+
+function lmHandoff(variant, magnet) {
+  const label = state.data ? state.data.projectsLabel : 'projects';
+  const phrase = magnet
+    ? `Продолжи лид-магнит «${magnet.title}» (${label}/.lead-magnets/${magnet.id}) для ролика ${label}/${variant.folder}: выполни automontage inbox и обработай входящие.`
+    : `Подготовь лид-магнит для ролика ${label}/${variant.folder}: выполни automontage inbox и обработай входящие.`;
+  const box = el('div', 'agent-handoff');
+  const field = el('textarea', 'phrase');
+  field.rows = 3;
+  field.readOnly = true;
+  field.value = phrase;
+  field.dataset.lmAgentPhrase = '';
+  field.setAttribute('aria-label', 'Фраза для агента');
+  box.append(el('h3', '', 'Передать агенту'), el('p', 'hint', 'Скопируйте фразу и вставьте её в чат с агентом.'), field,
+    button('Скопировать для агента', () => lmCopyText(phrase), 'primary'));
+  return box;
+}
+
+// Правки (задача 5) и «обещание изменилось» (задача 6) – пока заглушки с тем же интерфейсом.
+function lmCommentsPanel() {
+  const box = el('div', 'lm-panel lm-comments');
+  box.append(el('h3', '', 'Правки'));
+  return { box, setTarget() {} };
+}
+
+function lmPromisePanel() {
+  return el('div');
+}

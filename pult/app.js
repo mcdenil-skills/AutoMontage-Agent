@@ -13,7 +13,7 @@ const VIDEO_UNSUPPORTED_LABEL = 'Этот формат не проигрывае
 const REFRESH_MS = 20000;
 
 const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
-const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null };
+const state = { data: null, tab: 'main', query: '', openCardId: null, variantKey: null, detailTab: 'video' };
 // Снимок /api/cards, по которому список нарисован на экране сейчас (его обновляет сам
 // renderList) – фоновый опрос каждые 20 с не должен пересобирать DOM и сбрасывать
 // фокус/скролл, если ничего не изменилось на сервере.
@@ -22,7 +22,7 @@ let lastCardsJson = null;
 // фоновое обновление решает, хватит ли лёгкой замены блоков или человеку нужно увидеть
 // новую версию целиком. videoUrl несёт метку версии файла (v=…), поэтому новый preview
 // меняет его даже по тому же ключу.
-const shownDetail = { key: '', videoUrl: '', ticket: '' };
+const shownDetail = { key: '', videoUrl: '', ticket: '', leadSignature: '' };
 // true, пока в строке уведомлений висит ошибка, поставленная самим refresh: успешный
 // опрос убирает только её, а не ошибки действий человека.
 let refreshErrorShown = false;
@@ -314,6 +314,7 @@ function currentVariant(card) {
 function openCard(cardId) {
   notify('');
   state.openCardId = cardId;
+  state.detailTab = 'video';
   const card = currentCard();
   state.variantKey = card ? leadVariant(card).key : null;
   document.querySelector('[data-view="list"]').hidden = true;
@@ -595,6 +596,24 @@ function commentsBlock(variant, getVideo) {
   return box;
 }
 
+// Вкладки появляются, когда у ролика есть работа по лид-магниту.
+function detailTabs(variant) {
+  if (!variant.leadMagnet || !variant.leadMagnet.status) return null;
+  const tabs = el('div', 'detail-tabs');
+  tabs.dataset.detailTabs = '';
+  for (const [key, label] of [['video', 'Видео'], ['lead', 'Лид-магнит 🎁']]) {
+    const tab = el('button', 'detail-tab', label);
+    tab.type = 'button';
+    tab.setAttribute('aria-pressed', String(state.detailTab === key));
+    tab.addEventListener('click', () => {
+      state.detailTab = key;
+      renderDetail();
+    });
+    tabs.append(tab);
+  }
+  return tabs;
+}
+
 function renderDetail() {
   const view = document.querySelector('[data-view="detail"]');
   view.replaceChildren();
@@ -621,6 +640,19 @@ function renderDetail() {
       tabs.append(tab);
     }
     view.append(tabs);
+  }
+  const leadTabs = detailTabs(variant);
+  shownDetail.leadSignature = JSON.stringify(variant.leadMagnet || null);
+  if (!leadTabs) state.detailTab = 'video';
+  if (leadTabs) view.append(leadTabs);
+  if (leadTabs && state.detailTab === 'lead') {
+    const container = el('div', 'lm-tab');
+    view.append(container);
+    lmRenderTab(container, variant);
+    shownDetail.key = variant.key;
+    shownDetail.videoUrl = variant.video ? variant.video.url : '';
+    shownDetail.ticket = variant.approvalTicket || '';
+    return;
   }
   const layout = el('div', 'detail');
   const playerColumn = el('div', 'detail__player');
@@ -756,6 +788,22 @@ function syncDetail(card) {
     renderDetail();
     return;
   }
+  const leadSignature = JSON.stringify(variant.leadMagnet || null);
+  if (leadSignature !== shownDetail.leadSignature) {
+    const tabsShown = Boolean(document.querySelector('[data-detail-tabs]'));
+    if (state.detailTab === 'lead' || tabsShown !== Boolean(variant.leadMagnet && variant.leadMagnet.status)) {
+      rerenderDetailKeepingDraft();
+      if (state.detailTab === 'lead') notify('Лид-магнит обновился.');
+      return;
+    }
+    const slot = document.querySelector('[data-lm-offer-slot]');
+    if (slot) {
+      slot.replaceChildren();
+      lmRenderBanner(slot, variant, () => document.querySelector('[data-player]'));
+    }
+    shownDetail.leadSignature = leadSignature;
+  }
+  if (state.detailTab === 'lead') return;
   const freshVideoUrl = variant.video ? variant.video.url : '';
   const freshTicket = variant.approvalTicket || '';
   if (freshVideoUrl !== shownDetail.videoUrl) {
