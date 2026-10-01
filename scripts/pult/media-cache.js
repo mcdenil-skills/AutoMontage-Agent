@@ -104,6 +104,32 @@ function extractFrame(videoPath, timeSec, outPath, { captureImpl = captureToolRe
   }
 }
 
+// Снимок места правки лид-магнита: вырезает прямоугольник из скриншота проверки (qa/*.png).
+// Размер ограничен, крупный кусок уменьшается до 640 px по ширине; провал – без мусора на диске.
+function cropImage(sourcePath, rect, outPath, { captureImpl = captureToolResult } = {}) {
+  const values = [rect && rect.x, rect && rect.y, rect && rect.w, rect && rect.h];
+  if (!values.every(Number.isFinite)) return false;
+  const [x, y] = values.slice(0, 2).map((value) => Math.max(0, Math.round(value)));
+  const w = Math.min(Math.round(values[2]), 1280);
+  const h = Math.min(Math.round(values[3]), 1600);
+  if (w < 4 || h < 4) return false;
+  try {
+    captureImpl('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', path.resolve(sourcePath),
+      '-vf', `crop='min(${w},iw-${x})':'min(${h},ih-${y})':${x}:${y},scale='min(640,iw)':-2`,
+      '-frames:v', '1',
+      outPath,
+    ], { maxBuffer: 1024 * 1024, stage: 'pult snapshot', timeout: TOOL_TIMEOUT_MS });
+    const ok = fs.existsSync(outPath) && fs.statSync(outPath).size > 0;
+    if (!ok) fs.rmSync(outPath, { force: true });
+    return ok;
+  } catch (_) {
+    fs.rmSync(outPath, { force: true });
+    return false;
+  }
+}
+
 function thumbnailFor(projectsDir, filePath, { captureImpl = captureToolResult } = {}) {
   try {
     // Проверка символической ссылки – самым первым шагом, до fs.existsSync: та же
@@ -129,4 +155,4 @@ function thumbnailFor(projectsDir, filePath, { captureImpl = captureToolResult }
   }
 }
 
-module.exports = { extractFrame, probeMedia, thumbnailFor };
+module.exports = { cropImage, extractFrame, probeMedia, thumbnailFor };

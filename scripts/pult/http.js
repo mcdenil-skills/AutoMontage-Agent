@@ -8,6 +8,7 @@ const { parseRange } = require('../review/server');
 
 const BODY_LIMIT = 64 * 1024;
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
+const RAW_CONTENT_TYPE = /^application\/octet-stream$/i;
 // dir – каталоги относительно root, каждый проверяется на симлинк перед файлом.
 const STATIC_FILES = new Map([
   ['/', { dir: ['pult'], file: 'index.html' }],
@@ -145,6 +146,50 @@ function readJsonBody(request, limit = BODY_LIMIT) {
   });
 }
 
+// Загрузка файла (референс лид-магнита): тело – сырые байты. Заявленный размер проверяется
+// до чтения, фактический – по ходу, чтобы 30-мегабайтный предел не превратился в память без дна.
+function readRawBody(request, limit) {
+  const type = String(request.headers['content-type'] || '');
+  if (!RAW_CONTENT_TYPE.test(type)) {
+    request.resume();
+    return Promise.reject(new PultRequestError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Ожидался файл'));
+  }
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > limit) {
+    request.resume();
+    return Promise.reject(new PultRequestError(413, 'BODY_TOO_LARGE', 'Файл слишком большой'));
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let failed = false;
+    request.on('data', (chunk) => {
+      if (failed) return;
+      size += chunk.length;
+      if (size > limit) {
+        failed = true;
+        reject(new PultRequestError(413, 'BODY_TOO_LARGE', 'Файл слишком большой'));
+        request.resume();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => {
+      if (failed) return;
+      if (size === 0) {
+        reject(new PultRequestError(400, 'EMPTY_BODY', 'Пустой файл'));
+        return;
+      }
+      resolve(Buffer.concat(chunks, size));
+    });
+    request.on('error', () => {
+      if (failed) return;
+      failed = true;
+      reject(new PultRequestError(400, 'BODY_ERROR', 'Запрос прерван'));
+    });
+  });
+}
+
 function serveStatic(root, pathname, request, response) {
   const entry = STATIC_FILES.get(pathname);
   if (!entry) return false;
@@ -232,6 +277,7 @@ module.exports = {
   hasUnsafePath,
   isServableMedia,
   readJsonBody,
+  readRawBody,
   requestToken,
   safeTokenEqual,
   send,

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { Readable } = require('node:stream');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -8,6 +9,7 @@ const path = require('node:path');
 
 const {
   hasUnsafePath,
+  readRawBody,
   readJsonBody,
   requestToken,
   safeTokenEqual,
@@ -286,4 +288,23 @@ test('serveFile answers an unsatisfiable range with 416 and Content-Range: bytes
   });
   assert.equal(result.status, 416);
   assert.equal(result.contentRange, 'bytes */100');
+});
+
+function rawRequest(chunks, headers) {
+  const request = Readable.from(chunks.map((chunk) => Buffer.from(chunk)));
+  request.headers = headers;
+  return request;
+}
+
+test('a raw upload is read as bytes under the limit', async () => {
+  const bytes = await readRawBody(rawRequest(['ab', 'cd'], { 'content-type': 'application/octet-stream' }), 10);
+  assert.deepEqual(bytes, Buffer.from('abcd'));
+});
+
+test('a raw upload rejects other types, oversize and empty bodies', async () => {
+  const octet = { 'content-type': 'application/octet-stream' };
+  await assert.rejects(readRawBody(rawRequest(['x'], { 'content-type': 'application/json' }), 10), { status: 415 });
+  await assert.rejects(readRawBody(rawRequest(['x'], { ...octet, 'content-length': '11' }), 10), { status: 413 });
+  await assert.rejects(readRawBody(rawRequest(['123456', '78901'], octet), 10), { status: 413 });
+  await assert.rejects(readRawBody(rawRequest([], octet), 10), { status: 400 });
 });
