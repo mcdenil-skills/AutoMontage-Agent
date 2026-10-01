@@ -262,6 +262,45 @@ test('the lead tab shows the sandboxed page on desktop and phone width', async (
   await expect(page.locator('[data-lm-text="dm"]')).toContainText('6 / 1000');
 });
 
+test('a click on a block in review mode becomes a comment with a snapshot', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-view="phone"]').click();
+  await page.locator('[data-lm-review-mode]').check();
+  await page.frameLocator('[data-lm-frame]').locator('[data-lm-block="steps"] h2').click();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «steps» · телефон');
+  await page.locator('[data-lm-comment-text]').fill('Промпт не помещается в строку');
+  await page.locator('.lm-comments button', { hasText: 'Добавить правку' }).click();
+  const item = page.locator('[data-lm-comments] .comment').first();
+  await expect(item).toContainText('Промпт не помещается в строку');
+  await expect(item).toContainText('блок «steps» · телефон');
+  await expect(item.locator('img.comment__frame')).toBeVisible();
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит: ждёт агента, правок: 1');
+});
+
+test('a text gets its own comment, and a waiting comment can be deleted', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-text="telegram"] button', { hasText: 'Правка к тексту' }).click();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К тексту «Пост в Telegram»');
+  await page.locator('[data-lm-comment-text]').fill('Короче на треть');
+  await page.locator('.lm-comments button', { hasText: 'Добавить правку' }).click();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(1);
+  await page.locator('[data-lm-comments] .comment button', { hasText: 'Удалить' }).click();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(0);
+});
+
+test('outside review mode a click on the page does not start a comment, links are announced', async ({ page }) => {
+  const link = '<p><a data-lm-link href="https://example.com/practicum">Практикум</a></p>';
+  await startWith((dir) => withDraft(dir, { page: goodPage({ extra: link }) }));
+  await openLeadTab(page);
+  await page.frameLocator('[data-lm-frame]').locator('[data-lm-block="steps"] h2').click();
+  await expect(page.locator('[data-lm-target]')).toContainText('Включите «Режим правок»');
+  await page.frameLocator('[data-lm-frame]').locator('[data-lm-link]').click();
+  await expect(page.locator('[data-notice]')).toContainText('https://example.com/practicum');
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Сайт без кода');
+});
+
 test('approval needs the checkbox and then shows the files', async ({ page }) => {
   await startWith(withDraft);
   await openLeadTab(page);

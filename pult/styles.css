@@ -218,3 +218,5 @@ button, input, textarea { font: inherit; color: inherit; }
 .lm-meter[data-over] > i { background: hsl(var(--danger)); }
 .lm-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
 .lm-checks [data-ok="false"] { color: hsl(var(--danger)); }
+.lm-comments textarea { resize: vertical; }
+.lm-comments .comment-form .hint { margin: 0; }

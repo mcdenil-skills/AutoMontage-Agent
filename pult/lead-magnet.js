@@ -730,13 +730,106 @@ function lmHandoff(variant, magnet) {
   return box;
 }
 
-// Правки (задача 5) и «обещание изменилось» (задача 6) – пока заглушки с тем же интерфейсом.
-function lmCommentsPanel() {
-  const box = el('div', 'lm-panel lm-comments');
-  box.append(el('h3', '', 'Правки'));
-  return { box, setTarget() {} };
+const LM_BLOCK_ID = /^[a-z0-9][a-z0-9-]{0,60}$/;
+
+function lmTargetName(target) {
+  return target.kind === 'block'
+    ? `блок «${target.blockId}» · ${target.view === 'phone' ? 'телефон' : 'компьютер'}`
+    : `текст «${LM_TEXT_LABELS[target.text]}»`;
 }
 
+function lmTargetTo(target) {
+  return target.kind === 'block'
+    ? `К блоку «${target.blockId}» · ${target.view === 'phone' ? 'телефон' : 'компьютер'}`
+    : `К тексту «${LM_TEXT_LABELS[target.text]}»`;
+}
+
+function lmCommentsPanel(magnet) {
+  const box = el('div', 'lm-panel lm-comments');
+  box.append(el('h3', '', 'Правки'));
+  let target = null;
+  const where = el('p', 'hint', 'Включите «Режим правок» и кликните по блоку страницы или нажмите «Правка к тексту».');
+  where.dataset.lmTarget = '';
+  const text = lmTextInput('', 'Текст правки', { multiline: true, maxLength: 1000 });
+  text.placeholder = 'Что поправить?';
+  text.dataset.lmCommentText = '';
+  const save = el('button', 'secondary', 'Добавить правку');
+  save.type = 'button';
+  save.disabled = true;
+  const canSave = () => { save.disabled = !target || !text.value.trim() || !magnet.revision; };
+  text.addEventListener('input', canSave);
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await api('/api/lead-magnet/comment', {
+        method: 'POST', body: { id: magnet.id, revision: magnet.revision.n, target, text: text.value.trim() },
+      });
+      notify('Правка сохранена. Когда закончите, скопируйте фразу для агента.');
+      await refresh();
+    } catch (error) {
+      notify(error.message, 'error');
+      canSave();
+    }
+  });
+  const form = el('div', 'comment-form');
+  form.append(where, text, save);
+  const list = el('ul', 'comment-list');
+  list.dataset.lmComments = '';
+  const comments = magnet.comments || [];
+  if (magnet.commentsBroken) list.append(el('li', 'lm-error', 'Файл правок лид-магнита повреждён – попросите агента проверить.'));
+  else if (!comments.length) list.append(el('li', 'hint', 'Правок пока нет.'));
+  comments.forEach((comment, index) => {
+    const item = el('li', `comment comment--${comment.status}`);
+    item.append(el('span', 'comment__status',
+      `№${index + 1} · ${lmRevisionLabel(comment.revision)} · ${lmTargetName(comment.target)} · ${comment.status === 'new' ? 'ждёт агента' : 'принята агентом'}`));
+    if (comment.snapshotUrl) {
+      const image = el('img', 'comment__frame');
+      image.alt = '';
+      image.src = mediaUrl(comment.snapshotUrl);
+      item.append(image);
+    }
+    item.append(el('p', 'comment__text', comment.text));
+    if (comment.status === 'new') {
+      item.append(button('Удалить', async () => {
+        await api('/api/lead-magnet/comment/delete', { method: 'POST', body: { id: magnet.id, commentId: comment.id } });
+        await refresh();
+      }, 'link-button'));
+    }
+    list.append(item);
+  });
+  box.append(form, list);
+  return {
+    box,
+    setTarget(next) {
+      target = next;
+      where.textContent = lmTargetTo(next);
+      canSave();
+      text.focus();
+    },
+  };
+}
+
+// Страница за стеклом передаёт данные, а не команды пульту. Принимаем сообщения
+// только от iframe, который сейчас открыт, и проверяем форму каждого сообщения.
+function lmHandleMessage(event) {
+  if (!lmActive || !lmActive.frame.isConnected || event.source !== lmActive.frame.contentWindow) return;
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'lm-link' && typeof data.href === 'string') {
+    notify(`Ссылка на странице: ${data.href.slice(0, 300)} – зритель откроет её после публикации.`);
+    return;
+  }
+  const { rect } = data;
+  const rectOk = rect && typeof rect === 'object' && ['x', 'y', 'w', 'h'].every((key) => Number.isFinite(rect[key]) && rect[key] >= 0);
+  if (data.type !== 'lm-block' || typeof data.blockId !== 'string' || !LM_BLOCK_ID.test(data.blockId) || !rectOk) return;
+  lmActive.onBlock({
+    kind: 'block', blockId: data.blockId, view: lmActive.view(), rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+  });
+}
+
+window.addEventListener('message', lmHandleMessage);
+
+// «Обещание изменилось» – следующая задача плана.
 function lmPromisePanel() {
   return el('div');
 }
