@@ -431,3 +431,55 @@ test('reveal rejects symlinks and missing files and reports opener failures with
   assert.deepEqual([result.status, result.json.code], [409, 'REVEAL_FAILED']);
   assert.equal(JSON.stringify([result.json, failed.calls.logs]).includes(projectsDir), false);
 });
+
+test('approval rechecks the source promise after issuing the ticket', async (t) => {
+  for (const change of ['changed', 'missing', 'unknown']) {
+    await t.test(change, async (t) => {
+      const { projectsDir, id, session, state } = await publishedMagnet(t);
+      const ticket = state.magnets[0].revision.approvalTicket;
+      assert.ok(ticket);
+      const offersPath = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
+      const offers = JSON.parse(fs.readFileSync(offersPath, 'utf8'));
+      if (change === 'changed') offers.offers[0].quote = 'и я пришлю пошаговую инструкцию и семь промптов';
+      if (change === 'missing') offers.offers = [];
+      fs.writeFileSync(offersPath, change === 'unknown' ? '{broken' : JSON.stringify(offers));
+      const fresh = (await get(session, '/api/lead-magnet?key=clip')).json.magnets[0];
+      assert.equal(fresh.promise.current.state, change);
+      assert.equal(fresh.approvable, false);
+      assert.equal(fresh.revision.approvalTicket, null);
+      const response = await post(session, '/api/lead-magnet/approve', { id, ticket, confirmViewed: true });
+      assert.deepEqual([response.status, response.json.code], [409, 'LM_CHANGED']);
+      assert.equal(library.readLeadMagnet(projectsDir, id).approved, null);
+      assert.equal(JSON.stringify(response.json).includes(projectsDir), false);
+    });
+  }
+});
+
+test('approval accepts an unchanged or explicitly acknowledged source promise', async (t) => {
+  for (const change of ['same', 'changed', 'missing']) {
+    await t.test(change, async (t) => {
+      const { projectsDir, id, session } = await publishedMagnet(t);
+      let n = library.readLeadMagnet(projectsDir, id).current;
+      if (change !== 'same') {
+        const offersPath = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
+        const offers = JSON.parse(fs.readFileSync(offersPath, 'utf8'));
+        if (change === 'changed') offers.offers[0].quote = 'и я пришлю пошаговую инструкцию и семь промптов';
+        else offers.offers = [];
+        fs.writeFileSync(offersPath, JSON.stringify(offers));
+        const keep = await post(session, '/api/lead-magnet/decision', {
+          key: 'clip', type: 'promise-keep', offerId: change === 'missing' ? null : 'o-gayd', leadMagnetId: id,
+        });
+        assert.equal(keep.status, 201);
+        // Acknowledgement changes the QA input fingerprint; publish a checked fixture for it.
+        n = publishCheckedRevision(projectsDir, id).n;
+      }
+      const fresh = (await get(session, '/api/lead-magnet?key=clip')).json.magnets[0];
+      assert.equal(fresh.approvable, true);
+      const ticket = fresh.revision.approvalTicket;
+      assert.ok(ticket);
+      const response = await post(session, '/api/lead-magnet/approve', { id, ticket, confirmViewed: true });
+      assert.equal(response.status, 201);
+      assert.equal(library.readLeadMagnet(projectsDir, id).approved, n);
+    });
+  }
+});

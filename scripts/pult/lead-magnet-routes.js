@@ -17,7 +17,7 @@ const { addDecision } = require('../lead-magnet/requests');
 const {
   PultRequestError, readJsonBody, readRawBody, safeTokenEqual, send, sendError, sendJson,
 } = require('./http');
-const { buildLeadMagnetIndex, currentPromiseFor, folderLeadMagnet } = require('./lead-magnet-view');
+const { buildLeadMagnetIndex, currentPromiseFor, folderLeadMagnet, magnetSummary } = require('./lead-magnet-view');
 const { isSafeName } = require('./names');
 const { cropImage } = require('./media-cache');
 
@@ -363,6 +363,9 @@ function createLeadMagnetRoutes({
     const readiness = revisionReadiness(projectsDir, passport, n);
     const expected = readiness.pageSha256 ? approvalTicket(passport.id, n, readiness.pageSha256) : null;
     if (!expected || !safeTokenEqual(body.ticket, expected)) throw changed();
+    // A ticket binds the page, but its source promise may have changed since GET.
+    const eligibility = magnetSummary(projectsDir, passport);
+    if (eligibility.error || eligibility.promiseChanged) throw changed();
     try {
       approveLeadMagnet(projectsDir, passport.id, { revision: n, expectedPageSha256: readiness.pageSha256, confirmViewed: true });
     } catch (error) {
