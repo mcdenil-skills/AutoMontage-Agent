@@ -93,6 +93,7 @@ function describeParams(params) {
     params.design.mode === 'reference' ? `взять: ${Object.entries(params.design.take).filter(([, on]) => on).map(([key]) => key).join(', ')}` : null,
     params.design.note ? `что нравится: «${prose(params.design.note)}»` : null,
     `тексты: ${params.texts.map((kind) => TEXT_NAMES[kind]).join(', ') || 'нет'}`,
+    params.cta ? `призыв: ${params.cta.mode === 'link' ? `«${prose(params.cta.label)}» → ${code(params.cta.url)}` : params.cta.mode === 'none' ? 'без призыва' : 'по бренд-паку'}` : null,
     params.wishes ? `пожелания: «${prose(params.wishes)}»` : null,
   ].filter(Boolean).join('; ');
 }

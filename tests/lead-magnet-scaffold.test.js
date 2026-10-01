@@ -18,6 +18,7 @@ function pack(t, overrides = {}) {
   fs.writeFileSync(path.join(dir, 'brand.json'), JSON.stringify({
     ...neutral,
     name: 'Мой бренд',
+    socials: ['telegram', 'instagram', 'youtube'].map((network) => ({ network, label: network, url: `https://${network}.com/example` })),
     logoRequired: true,
     logo: 'logo.svg',
     tokens: { ...neutral.tokens, fonts: { heading: 'Oswald', body: 'Onest', mono: 'JetBrains Mono' } },
@@ -107,4 +108,40 @@ test('unit label cannot escape the instruction comment; ordinary labels remain r
 test('scaffold only fills a revision that is being built', (t) => {
   const { projectsDir, id } = makeLeadMagnet(t);
   assert.throws(() => writeScaffold(projectsDir, id, 1, { env: {} }), /не собирается/);
+});
+
+function scaffoldWith(t, cta, env) {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const passport = library.readLeadMagnet(projectsDir, id);
+  library.savePassport(projectsDir, { ...passport, params: { ...passport.params, ...(cta ? { cta } : {}) } }, () => new Date());
+  const { n, dir } = library.startRevision(projectsDir, id);
+  writeScaffold(projectsDir, id, n, { env });
+  return fs.readFileSync(path.join(dir, 'page.html'), 'utf8');
+}
+
+test('socials from the brand pack are always at the bottom, with icons', (t) => {
+  const env = { LEAD_MAGNET_BRAND: pack(t) };
+  for (const cta of [undefined, { mode: 'brand', title: '', label: '', url: '' }, { mode: 'none', title: '', label: '', url: '' }, { mode: 'link', title: 'Дальше', label: 'Кнопка', url: 'https://example.com' }]) {
+    const html = scaffoldWith(t, cta, env);
+    for (const network of ['telegram', 'instagram', 'youtube']) assert.match(html, new RegExp(`data-lm-social="${network}"[^>]*><svg`));
+    assert.match(html, /data-lm="cta"/);
+  }
+});
+
+test('the main call follows the chosen mode', (t) => {
+  const env = { LEAD_MAGNET_BRAND: pack(t) };
+  const link = scaffoldWith(t, { mode: 'link', title: 'Хочешь собрать проект с нуля?', label: 'Бесплатный практикум', url: 'https://example.com/p' }, env);
+  assert.ok(link.includes('href="https://example.com/p?utm_source=youtube&amp;utm_campaign=gayd"'));
+  assert.match(link, /Хочешь собрать проект с нуля\?/);
+  assert.match(scaffoldWith(t, undefined, env), /Практикум/, 'brand: кнопка бренд-пака');
+  assert.doesNotMatch(scaffoldWith(t, { mode: 'none', title: '', label: '', url: '' }, env), /class="lm-cta__button"/);
+});
+
+test('custom call preserves query and fragments, escapes labels and keeps socials without UTM', (t) => {
+  const html = scaffoldWith(t, { mode: 'link', title: '<script>bad()</script>', label: '<b>Открыть</b>', url: 'https://example.com/p?ref=video&utm_source=old#start' }, { LEAD_MAGNET_BRAND: pack(t) });
+  assert.ok(html.includes('href="https://example.com/p?ref=video&amp;utm_source=youtube&amp;utm_campaign=gayd#start"'));
+  assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;'));
+  assert.ok(html.includes('&lt;b&gt;Открыть&lt;/b&gt;'));
+  assert.match(html, /data-lm-social="telegram" href="https:\/\/telegram.com\/example"/);
+  assert.doesNotMatch(html, /<script>bad/);
 });

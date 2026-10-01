@@ -129,3 +129,16 @@ test('inbox renders user Markdown as text while keeping ordinary wording', () =>
   assert.match(text, /\\\*\\\*новички\\\*\\\*/);
   assert.match(text, /`` video`name\/pult\/lead-magnet\.json ``/);
 });
+
+test('inbox describes every closing call mode', (t) => {
+  const { projectsDir, projectDir } = setup(t);
+  for (const mode of ['brand', 'none', 'link']) {
+    addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: { ...PARAMS,
+      cta: { mode, title: 'Дальше', label: 'Практикум', url: 'https://example.com/p' },
+    } });
+  }
+  const text = formatLeadMagnetInbox(buildLeadMagnetInbox({ projectsDir }), { projectsDir });
+  assert.match(text, /призыв: по бренд-паку/);
+  assert.match(text, /призыв: без призыва/);
+  assert.match(text, /призыв: «Практикум» → `https:\/\/example.com\/p`/);
+});

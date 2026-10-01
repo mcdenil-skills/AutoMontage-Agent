@@ -191,3 +191,25 @@ test('file reference descriptor and stored bytes must match the uploaded referen
   fs.writeFileSync(path.join(projectDir, reference.path), PNG);
   assert.equal(create(reference).params.design.references[0].sha256, reference.sha256);
 });
+
+test('the closing call is optional; a custom link needs a title, a label and an https address', (t) => {
+  const { projectDir } = withOffer(t);
+  const create = (cta) => addDecision(projectDir, { type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: params({ cta }) }, { now: NOW, id: ID });
+  const link = create({ mode: 'link', title: 'Хочешь глубже?', label: 'Практикум', url: 'https://example.com/p' });
+  assert.deepEqual(link.params.cta, { mode: 'link', title: 'Хочешь глубже?', label: 'Практикум', url: 'https://example.com/p' });
+  assert.deepEqual(create({ mode: 'none', title: 'x', label: 'y', url: 'z' }).params.cta, { mode: 'none', title: '', label: '', url: '' });
+  assert.throws(() => create({ mode: 'link', title: 'Глубже', label: 'Практикум', url: 'http://example.com' }), /https/);
+  assert.throws(() => create({ mode: 'link', title: '', label: 'Практикум', url: 'https://example.com' }), /заголов/);
+  assert.equal(create(undefined).params.cta, undefined);
+  assert.deepEqual(create({ mode: 'brand' }).params.cta, { mode: 'brand', title: '', label: '', url: '' });
+  for (const cta of [null, false, [], { mode: 'bad' }, { mode: 'brand', injected: true },
+    { mode: 'link', title: 123, label: 'Кнопка', url: 'https://example.com' },
+    { mode: 'link', title: 'x'.repeat(121), label: 'Кнопка', url: 'https://example.com' }]) {
+    assert.throws(() => create(cta), /формат/);
+  }
+  for (const url of ['javascript:alert(1)', 'https://', 'https://user:password@example.com']) {
+    assert.throws(() => create({ mode: 'link', title: 'Глубже', label: 'Кнопка', url }), /https/);
+  }
+  assert.throws(() => create({ mode: 'link', title: 'Глубже', label: ' ', url: 'https://example.com' }), /надпись/);
+
+});

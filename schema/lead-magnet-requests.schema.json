@@ -62,6 +62,17 @@
           "items": { "enum": ["dm", "telegram", "instagram"] }
         },
         "wishes": { "type": "string", "maxLength": 1000 },
+        "cta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "title", "label", "url"],
+          "properties": {
+            "mode": { "enum": ["brand", "link", "none"] },
+            "title": { "type": "string", "maxLength": 120 },
+            "label": { "type": "string", "maxLength": 60 },
+            "url": { "type": "string", "maxLength": 500 }
+          }
+        },
         "promiseConfirmed": { "type": "boolean" }
       }
     },

@@ -83,8 +83,35 @@ function checkParams(projectDir, params, { hasOffer }) {
   if (design.mode === 'like' && !design.likeId) {
     throw new Error('лид-магнит: выберите образец – прошлый лид-магнит');
   }
+  let cta;
+  if (Object.hasOwn(params, 'cta') && params.cta !== undefined) {
+    if (!params.cta || typeof params.cta !== 'object' || Array.isArray(params.cta)
+      || Object.keys(params.cta).some((key) => !['mode', 'title', 'label', 'url'].includes(key))
+      || !['brand', 'link', 'none'].includes(params.cta.mode)) {
+      throw new Error('лид-магнит: неверный формат призыва');
+    }
+    for (const [key, limit] of [['title', 120], ['label', 60], ['url', 500]]) {
+      if (params.cta[key] !== undefined && (typeof params.cta[key] !== 'string' || params.cta[key].length > limit)) {
+        throw new Error('лид-магнит: неверный формат призыва');
+      }
+    }
+    if (params.cta.mode === 'link') {
+      const title = String(params.cta.title || '').trim();
+      const label = String(params.cta.label || '').trim();
+      if (!title || !label) throw new Error('лид-магнит: для своей ссылки нужны заголовок и надпись кнопки');
+      let url;
+      try { url = new URL(String(params.cta.url || '').trim()); } catch (_) { url = null; }
+      if (!url || url.protocol !== 'https:' || url.username || url.password) {
+        throw new Error('лид-магнит: своя ссылка должна начинаться с https://');
+      }
+      cta = { mode: 'link', title, label, url: url.href };
+    } else {
+      cta = { mode: params.cta.mode, title: '', label: '', url: '' };
+    }
+  }
   return {
     ...params,
+    ...(cta ? { cta } : {}),
     design: {
       ...design,
       references: design.references.map((reference) => {
