@@ -62,6 +62,7 @@ function inspectPage() {
     ctaCount: ctas.length,
     ctaIsLast,
     blockIds: blocks.map((block) => block.getAttribute('data-lm-block')),
+    todo: document.querySelectorAll('[data-lm-todo]').length,
     pres: pres.length,
     withoutCopy,
     clippedText: clippedText + outsideText,
@@ -193,8 +194,11 @@ async function checkRevision(projectsDir, id, n, {
     item('logo', !brand.logoRequired || desktop.hasLogo, brand.logoRequired ? (desktop.hasLogo ? 'логотип есть' : 'бренд-пак требует логотип') : 'логотип не требуется'),
     item('header', !/лид[\s-]?магнит/i.test(desktop.headerText), 'в шапке нельзя писать «лид-магнит»'),
     item('self-contained', external.length === 0, external.length ? `внешние запросы: ${external.slice(0, 3).join(', ')}` : 'страница самодостаточна'),
-    item('blocks', desktop.blockIds.length > 0 && duplicateBlocks.length === 0 && desktop.blockIds.every((value) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(value)),
-      duplicateBlocks.length ? `повторяются блоки: ${duplicateBlocks.join(', ')}` : `блоков: ${desktop.blockIds.length}`),
+    item('blocks', desktop.blockIds.length > 0 && duplicateBlocks.length === 0 && desktop.todo === 0
+      && desktop.blockIds.every((value) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(value)),
+    desktop.todo
+      ? `незаполненные заготовки: ${desktop.todo}`
+      : (duplicateBlocks.length ? `повторяются блоки: ${duplicateBlocks.join(', ')}` : `блоков: ${desktop.blockIds.length}`)),
     item('texts', textProblems.length === 0, textProblems.length ? textProblems.join('; ') : 'тексты в лимитах'),
     item('facts', facts.ok, facts.message),
   ];

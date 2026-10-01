@@ -56,6 +56,13 @@ test('each carcass rule fails on its own defect', async (t) => {
   }
 });
 
+test('a leftover scaffold marker fails the blocks rule', async (t) => {
+  const { report, byId } = await run(t, { page: goodPage({ extra: '<p data-lm-todo>Шаг 1. Название шага</p>' }) });
+  assert.equal(report.ok, false);
+  assert.equal(byId.blocks.ok, false);
+  assert.match(byId.blocks.message, /незаполненные заготовки: 1/);
+});
+
 test('the logo is required only when the brand pack says so', async (t) => {
   const packDir = path.join(fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'lm-pack-')), 'lead-magnet');
   t.after(() => fs.rmSync(path.dirname(packDir), { recursive: true, force: true }));

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { main } = require('../scripts/lead-magnet/cli');
@@ -13,6 +14,20 @@ async function run(argv) {
   const code = await main(argv, { write: (line) => lines.push(line) });
   return { code, out: lines.join('\n') };
 }
+
+test('revision scaffold writes files and does not overwrite them on replay', async (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir } = library.startRevision(projectsDir, id);
+  const args = ['revision', 'scaffold', '--projects-dir', projectsDir, '--id', id, '--revision', String(n)];
+  const first = await run(args);
+  assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /Заготовка: page\.html, content\.md/);
+  assert.equal(fs.existsSync(path.join(dir, 'page.html')), true);
+  assert.equal(fs.existsSync(path.join(dir, 'content.md')), true);
+  const second = await run(args);
+  assert.equal(second.code, 0, second.out);
+  assert.match(second.out, /Файлы уже есть/);
+});
 
 test('agent flow: offer → create from request → revision start → link → list', async (t) => {
   const { projectsDir, projectDir, folder } = makeVideoProject(t);
@@ -46,6 +61,27 @@ test('funnel set and brand report work; bad input fails with a message', async (
   const bad = await run(['offer', 'add', '--project-dir', projectDir, '--code-word', 'ГАЙД', '--kind', 'dm', '--quote', 'такого не было сказано', '--units', JSON.stringify(UNITS)]);
   assert.equal(bad.code, 1);
   assert.match(bad.out, /❌ lead-magnet: цитата не найдена/);
+});
+
+test('brand reports fictional voice skills without exposing its pack path', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lm-cli-brand-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const neutral = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'templates', 'lead-magnet', 'neutral', 'brand.json'), 'utf8'));
+  fs.writeFileSync(path.join(dir, 'brand.json'), JSON.stringify({
+    ...neutral, name: 'Вымышленный бренд', voice: { skills: ['fictional-voice', 'fictional-editor'], rulesFile: null },
+  }));
+  const previous = process.env.LEAD_MAGNET_BRAND;
+  process.env.LEAD_MAGNET_BRAND = dir;
+  t.after(() => {
+    if (previous === undefined) delete process.env.LEAD_MAGNET_BRAND;
+    else process.env.LEAD_MAGNET_BRAND = previous;
+  });
+
+  const result = await run(['brand']);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /fictional-voice, fictional-editor/u);
+  assert.match(result.out, /Логотип не обязателен/u);
+  assert.ok(!result.out.includes(dir), 'brand must not print the private pack path');
 });
 
 test('there is no approve command and the CLI never loads the approve module', async () => {
