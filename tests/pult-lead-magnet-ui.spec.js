@@ -682,3 +682,21 @@ test('the promise quote in the wizard can seek the current video', async ({ page
   await wizard.getByRole('button', { name: '▶ послушать' }).click();
   await expect(page.locator('[data-player]')).toHaveJSProperty('currentTime', 60);
 });
+
+test('wizard playback failure is explained inside the dialog', async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = () => Promise.reject(new Error('NotAllowedError: browser internals'));
+  });
+  await startWith();
+  const offersFile = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
+  const offers = JSON.parse(fs.readFileSync(offersFile, 'utf8'));
+  offers.offers[0].startSec = 60;
+  offers.offers[0].endSec = 63.9;
+  fs.writeFileSync(offersFile, JSON.stringify(offers));
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.getByRole('button', { name: '▶ послушать' }).click();
+  await expect(wizard.locator('[data-lm-wizard-error]')).toContainText('Не удалось воспроизвести видео');
+  await expect(wizard.locator('[data-lm-wizard-error]')).not.toContainText('NotAllowedError');
+});

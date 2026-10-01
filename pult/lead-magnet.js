@@ -218,7 +218,11 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
         const video = getVideo && getVideo();
         if (!video) return;
         video.currentTime = offer.startSec;
-        await video.play();
+        try {
+          await video.play();
+        } catch (_) {
+          say('Не удалось воспроизвести видео. Попробуйте запустить его в плеере.');
+        }
       }, 'link-button'));
     }
     promiseParts.push(promise.wrap);
