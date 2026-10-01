@@ -10,6 +10,7 @@ const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalo
 const { addComment, deleteComment, readComments } = require('./comments');
 const { hashFile } = require('./files');
 const { attachLeadMagnets } = require('./lead-magnet-view');
+const { createLeadMagnetRoutes } = require('./lead-magnet-routes');
 const {
   PultRequestError,
   hasUnsafePath,
@@ -113,6 +114,19 @@ async function startPultServer({
     if (typeof key !== 'string' || !ENTRY_KEY.test(key)) return null;
     return scanFolder(resolvedProjectsDir, folderFromKey(key)).entries.find((entry) => entry.key === key) || null;
   }
+
+  // Маршруты лид-магнита используют проверенные функции поиска ролика из пульта.
+  const leadMagnet = createLeadMagnetRoutes({
+    projectsDir: resolvedProjectsDir,
+    getOrigin: () => origin,
+    findEntry,
+    projectDirOf,
+    mediaOptions,
+    revealImpl,
+    logger,
+    errorName,
+    env,
+  });
 
   function entryFile(entry, relative) {
     try {
@@ -575,6 +589,10 @@ async function startPultServer({
         throw new PultRequestError(409, 'COMMENTS_BROKEN', COMMENTS_BROKEN_MESSAGE);
       }
       sendJson(response, 200, { comments: comments.map((comment) => browserComment(entry, comment)) });
+      return;
+    }
+    if (pathname === '/api/lead-magnet' || pathname.startsWith('/api/lead-magnet/')) {
+      await leadMagnet.handleApi(pathname, url, request, response);
       return;
     }
     if (request.method !== 'POST') {
