@@ -820,7 +820,9 @@ npm test
 node scripts/check-public-privacy.js --tracked
 ```
 
-Браузерные экраны части 1B-2 проверяются отдельно после их реализации. Подробный путь:
+Браузерные экраны части 1B-2 проверяет `tests/pult-lead-magnet-ui.spec.js` в составе
+`npm run test:review-ui`: плашка, окно параметров, вкладка, изолированная страница,
+правки, утверждение и изменившееся обещание. Подробный путь:
 [docs/LEAD-MAGNET.md](docs/LEAD-MAGNET.md).
 
 ## 13. Motion-kit и гейты
