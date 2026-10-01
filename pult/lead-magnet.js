@@ -474,6 +474,9 @@ async function lmPollTab(container, variant) {
 async function lmRenderTab(container, variant, loadedState = null) {
   const cardId = state.openCardId;
   const request = lmNextLoad(container);
+  // Пока виден индикатор загрузки, прежний state уже не представлен в DOM.
+  // Опрос с теми же данными должен вернуть экран, если он опередил этот запрос.
+  container.lmFingerprint = null;
   container.replaceChildren(el('p', 'hint', 'Загружаю лид-магнит…'));
   let leadState;
   try {

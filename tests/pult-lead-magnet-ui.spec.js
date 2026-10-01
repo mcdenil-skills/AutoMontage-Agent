@@ -11,7 +11,7 @@ const { readDecisions } = require('../scripts/lead-magnet/requests');
 const { startPultServer } = require('../scripts/pult/server');
 const { makePultRoot } = require('./helpers/pult-projects');
 const {
-  PNG_BYTES, QUOTE, UNITS, addLeadMagnetFor, addVideoWithOffer, goodPage, publishCheckedRevision,
+  PARAMS, PNG_BYTES, QUOTE, UNITS, addLeadMagnetFor, addVideoWithOffer, goodPage, publishCheckedRevision,
 } = require('./helpers/lead-magnet-fixtures');
 
 let session = null;
@@ -318,6 +318,45 @@ test('an older initial response cannot replace a newer revision in the same open
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
   await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Новая версия');
   await expect(page.locator('.lm-viewer')).toContainText('Версия v02');
+});
+
+test('a poll renders the chosen magnet when it overtakes the selector request', async ({ page }) => {
+  await startWith((dir) => {
+    withDraft(dir);
+    const other = library.createLeadMagnet(dir, {
+      codeWord: 'ЧЕКЛИСТ', title: 'Другой сайт',
+      promise: { quote: QUOTE, startSec: null, endSec: null, sourceFolder: 'clip' },
+      units: UNITS, params: PARAMS, videoFolder: 'clip',
+    });
+    publishCheckedRevision(dir, other.id, { page: goodPage({ title: 'Другой сайт' }) });
+  });
+  await openLeadTab(page);
+  await expect(page.locator('.lm-tab .variant-tab')).toHaveCount(2);
+  const otherPill = page.locator('.lm-tab .variant-tab[aria-pressed="false"]');
+  const expectedTitle = (await otherPill.textContent()).includes('ЧЕКЛИСТ') ? 'Другой сайт' : 'Сайт без кода';
+  let releaseSelector;
+  let selectorRequested;
+  const pendingSelector = new Promise((resolve) => { selectorRequested = resolve; });
+  let requests = 0;
+  await page.route('**/api/lead-magnet?**', async (route) => {
+    requests += 1;
+    if (requests === 1) {
+      selectorRequested();
+      await new Promise((resolve) => { releaseSelector = resolve; });
+    }
+    await route.continue();
+  });
+  await otherPill.click();
+  await pendingSelector;
+  await expect(page.locator('.lm-tab')).toContainText('Загружаю лид-магнит…');
+  const pollResponse = page.waitForResponse('**/api/lead-magnet?**');
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await pollResponse;
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText(expectedTitle);
+  const selectorResponse = page.waitForResponse('**/api/lead-magnet?**');
+  releaseSelector();
+  await selectorResponse;
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText(expectedTitle);
 });
 
 test('a late lead state response cannot update a tab that was closed', async ({ page }) => {
