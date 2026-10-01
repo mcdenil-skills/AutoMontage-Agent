@@ -156,6 +156,43 @@ test('malformed create params return 400 without recording a decision', async (t
   assert.equal(readDecisions(path.join(projectsDir, 'clip')).length, 1);
 });
 
+test('a design reference is uploaded as bytes, stored by hash and usable in a create decision', async (t) => {
+  const projectsDir = root(t);
+  const { session } = await start(t, projectsDir);
+  const uploaded = await request(session, '/api/lead-magnet/reference?key=clip', { method: 'POST', origin: session.origin, raw: PNG_BYTES });
+  assert.equal(uploaded.status, 201);
+  const { reference } = uploaded.json;
+  assert.match(reference.path, /^pult\/lead-magnet-refs\/[a-f0-9]{64}\.png$/);
+  assert.ok(fs.existsSync(path.join(projectsDir, 'clip', ...reference.path.split('/'))));
+  const params = { ...PARAMS, design: { ...PARAMS.design, mode: 'reference', references: [reference, { kind: 'url', url: 'https://example.com/guide' }] } };
+  const created = await post(session, '/api/lead-magnet/decision', { key: 'clip', type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params });
+  assert.equal(created.status, 201);
+});
+
+test('reference upload refuses spoofed types, wrong content type, oversize, foreign origin and unknown video', async (t) => {
+  const projectsDir = root(t);
+  const { session } = await start(t, projectsDir);
+  const upload = (options) => request(session, '/api/lead-magnet/reference?key=clip', { method: 'POST', origin: session.origin, ...options });
+  const spoofed = await upload({ raw: Buffer.from('MZ\u0090\u0000 not an image') });
+  assert.deepEqual([spoofed.status, spoofed.json.code], [400, 'REFERENCE_INVALID']);
+  assert.equal((await upload({ raw: PNG_BYTES, contentType: 'image/png' })).status, 415);
+  const huge = Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(30 * 1024 * 1024)]);
+  assert.equal((await upload({ raw: huge })).status, 413);
+  assert.equal((await request(session, '/api/lead-magnet/reference?key=clip', { method: 'POST', raw: PNG_BYTES })).status, 403);
+  assert.equal((await request(session, '/api/lead-magnet/reference?key=nope', { method: 'POST', origin: session.origin, raw: PNG_BYTES })).status, 404);
+  assert.equal(fs.existsSync(path.join(projectsDir, 'clip', 'pult', 'lead-magnet-refs')), false);
+});
+
+test('an uploaded HTML reference is stored but never served by the pult', async (t) => {
+  const projectsDir = root(t);
+  const { session } = await start(t, projectsDir);
+  const html = Buffer.from('<!doctype html><html><body><script>alert(1)</script></body></html>');
+  const { reference } = (await request(session, '/api/lead-magnet/reference?key=clip', { method: 'POST', origin: session.origin, raw: html })).json;
+  assert.match(reference.path, /\.html$/);
+  assert.equal((await get(session, `/${reference.path}`)).status, 404);
+  assert.equal((await get(session, `/clip/${reference.path}`)).status, 404);
+});
+
 test('«Уже есть готовый» attaches the video to the chosen lead magnet at once', async (t) => {
   const projectsDir = root(t);
   const libraryId = approvedMagnet(projectsDir, 'other');

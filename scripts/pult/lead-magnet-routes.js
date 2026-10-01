@@ -178,8 +178,27 @@ function createLeadMagnetRoutes({
     sendJson(response, 201, { decision: { id: decision.id, type: decision.type, status: decision.status } });
   }
 
+  // Ролик выбирается ключом из адреса до чтения тела: неизвестный ролик не стоит 30 МБ трафика.
+  async function postReference(url, request, response) {
+    const entry = findEntry(url.searchParams.get('key'));
+    if (!entry) {
+      request.resume();
+      throw notFound();
+    }
+    const bytes = await readRawBody(request, MAX_REFERENCE);
+    let reference;
+    try {
+      reference = storeReference(projectDirOf(entry), bytes);
+    } catch (error) {
+      if (/^референс:/.test(messageOf(error))) throw new PultRequestError(400, 'REFERENCE_INVALID', messageOf(error));
+      throw error;
+    }
+    sendJson(response, 201, { reference });
+  }
+
   const POST_ROUTES = new Map([
     ['/api/lead-magnet/decision', (url, request, response) => postDecision(request, response)],
+    ['/api/lead-magnet/reference', (url, request, response) => postReference(url, request, response)],
   ]);
 
   async function handleApi(pathname, url, request, response) {
