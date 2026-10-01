@@ -249,6 +249,26 @@ async function openLeadTab(page) {
   await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
 }
 
+test('a changed promise shows both quotes and «Оставить как есть» settles it', async ({ page }) => {
+  await startWith((dir) => {
+    const id = approvedIn(dir, 'clip');
+    const clipDir = path.join(dir, 'clip');
+    fs.writeFileSync(path.join(clipDir, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+    addOffer(clipDir, {
+      codeWord: 'ГАЙД', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+      units: UNITS, sourceKind: 'script', scriptPath: 'script.txt',
+    });
+    return { id };
+  });
+  await openLeadTab(page);
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText(`Было: «${QUOTE}»`);
+  await expect(warning).toContainText('Стало: «и я пришлю пошаговую инструкцию и семь промптов»');
+  await warning.locator('button', { hasText: 'Оставить как есть' }).click();
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит утверждён');
+  await expect(page.locator('[data-lm-promise-changed]')).toHaveCount(0);
+});
+
 test('the lead tab shows the sandboxed page on desktop and phone width', async ({ page }) => {
   await startWith(withDraft);
   await openLeadTab(page);

@@ -834,7 +834,25 @@ function lmHandleMessage(event) {
 
 window.addEventListener('message', lmHandleMessage);
 
-// «Обещание изменилось» – следующая задача плана.
-function lmPromisePanel() {
-  return el('div');
+// Обещание в ролике изменилось после того, как лид-магнит сделан. Агент сам ничего не
+// переделывает: решение – кнопка человека.
+function lmPromisePanel(variant, leadState, magnet) {
+  const box = el('div', 'lm-panel lm-warning');
+  box.dataset.lmPromiseChanged = '';
+  const offer = leadState.offers.find((item) => magnet.codeWords.includes(item.codeWord));
+  box.append(
+    el('h3', '', '⚠️ Обещание в ролике изменилось'),
+    el('p', 'hint', 'Лид-магнит сделан под прежнюю цитату.'),
+    el('blockquote', 'lm-quote lm-quote--old', `Было: «${magnet.promise.quote}»`),
+    el('blockquote', 'lm-quote', offer ? `Стало: «${offer.quote}»` : 'Стало: обещания в ролике больше нет'),
+  );
+  if (offer) {
+    const row = el('div', 'lm-row');
+    row.append(
+      button('Обновить под новое', () => lmDecide(variant, { type: 'promise-refresh', offerId: offer.offerId, leadMagnetId: magnet.id }), 'primary'),
+      button('Оставить как есть', () => lmDecide(variant, { type: 'promise-keep', offerId: offer.offerId, leadMagnetId: magnet.id }), 'secondary'),
+    );
+    box.append(row, el('p', 'hint', 'Агент сам ничего не переделывает: ваша кнопка – его задание.'));
+  }
+  return box;
 }
