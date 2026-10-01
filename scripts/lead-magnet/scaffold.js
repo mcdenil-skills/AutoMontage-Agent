@@ -20,6 +20,11 @@ function escapeHtml(value) {
   }[character]));
 }
 
+function cssFontFamily(value) {
+  // CSS escapes also keep a literal </style> out of the HTML parser.
+  return `'${String(value).replace(/[^A-Za-z0-9 -]/gu, (character) => `\\${character.codePointAt(0).toString(16)} `)}'`;
+}
+
 // Имя файла шрифта до первого «-» или «_» – имя семейства: Oswald-Bold.ttf → Oswald.
 function fontFaceCss(fontPaths) {
   return fontPaths.map((file) => {
@@ -42,8 +47,9 @@ function ctaHtml(brand, passport) {
   const { cta } = brand;
   const utm = cta.utm ? cta.utm.replace('{campaign}', slugifyProjectName(passport.codeWords[0])) : '';
   const buttons = cta.buttons.map((item) => {
-    const url = utm && !item.url.includes('?') ? `${item.url}${utm}` : item.url;
-    return `<a class="lm-cta__button" href="${escapeHtml(url)}">${escapeHtml(item.label)}</a>`;
+    const url = utm ? new URL(item.url) : null;
+    if (url) for (const [key, value] of new URLSearchParams(utm.slice(1))) url.searchParams.set(key, value);
+    return `<a class="lm-cta__button" href="${escapeHtml(url ? url.href : item.url)}">${escapeHtml(item.label)}</a>`;
   }).join('');
   return `<section class="lm-cta" data-lm-block="cta" data-lm="cta">
 <h2>${escapeHtml(cta.title)}</h2>
@@ -53,7 +59,7 @@ ${buttons ? `<div class="lm-cta__buttons">${buttons}</div>` : ''}
 }
 
 function unitsComment(units) {
-  return units.map((unit) => `<!-- LM: ${unit.count ?? 'каждый'} × «${unit.label}» – каждый выданный пункт помечай атрибутом data-lm-item со значением «${unit.key}» -->`).join('\n');
+  return units.map((unit) => `<!-- LM: ${unit.count ?? 'каждый'} × «${escapeHtml(unit.label)}» – каждый выданный пункт помечай атрибутом data-lm-item со значением «${unit.key}» -->`).join('\n');
 }
 
 const CODE = '<div class="lm-code" data-lm-code><pre data-lm-todo>Промпт или команда</pre><button type="button" data-lm-copy>Скопировать</button></div>';
@@ -88,7 +94,7 @@ ${CODE}
 
 function pageCss({ tokens }) {
   const { colors: c, fonts: f } = tokens;
-  return `:root{--bg:${c.background};--surface:${c.surface};--text:${c.text};--muted:${c.muted};--accent:${c.accent};--heading:'${f.heading}',system-ui,sans-serif;--body:'${f.body}',system-ui,sans-serif;--mono:'${f.mono}',ui-monospace,Menlo,monospace}
+  return `:root{--bg:${c.background};--surface:${c.surface};--text:${c.text};--muted:${c.muted};--accent:${c.accent};--heading:${cssFontFamily(f.heading)},system-ui,sans-serif;--body:${cssFontFamily(f.body)},system-ui,sans-serif;--mono:${cssFontFamily(f.mono)},ui-monospace,Menlo,monospace}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 var(--body);overflow-wrap:anywhere}

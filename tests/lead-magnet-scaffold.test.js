@@ -57,6 +57,53 @@ test('a brand pack scaffold embeds the logo, the fonts and CTA links with UTM', 
   assert.match(html, /Первая анимация готова\?/);
 });
 
+test('brand CTA keeps existing query parameters and fragments when adding UTM', (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir } = library.startRevision(projectsDir, id);
+  const brandDir = pack(t, { cta: {
+    title: 'Дальше', text: '', utm: '?utm_source=youtube&utm_campaign={campaign}',
+    buttons: [
+      { label: 'С query', url: 'https://example.com/practicum?ref=video' },
+      { label: 'С fragment', url: 'https://example.com/practicum?ref=video#start' },
+    ],
+  } });
+  writeScaffold(projectsDir, id, n, { env: { LEAD_MAGNET_BRAND: brandDir } });
+  const html = fs.readFileSync(path.join(dir, 'page.html'), 'utf8');
+  assert.match(html, /href="https:\/\/example\.com\/practicum\?ref=video&amp;utm_source=youtube&amp;utm_campaign=gayd"/);
+  assert.match(html, /href="https:\/\/example\.com\/practicum\?ref=video&amp;utm_source=youtube&amp;utm_campaign=gayd#start"/);
+});
+
+test('font family markup is inert while a normal multiword family remains usable', (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const { n, dir } = library.startRevision(projectsDir, id);
+  const injection = '</style><script id="font-attack">window.fontAttack=1</script><style>';
+  const brandDir = pack(t, { tokens: {
+    colors: { background: '#F7F5F0', surface: '#FFFFFF', text: '#1C1C1E', muted: '#6B6B70', accent: '#2F6FEB' },
+    fonts: { heading: injection, body: 'JetBrains Mono', mono: 'JetBrains Mono' },
+  } });
+  writeScaffold(projectsDir, id, n, { env: { LEAD_MAGNET_BRAND: brandDir } });
+  const html = fs.readFileSync(path.join(dir, 'page.html'), 'utf8');
+  assert.doesNotMatch(html, /<script id="font-attack">/);
+  assert.match(html, /--body:'JetBrains Mono'/);
+  assert.equal((html.match(/<\/style>/g) || []).length, 1);
+});
+
+test('unit label cannot escape the instruction comment; ordinary labels remain readable', (t) => {
+  const { projectsDir, id } = makeLeadMagnet(t);
+  const passport = library.readLeadMagnet(projectsDir, id);
+  const injection = '--><script id="unit-attack">window.unitAttack=1</script><!--';
+  library.savePassport(projectsDir, { ...passport, units: [
+    { ...passport.units[0], label: injection },
+    { ...passport.units[1], label: 'пять промптов' },
+  ] }, () => new Date());
+  const { n, dir } = library.startRevision(projectsDir, id);
+  writeScaffold(projectsDir, id, n, { env: {} });
+  const html = fs.readFileSync(path.join(dir, 'page.html'), 'utf8');
+  assert.doesNotMatch(html, /<script id="unit-attack">/);
+  assert.match(html, /пять промптов/);
+  assert.equal((html.match(/<!-- LM:/g) || []).length, 3);
+});
+
 test('scaffold only fills a revision that is being built', (t) => {
   const { projectsDir, id } = makeLeadMagnet(t);
   assert.throws(() => writeScaffold(projectsDir, id, 1, { env: {} }), /не собирается/);
