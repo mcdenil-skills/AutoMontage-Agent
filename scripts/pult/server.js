@@ -330,6 +330,16 @@ async function startPultServer({
 
   function handleMedia(url, request, response) {
     const head = request.method === 'HEAD';
+    if (url.pathname === '/media/lm-snapshot') {
+      const snapshot = leadMagnet.snapshotFile(url);
+      if (!snapshot) {
+        sendError(response, 404, head);
+        return;
+      }
+      serveFile(request, response, snapshot);
+      return;
+    }
+
     const entry = findEntry(url.searchParams.get('key'));
     if (!entry) {
       sendError(response, 404, head);
@@ -532,7 +542,7 @@ async function startPultServer({
     const { pathname } = url;
     // Закрывающийся пульт больше не принимает работу: страница увидит 503, а не
     // ответ сервера, который через миг исчезнет.
-    if (closing && (pathname.startsWith('/api/') || pathname.startsWith('/media/'))) {
+    if (closing && (pathname.startsWith('/api/') || pathname.startsWith('/media/') || pathname.startsWith('/lm/'))) {
       request.resume();
       sendError(response, 503, head);
       return;
@@ -544,6 +554,12 @@ async function startPultServer({
         return;
       }
       sendJson(response, 200, { app: 'automontage-pult', version: 1 });
+      return;
+    }
+    // Страница лид-магнита для iframe: без ключа пульта, по собственному пропуску
+    // (lead-magnet-routes.js, handlePage). Проверка Host выше уже пройдена.
+    if (pathname === '/lm/page') {
+      leadMagnet.handlePage(url, request, response);
       return;
     }
     if (safeMethod && serveStatic(resolvedRoot, pathname, request, response)) return;

@@ -52,6 +52,59 @@ function hasCreateParamsShape(params) {
     && design.references.every((reference) => reference && typeof reference === 'object' && !Array.isArray(reference)));
 }
 
+const PAGE_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  'img-src data: blob:',
+  'font-src data:',
+  'media-src data: blob:',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'self'",
+  'sandbox allow-scripts',
+].join('; ');
+
+// Выполняется ВНУТРИ страницы лид-магнита (в песочнице, без доступа к пульту). Сервер
+// добавляет его при выдаче, в файл ревизии он не пишется.
+function reviewScript(pultOrigin) {
+  let reviewing = false;
+  const style = document.createElement('style');
+  style.textContent = '[data-lm-review] [data-lm-block]:hover{outline:2px dashed #f5a524;outline-offset:2px;cursor:crosshair}';
+  document.head.append(style);
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent || !event.data || event.data.type !== 'lm-review') return;
+    reviewing = Boolean(event.data.on);
+    document.documentElement.toggleAttribute('data-lm-review', reviewing);
+  });
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('a[href]');
+    if (link && !link.getAttribute('href').startsWith('#')) {
+      event.preventDefault();
+      window.parent.postMessage({ type: 'lm-link', href: link.href }, pultOrigin);
+      return;
+    }
+    if (!reviewing) return;
+    const block = event.target.closest('[data-lm-block]');
+    if (!block) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const box = block.getBoundingClientRect();
+    window.parent.postMessage({
+      type: 'lm-block',
+      blockId: block.getAttribute('data-lm-block'),
+      rect: { x: Math.max(0, box.left + window.scrollX), y: Math.max(0, box.top + window.scrollY), w: box.width, h: box.height },
+    }, pultOrigin);
+  }, true);
+}
+
+function injectReview(html, pultOrigin) {
+  const tag = `<script>(${reviewScript.toString()})(${JSON.stringify(pultOrigin)});</script>`;
+  const at = html.toLowerCase().lastIndexOf('</body>');
+  return at === -1 ? `${html}${tag}` : `${html.slice(0, at)}${tag}${html.slice(at)}`;
+}
+
 function createLeadMagnetRoutes({
   projectsDir, getOrigin, findEntry, projectDirOf, mediaOptions = {}, revealImpl, logger, errorName, env = process.env,
 }) {
@@ -196,7 +249,105 @@ function createLeadMagnetRoutes({
     sendJson(response, 201, { reference });
   }
 
+  // Страница «за стеклом»: без ключа пульта, только по пропуску, привязанному к байтам страницы.
+  function handlePage(url, request, response) {
+    const head = request.method === 'HEAD';
+    if (request.method !== 'GET' && !head) {
+      request.resume();
+      sendError(response, 405);
+      return;
+    }
+    const id = url.searchParams.get('id') || '';
+    const rawRevision = url.searchParams.get('rev') || '';
+    const n = /^\d{1,2}$/.test(rawRevision) ? Number(rawRevision) : 0;
+    let html;
+    try {
+      if (!LEAD_MAGNET_ID.test(id) || n < 1) throw new Error('bad page');
+      const passport = readLeadMagnet(projectsDir, id);
+      const revision = passport.revisions.find((item) => item.n === n);
+      if (!revision || revision.status === 'building') throw new Error('bad page');
+      const bytes = readChecked(projectsDir, revisionDir(projectsDir, id, n), 'page.html');
+      if (!bytes) throw new Error('bad page');
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      if (!safeTokenEqual(url.searchParams.get('ticket'), pageTicket(id, n, sha))) throw new Error('bad page');
+      html = injectReview(bytes.toString('utf8'), getOrigin());
+    } catch (_) {
+      sendError(response, 404, head);
+      return;
+    }
+    send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PAGE_CSP }, head);
+  }
+
+  // Путь снимка правки для /media/lm-snapshot или null (тогда 404).
+  function snapshotFile(url) {
+    const id = url.searchParams.get('id');
+    const commentId = url.searchParams.get('comment');
+    if (typeof id !== 'string' || !LEAD_MAGNET_ID.test(id) || typeof commentId !== 'string' || !LM_COMMENT_ID.test(commentId)) return null;
+    try {
+      const comment = readLeadMagnetComments(projectsDir, id).find((item) => item.id === commentId);
+      return comment && comment.snapshot ? checkedFile(projectsDir, leadMagnetDir(projectsDir, id), comment.snapshot) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Снимок места правки – кусок скриншота проверки той же ревизии и того же вида.
+  function snapshotBytes(id, n, target) {
+    const shot = target.view === 'phone' ? 'qa/phone-390.png' : 'qa/desktop.png';
+    let source;
+    try {
+      source = checkedFile(projectsDir, revisionDir(projectsDir, id, n), shot);
+    } catch (_) {
+      return null;
+    }
+    if (!fs.existsSync(source)) return null;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-lm-snapshot-'));
+    try {
+      const out = path.join(tmp, 'snapshot.png');
+      return cropImage(source, target.rect, out, mediaOptions) ? fs.readFileSync(out) : null;
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  async function postComment(request, response) {
+    const body = await readJsonBody(request);
+    if (!exactKeys(body, ['id', 'revision', 'target', 'text'])) throw bad();
+    const passport = passportOr404(body.id);
+    const { target } = body;
+    const published = Number.isInteger(body.revision) && passport.revisions.some((item) => item.n === body.revision && item.status !== 'building');
+    const snapshot = published && target && target.kind === 'block' && target.rect ? snapshotBytes(passport.id, body.revision, target) : null;
+    let comment;
+    try {
+      comment = addLeadMagnetComment(projectsDir, passport.id, { revision: body.revision, target, text: body.text, snapshotBytes: snapshot });
+    } catch (error) {
+      const message = messageOf(error);
+      if (/неверный формат/.test(message)) throw broken();
+      if (/^правк/.test(message)) throw new PultRequestError(400, 'LM_COMMENT_INVALID', message);
+      throw error;
+    }
+    sendJson(response, 201, { comment: { id: comment.id, status: comment.status } });
+  }
+
+  async function postCommentDelete(request, response) {
+    const body = await readJsonBody(request);
+    if (!exactKeys(body, ['id', 'commentId']) || typeof body.commentId !== 'string' || !LM_COMMENT_ID.test(body.commentId)) throw bad();
+    passportOr404(body.id);
+    try {
+      deleteLeadMagnetComment(projectsDir, body.id, body.commentId);
+    } catch (error) {
+      const message = messageOf(error);
+      if (/принят/.test(message)) throw new PultRequestError(409, 'COMMENT_ACCEPTED', 'Правка уже принята агентом');
+      if (/не найдена/.test(message)) throw notFound();
+      throw broken();
+    }
+    sendJson(response, 200, { deleted: true });
+  }
+
   const POST_ROUTES = new Map([
+    ['/api/lead-magnet/comment', (url, request, response) => postComment(request, response)],
+    ['/api/lead-magnet/comment/delete', (url, request, response) => postCommentDelete(request, response)],
+
     ['/api/lead-magnet/decision', (url, request, response) => postDecision(request, response)],
     ['/api/lead-magnet/reference', (url, request, response) => postReference(url, request, response)],
   ]);
@@ -216,7 +367,7 @@ function createLeadMagnetRoutes({
     await handler(url, request, response);
   }
 
-  return { handleApi, POST_ROUTES, internals: { approvalTicket, pageTicket, passportOr404, sign } };
+  return { handleApi, handlePage, snapshotFile, POST_ROUTES, internals: { approvalTicket, pageTicket, passportOr404, sign } };
 }
 
 module.exports = { DECISION_KEYS, REVEAL_FILES, createLeadMagnetRoutes, exactKeys };

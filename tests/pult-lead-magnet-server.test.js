@@ -208,3 +208,59 @@ test('«Уже есть готовый» attaches the video to the chosen lead m
 });
 
 module.exports = { get, post, request, root, start };
+
+async function publishedMagnet(t) {
+  const projectsDir = root(t);
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  const published = publishCheckedRevision(projectsDir, id);
+  const { session, calls } = await start(t, projectsDir);
+  const state = (await get(session, '/api/lead-magnet?key=clip')).json;
+  return { projectsDir, id, session, calls, state, ...published };
+}
+
+test('the page is served only by its own ticket, sandboxed and offline', async (t) => {
+  const { session, state, dir } = await publishedMagnet(t);
+  const { pageUrl } = state.magnets[0].revision;
+  const original = fs.readFileSync(path.join(dir, 'page.html'));
+  const page = await request(session, pageUrl, { token: null });
+  assert.equal(page.status, 200);
+  const csp = page.headers['content-security-policy'];
+  for (const directive of ["default-src 'none'", "connect-src 'none'", "frame-ancestors 'self'", 'sandbox allow-scripts']) {
+    assert.ok(csp.includes(directive), directive);
+  }
+  assert.equal(csp.includes('allow-same-origin'), false);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'page.html')), original);
+  const head = await request(session, pageUrl, { method: 'HEAD', token: null });
+  assert.equal(head.status, 200);
+  assert.equal(head.body.length, 0);
+  assert.equal(head.headers['content-security-policy'], csp);
+  assert.equal((await request(session, pageUrl.replace(/rev=\d+/, 'rev=99'), { token: null })).status, 404);
+  const html = page.body.toString('utf8');
+  assert.match(html, /data-lm-block="hero"/);
+  // Скрипт правок встроен сервером перед </body>; само слово data-lm-block есть и в странице,
+  // поэтому ищем именно строку сообщения скрипта.
+  const injected = html.indexOf("type: 'lm-block'");
+  assert.ok(injected > 0);
+  assert.ok(injected < html.lastIndexOf('</body>'));
+  assert.equal((await request(session, pageUrl.replace(/ticket=[^&]+/, 'ticket=wrong'), { token: null })).status, 404);
+  assert.equal((await request(session, pageUrl, { method: 'POST', token: null, origin: session.origin, json: {} })).status, 405);
+  fs.appendFileSync(path.join(dir, 'page.html'), '<!-- changed -->');
+  assert.equal((await request(session, pageUrl, { token: null })).status, 404);
+});
+
+test('a block comment gets a snapshot from the QA screenshot; a text comment has none', async (t) => {
+  const { id, n, session } = await publishedMagnet(t);
+  const block = { kind: 'block', blockId: 'steps', view: 'phone', rect: { x: 0, y: 10, w: 300, h: 200 } };
+  const added = await post(session, '/api/lead-magnet/comment', { id, revision: n, target: block, text: 'короче' });
+  assert.equal(added.status, 201);
+  await post(session, '/api/lead-magnet/comment', { id, revision: n, target: { kind: 'text', text: 'dm' }, text: 'без смайлов' });
+  const [onBlock, onText] = (await get(session, '/api/lead-magnet?key=clip')).json.magnets[0].comments;
+  assert.ok(onBlock.snapshotUrl);
+  assert.equal(onText.snapshotUrl, null);
+  const snapshot = await request(session, `${onBlock.snapshotUrl}&token=${encodeURIComponent(session.token)}`, { token: null });
+  assert.deepEqual([snapshot.status, snapshot.headers['content-type']], [200, 'image/png']);
+  assert.equal((await request(session, onBlock.snapshotUrl, { token: null })).status, 401);
+  assert.equal((await post(session, '/api/lead-magnet/comment', { id, revision: 9, target: block, text: 'x' })).status, 400);
+  assert.equal((await post(session, '/api/lead-magnet/comment/delete', { id, commentId: onBlock.id })).status, 200);
+  assert.equal((await post(session, '/api/lead-magnet/comment/delete', { id, commentId: 'c-zzzzzzzz' })).status, 400);
+});
