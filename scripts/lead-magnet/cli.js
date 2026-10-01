@@ -11,6 +11,7 @@ const { DECISION_ID } = require('./constants');
 const { addOffer, readOffers } = require('./offers');
 const { renderPdf } = require('./pdf');
 const { readDecisions } = require('./requests');
+const { importReference, shootReference } = require('./reference-tools');
 const { writeScaffold } = require('./scaffold');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -24,6 +25,8 @@ const HELP = `automontage lead-magnet – команды агента для л�
   revision start --id <id>          revision publish --id <id> --revision <n>
   revision scaffold --id <id> --revision <n> [--force yes]
   pdf --id <id> --revision <n>
+  reference import --id <id> --from <папка ролика> --path pult/lead-magnet-refs/<файл>
+  reference shot --id <id> (--url <ссылка> | --file references/<файл>.html)
   check --id <id> --revision <n>
   link --id <id> --folder <папка ролика> --code-word <слово>
   promise update --id <id> --from <папка ролика>
@@ -133,6 +136,15 @@ const COMMANDS = {
   pdf: async (flags, write) => {
     await renderPdf(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
     write('PDF готов. Печатай его после последней правки страницы.');
+  },
+  'reference import': (flags, write) => {
+    const target = importReference(flags.projectsDir, need(flags, 'id'), { folder: need(flags, 'from'), storedPath: need(flags, 'path') });
+    write(`Референс в библиотеке: references/${path.basename(target)}`);
+  },
+  'reference shot': async (flags, write) => {
+    const result = await shootReference(flags.projectsDir, need(flags, 'id'), { url: flags.url || null, file: flags.file || null });
+    write(`Снимки: ${result.files.join(', ')}`);
+    write(`Текст страницы (начало): ${result.text.slice(0, 600)}`);
   },
   check: async (flags, write) => {
     const report = await checkRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
