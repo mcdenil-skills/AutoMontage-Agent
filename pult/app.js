@@ -343,6 +343,7 @@ function actionsBlock(card, variant) {
       notify('Проверка монтажа открывается в отдельном окне.');
     }));
   }
+  box.append(lmActionButton(variant));
   box.append(button(card.archived ? 'Вернуть из архива' : 'В архив', async () => {
     await api('/api/archive', { method: 'POST', body: { cardId: card.id, archived: !card.archived } });
     // closeCard() сам чистит уведомление – успех показываем уже после него, иначе человек
@@ -711,11 +712,15 @@ function renderDetail() {
     playerColumn.append(toggle, history);
   }
   const side = el('div', 'detail__side');
+  // Плашка «Разработать лид-магнит?» – над статусом видео (pult/lead-magnet.js).
+  const offerSlot = el('div', 'lm-offer-slot');
+  offerSlot.dataset.lmOfferSlot = '';
   const badge = el('p', `badge badge--${variant.status}`, STATUS_LABELS[variant.status]);
   badge.dataset.variantStatus = '';
   const next = el('p', 'detail__next', variant.nextStep);
   next.dataset.variantNext = '';
   side.append(
+    offerSlot,
     badge,
     next,
     approveBlock(variant),
@@ -723,6 +728,7 @@ function renderDetail() {
     actionsBlock(card, variant),
     agentHandoffBlock(card, variant),
   );
+  lmRenderBanner(offerSlot, variant, getVideo);
   layout.append(playerColumn, side);
   view.append(layout);
   shownDetail.key = variant.key;

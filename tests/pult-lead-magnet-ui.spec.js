@@ -76,3 +76,32 @@ test('a promise puts a tag on the card without moving it to another section', as
   const card = page.locator('[data-section="waiting"] .card', { hasText: 'Сайт за вечер' });
   await expect(card.locator('[data-lm-tag]')).toHaveText('🎁 Лид-магнит?');
 });
+
+test('the offer banner quotes the promise and suggests the approved one with the same word', async ({ page }) => {
+  await startWith(withLibrary);
+  await openClip(page);
+  const banner = page.locator('[data-lm-offer="ГАЙД"]');
+  await expect(banner).toContainText(QUOTE);
+  await expect(banner).toContainText('уже есть готовый');
+  await expect(page.locator('[data-variant-status]')).toHaveText('Ждёт меня');
+});
+
+test('«Нет» hides the question and «🎁 Лид-магнит» brings it back', async ({ page }) => {
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Нет' }).click();
+  await expect(page.locator('[data-lm-offer]')).toHaveCount(0);
+  await page.locator('.actions button', { hasText: '🎁 Лид-магнит' }).click();
+  await expect(page.locator('[data-lm-offer="ГАЙД"]')).toBeVisible();
+});
+
+test('«Уже есть готовый» links the approved lead magnet in one click', async ({ page }) => {
+  const { libraryId } = await startWith(withLibrary);
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Уже есть готовый' }).click();
+  const pick = page.locator('[data-lm-picker] .lm-pick').first();
+  await expect(pick).toHaveClass(/lm-pick--match/);
+  await pick.click();
+  await expect(page.locator('[data-lm-offer]')).toHaveCount(0);
+  expect(library.readLeadMagnet(projectsDir, libraryId).videos).toEqual(['other', 'clip']);
+});
