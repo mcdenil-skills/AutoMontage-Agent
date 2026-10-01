@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { addOffer } = require('../scripts/lead-magnet/offers');
+const { linkVideo } = require('../scripts/lead-magnet/library');
 const { addDecision } = require('../scripts/lead-magnet/requests');
 const { attachLeadMagnets, buildLeadMagnetIndex, folderLeadMagnet } = require('../scripts/pult/lead-magnet-view');
 const { addDraftProject, makePultRoot } = require('./helpers/pult-projects');
@@ -57,6 +58,47 @@ test('a removed source promise is reported as changed', (t) => {
   const current = view(projectsDir);
   assert.deepEqual([current.magnets[0].promiseChanged, current.magnets[0].approvable], [true, false]);
   assert.equal(current.nextStep, 'Обещание в ролике изменилось – проверьте лид-магнит');
+});
+
+test('an unrelated linked code word cannot replace the source promise', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const projectDir = addVideoWithOffer(projectsDir, { folder: 'clip' });
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  linkVideo(projectsDir, id, { folder: 'clip', codeWord: 'БОНУС' });
+  fs.writeFileSync(path.join(projectDir, 'script.txt'), `Финал. ${QUOTE}.`);
+  const bonus = addOffer(projectDir, {
+    codeWord: 'БОНУС', kind: 'comment-keyword', quote: QUOTE,
+    units: UNITS, sourceKind: 'script', scriptPath: 'script.txt',
+  });
+  fs.writeFileSync(path.join(projectDir, 'lead-magnet', 'offers.json'), JSON.stringify({ version: 1, offers: [bonus] }));
+  assert.equal(view(projectsDir).magnets[0].promiseChanged, true);
+});
+
+test('a damaged passport stays visible as a library error on cards', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addVideoWithOffer(projectsDir, { folder: 'clip' });
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  fs.writeFileSync(path.join(projectsDir, '.lead-magnets', id, 'lead-magnet.json'), '{');
+  const current = view(projectsDir);
+  assert.match(current.error, /повреждён/);
+  assert.deepEqual([current.status, current.nextStep], ['working', 'Лид-магнит: файл повреждён – попросите агента проверить']);
+  const [card] = attachLeadMagnets(projectsDir, [{ folder: 'clip', status: 'waiting' }]);
+  assert.deepEqual(card.leadMagnet, { ask: true, status: 'working', nextStep: current.nextStep });
+  addDraftProject(projectsDir, { folder: 'plain' });
+  const [plain] = attachLeadMagnets(projectsDir, [{ folder: 'plain', status: 'ready' }]);
+  assert.deepEqual(plain.leadMagnet, { ask: false, status: 'working', nextStep: current.nextStep });
+});
+
+test('a damaged decision file outranks a waiting lead magnet on the card', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const projectDir = addVideoWithOffer(projectsDir, { folder: 'clip' });
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  publishCheckedRevision(projectsDir, id);
+  fs.mkdirSync(path.join(projectDir, 'pult'), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'pult', 'lead-magnet.json'), '{');
+  const current = view(projectsDir);
+  assert.match(current.error, /повреждён/);
+  assert.deepEqual([current.status, current.nextStep], ['working', 'Лид-магнит: файл повреждён – попросите агента проверить']);
 });
 
 test('a red check keeps the lead magnet on the agent side', (t) => {

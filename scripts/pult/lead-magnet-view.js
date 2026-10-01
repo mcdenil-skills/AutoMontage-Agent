@@ -11,10 +11,11 @@ const { STATUS_ORDER } = require('./status');
 const PENDING_STEP = 'Агент готовит лид-магнит';
 const BROKEN_STEP = 'Лид-магнит: файл повреждён – попросите агента проверить';
 const BROKEN_FOLDER = 'Файл обещаний или решений лид-магнита повреждён – попросите агента проверить';
+const BROKEN_LIBRARY = 'Библиотека лид-магнитов: файл повреждён – попросите агента проверить';
 
 // Один проход по библиотеке на запрос: какие лид-магниты привязаны к какой папке ролика.
 function buildLeadMagnetIndex(projectsDir) {
-  const { entries } = listLeadMagnets(projectsDir);
+  const { entries, broken } = listLeadMagnets(projectsDir);
   const byFolder = new Map();
   for (const passport of entries) {
     for (const folder of passport.videos) {
@@ -22,7 +23,7 @@ function buildLeadMagnetIndex(projectsDir) {
       byFolder.get(folder).push(passport);
     }
   }
-  return { entries, byFolder };
+  return { entries, broken, byFolder };
 }
 
 // undefined – сравнивать не с чем (не ролик-источник); null – обещание с этим
@@ -36,8 +37,9 @@ function currentQuoteFor(projectsDir, passport) {
   } catch (_) {
     return undefined;
   }
-  if (!offers.length) return null;
-  const match = offers.find((offer) => passport.codeWords.includes(offer.codeWord));
+  // Первое слово задано при создании паспорта; linkVideo дописывает слова других роликов.
+  // По ним нельзя подменять исчезнувшее обещание ролика-источника.
+  const match = offers.find((offer) => offer.codeWord === passport.codeWords[0]);
   return match ? match.quote : null;
 }
 
@@ -67,7 +69,7 @@ function folderLeadMagnet(projectsDir, folder, index) {
   const projectDir = path.join(projectsDir, folder);
   let states = [];
   let decisions = [];
-  let error = null;
+  let error = index.broken?.length ? BROKEN_LIBRARY : null;
   try {
     states = offerStates(projectDir);
     decisions = readDecisions(projectDir);
@@ -88,8 +90,9 @@ function folderLeadMagnet(projectsDir, folder, index) {
     .map((decision) => decision.codeWord);
   const candidates = magnets.map((magnet) => ({ status: magnet.status, nextStep: magnet.nextStep }));
   if (pending.length) candidates.push({ status: 'working', nextStep: PENDING_STEP });
-  if (error) candidates.push({ status: 'working', nextStep: BROKEN_STEP });
-  const top = candidates.sort((left, right) => STATUS_ORDER[left.status] - STATUS_ORDER[right.status])[0] || null;
+  const broken = error || magnets.some((magnet) => magnet.error);
+  const top = broken ? { status: 'working', nextStep: BROKEN_STEP }
+    : candidates.sort((left, right) => STATUS_ORDER[left.status] - STATUS_ORDER[right.status])[0] || null;
   return {
     offers: states.map(offerForBrowser),
     pending,
@@ -106,7 +109,7 @@ function attachLeadMagnets(projectsDir, entries) {
   try {
     index = buildLeadMagnetIndex(projectsDir);
   } catch (_) {
-    index = { entries: [], byFolder: new Map() };
+    index = { entries: [], broken: [{ id: null }], byFolder: new Map() };
   }
   const byFolder = new Map();
   return entries.map((entry) => {
