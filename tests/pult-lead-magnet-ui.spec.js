@@ -290,6 +290,70 @@ test('a text gets its own comment, and a waiting comment can be deleted', async 
   await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(0);
 });
 
+test('editing during a pending comment request cannot submit it twice, and failure allows retry', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-text="telegram"] button', { hasText: 'Правка к тексту' }).click();
+  const field = page.locator('[data-lm-comment-text]');
+  const save = page.locator('.lm-comments button', { hasText: 'Добавить правку' });
+  await field.fill('Первая формулировка');
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  let posts = 0;
+  await page.route('**/api/lead-magnet/comment', async (route) => {
+    posts += 1;
+    if (posts === 1) {
+      requested();
+      await new Promise((resolve) => { release = resolve; });
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Временная ошибка' }) });
+      return;
+    }
+    await route.continue();
+  });
+  await save.click();
+  await pending;
+  await field.fill('Новая формулировка');
+  const disabledDuringRequest = await save.isDisabled();
+  if (!disabledDuringRequest) await save.click();
+  release();
+  await expect(page.locator('[data-notice]')).toContainText('Временная ошибка');
+  expect(disabledDuringRequest).toBe(true);
+  expect(posts).toBe(1);
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(1);
+  await expect(page.locator('[data-lm-comments] .comment')).toContainText('Новая формулировка');
+  expect(posts).toBe(2);
+});
+
+test('only a valid block message from the active sandboxed frame selects a target', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  const target = page.locator('[data-lm-target]');
+  const valid = { type: 'lm-block', blockId: 'steps', rect: { x: 0, y: 10, w: 300, h: 200 } };
+  await page.evaluate((data) => window.postMessage(data, '*'), valid);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(target).toContainText('Включите «Режим правок»');
+  await page.evaluate((data) => {
+    const other = document.createElement('iframe');
+    other.srcdoc = `<script>parent.postMessage(${JSON.stringify(data)}, '*')</script>`;
+    document.body.append(other);
+  }, valid);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(target).toContainText('Включите «Режим правок»');
+  await page.frameLocator('[data-lm-frame]').locator('body').evaluate((_, data) => {
+    parent.postMessage({ ...data, blockId: '../bad' }, '*');
+    parent.postMessage({ ...data, rect: { x: 0, y: -1, w: 300, h: 200 } }, '*');
+    parent.postMessage({ ...data, rect: { x: 0, y: 0, w: Infinity, h: 200 } }, '*');
+  }, valid);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(target).toContainText('Включите «Режим правок»');
+  await page.frameLocator('[data-lm-frame]').locator('body').evaluate((_, data) => parent.postMessage(data, '*'), valid);
+  await expect(target).toHaveText('К блоку «steps» · компьютер');
+  await expect(page.locator('[data-lm-frame]')).toHaveAttribute('sandbox', 'allow-scripts');
+});
+
 test('outside review mode a click on the page does not start a comment, links are announced', async ({ page }) => {
   const link = '<p><a data-lm-link href="https://example.com/practicum">Практикум</a></p>';
   await startWith((dir) => withDraft(dir, { page: goodPage({ extra: link }) }));

@@ -756,10 +756,13 @@ function lmCommentsPanel(magnet) {
   const save = el('button', 'secondary', 'Добавить правку');
   save.type = 'button';
   save.disabled = true;
-  const canSave = () => { save.disabled = !target || !text.value.trim() || !magnet.revision; };
+  let submitting = false;
+  const canSave = () => { save.disabled = submitting || !target || !text.value.trim() || !magnet.revision; };
   text.addEventListener('input', canSave);
   save.addEventListener('click', async () => {
-    save.disabled = true;
+    if (submitting || save.disabled) return;
+    submitting = true;
+    canSave();
     try {
       await api('/api/lead-magnet/comment', {
         method: 'POST', body: { id: magnet.id, revision: magnet.revision.n, target, text: text.value.trim() },
@@ -768,6 +771,8 @@ function lmCommentsPanel(magnet) {
       await refresh();
     } catch (error) {
       notify(error.message, 'error');
+    } finally {
+      submitting = false;
       canSave();
     }
   });
