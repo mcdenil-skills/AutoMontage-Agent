@@ -9,7 +9,10 @@ const { setFunnelState } = require('./funnel');
 const library = require('./library');
 const { DECISION_ID } = require('./constants');
 const { addOffer, readOffers } = require('./offers');
+const { renderPdf } = require('./pdf');
 const { readDecisions } = require('./requests');
+const { importReference, shootReference } = require('./reference-tools');
+const { writeScaffold } = require('./scaffold');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -20,6 +23,10 @@ const HELP = `automontage lead-magnet – команды агента для л�
             [--source script --script <файл в папке ролика>]
   create --from <папка ролика> <r-id> --title "<название>" [--code-word <слово без обещания>]
   revision start --id <id>          revision publish --id <id> --revision <n>
+  revision scaffold --id <id> --revision <n> [--force yes]
+  pdf --id <id> --revision <n>
+  reference import --id <id> --from <папка ролика> --path pult/lead-magnet-refs/<файл>
+  reference shot --id <id> (--url <ссылка> | --file references/<файл>.html)
   check --id <id> --revision <n>
   link --id <id> --folder <папка ролика> --code-word <слово>
   promise update --id <id> --from <папка ролика>
@@ -116,9 +123,28 @@ const COMMANDS = {
     const { n, dir } = library.startRevision(flags.projectsDir, need(flags, 'id'));
     write(`Ревизия ${n}: ${dir}`);
   },
+  'revision scaffold': (flags, write) => {
+    const written = writeScaffold(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')), { force: flags.force === 'yes' });
+    write(written.length
+      ? `Заготовка: ${written.join(', ')}. Заполни все места с data-lm-todo.`
+      : 'Файлы уже есть – заготовка не перезаписана (добавь --force yes, если нужно).');
+  },
   'revision publish': (flags, write) => {
     const passport = library.publishRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
     write(`Ревизия ${passport.current} показана в пульте.`);
+  },
+  pdf: async (flags, write) => {
+    await renderPdf(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
+    write('PDF готов. Печатай его после последней правки страницы.');
+  },
+  'reference import': (flags, write) => {
+    const target = importReference(flags.projectsDir, need(flags, 'id'), { folder: need(flags, 'from'), storedPath: need(flags, 'path') });
+    write(`Референс в библиотеке: references/${path.basename(target)}`);
+  },
+  'reference shot': async (flags, write) => {
+    const result = await shootReference(flags.projectsDir, need(flags, 'id'), { url: flags.url || null, file: flags.file || null });
+    write(`Снимки: ${result.files.join(', ')}`);
+    write(`Текст страницы (начало): ${result.text}`);
   },
   check: async (flags, write) => {
     const report = await checkRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
@@ -162,8 +188,9 @@ const COMMANDS = {
   brand: (flags, write) => {
     const resolved = resolveBrand();
     write(resolved.source === 'pack'
-      ? `Бренд-пак «${resolved.brand.name}»: ${resolved.dir}. Логотип ${resolved.brand.logoRequired ? 'обязателен' : 'не обязателен'}.`
+      ? `Бренд-пак «${resolved.brand.name}». Логотип ${resolved.brand.logoRequired ? 'обязателен' : 'не обязателен'}.`
       : 'Бренд-пака нет – нейтральный стиль движка, без логотипа.');
+    write(`Навыки голоса: ${resolved.brand.voice.skills.join(', ') || 'нет'}.`);
   },
 };
 

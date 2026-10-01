@@ -188,9 +188,11 @@ Master уже пересчитывает транскрипт, поэтому ш
    `scripts/project/workspace.js`.
 2. Извлеки звук через ffmpeg и запусти локальный `scripts/transcribe.py` с
    `large-v3-turbo`; сохрани слова в `transcript/words.json`.
-3. Прочитай транскрипт сам в текущей подписанной сессии и создай lesson JSON/Markdown по
+3. Есть призыв с кодовым словом или в личку – запиши обещание по разделу «Обещание в ролике»
+   навыка `skills/lead-magnet/SKILL.md`.
+4. Прочитай транскрипт сам в текущей подписанной сессии и создай lesson JSON/Markdown по
    `schema/lesson-brief.schema.json` и семи официальным сценам.
-4. Выполни `validateLessonBrief()` и опубликуй пару только через
+5. Выполни `validateLessonBrief()` и опубликуй пару только через
    `publishBriefRevision()`. Не правь `project.json` вручную.
 
 Для Creative Motion перед публикацией brief создай ДНК дизайна, карту смысловых вставок и

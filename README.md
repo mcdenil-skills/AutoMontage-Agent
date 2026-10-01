@@ -486,10 +486,16 @@ automontage inbox                    # что пульт передал аген
 ```bash
 automontage lead-magnet --help
 automontage inbox
+automontage lead-magnet revision scaffold --id <id> --revision <n>
+automontage lead-magnet reference import --id <id> --from <ролик> --path pult/lead-magnet-refs/<файл>
+automontage lead-magnet reference shot --id <id> --url <ссылка>
+automontage lead-magnet pdf --id <id> --revision <n>
 ```
 
-В части 1A доступны данные и команды агента; экран лид-магнита в пульте и проектный навык
-агента появятся в следующих частях. Утверждает результат только человек в пульте, команды
+Путь агента описан в `skills/lead-magnet/SKILL.md`: заготовка, проверенные факты, PDF,
+проверка и публикация черновика. Для HTML-референса сначала выполняют `reference import`,
+затем `reference shot --file references/<файл>.html`. PDF создаётся без сети, а снимки
+референсов сохраняются с проверкой пути. Утверждает результат только человек в пульте, команды
 утверждения в CLI нет. Необязательный приватный стиль задаётся `LEAD_MAGNET_BRAND` (папка с
 `brand.json`); без неё используется `lead-magnet/` рядом с `THEMES_EXT` или нейтральная тема
 без логотипа. Порядок и проверки: [docs/LEAD-MAGNET.md](docs/LEAD-MAGNET.md).
