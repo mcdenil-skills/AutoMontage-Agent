@@ -9,6 +9,7 @@ const { setFunnelState } = require('./funnel');
 const library = require('./library');
 const { DECISION_ID } = require('./constants');
 const { addOffer, readOffers } = require('./offers');
+const { renderPdf } = require('./pdf');
 const { readDecisions } = require('./requests');
 const { writeScaffold } = require('./scaffold');
 
@@ -22,6 +23,7 @@ const HELP = `automontage lead-magnet – команды агента для л�
   create --from <папка ролика> <r-id> --title "<название>" [--code-word <слово без обещания>]
   revision start --id <id>          revision publish --id <id> --revision <n>
   revision scaffold --id <id> --revision <n> [--force yes]
+  pdf --id <id> --revision <n>
   check --id <id> --revision <n>
   link --id <id> --folder <папка ролика> --code-word <слово>
   promise update --id <id> --from <папка ролика>
@@ -127,6 +129,10 @@ const COMMANDS = {
   'revision publish': (flags, write) => {
     const passport = library.publishRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
     write(`Ревизия ${passport.current} показана в пульте.`);
+  },
+  pdf: async (flags, write) => {
+    await renderPdf(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
+    write('PDF готов. Печатай его после последней правки страницы.');
   },
   check: async (flags, write) => {
     const report = await checkRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));
