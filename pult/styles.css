@@ -153,6 +153,9 @@ button, input, textarea { font: inherit; color: inherit; }
 .comment__text { margin: 0; }
 .comment__status { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 
+/* Лид-магнит (pult/lead-magnet.js). */
+.lm-tag { display: inline-block; margin-top: 0.4rem; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.8rem; background: hsl(var(--amber-soft)); color: hsl(var(--amber)); }
+
 @media (max-width: 860px) {
   .detail { grid-template-columns: 1fr; }
   .pult-header, .pult-main { padding-left: 1rem; padding-right: 1rem; }

@@ -207,6 +207,14 @@ test('«Уже есть готовый» attaches the video to the chosen lead m
   assert.deepEqual(state.magnets.map((magnet) => [magnet.id, magnet.status]), [[libraryId, 'ready']]);
 });
 
+test('the lead magnet screen script is served like the rest of the pult', async (t) => {
+  const { session } = await start(t, root(t));
+  const script = await request(session, '/lead-magnet.js', { token: null });
+  assert.equal(script.status, 200);
+  assert.match(script.headers['content-type'], /^text\/javascript/);
+  assert.match(script.body.toString('utf8'), /function lmCardTag/);
+});
+
 module.exports = { get, post, request, root, start };
 
 async function publishedMagnet(t) {

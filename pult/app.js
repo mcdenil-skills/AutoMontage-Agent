@@ -202,6 +202,8 @@ function renderCard(card) {
     el('span', '', cardFacts(card)),
   );
   body.append(el('span', 'card__title', card.title), meta, el('span', 'card__next', card.nextStep));
+  const leadTag = lmCardTag(card);
+  if (leadTag) body.append(leadTag);
   node.append(thumb, body);
   node.addEventListener('click', () => openCard(card.id));
   return node;

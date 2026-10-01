@@ -14,6 +14,7 @@ const STATIC_FILES = new Map([
   ['/', { dir: ['pult'], file: 'index.html' }],
   ['/index.html', { dir: ['pult'], file: 'index.html' }],
   ['/app.js', { dir: ['pult'], file: 'app.js' }],
+  ['/lead-magnet.js', { dir: ['pult'], file: 'lead-magnet.js' }],
   ['/styles.css', { dir: ['pult'], file: 'styles.css' }],
   // Единственный шрифт страницы: приезжает с того же локального сервера, работает
   // офлайн, и как файл того же источника уже разрешён CSP без отдельного font-src.
