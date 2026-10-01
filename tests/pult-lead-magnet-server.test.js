@@ -134,6 +134,28 @@ test('decisions need exact bodies; create reaches the inbox, decline does not', 
   assert.equal(readDecisions(path.join(projectsDir, 'clip')).length, 2);
 });
 
+test('malformed create params return 400 without recording a decision', async (t) => {
+  const projectsDir = root(t);
+  const { session } = await start(t, projectsDir);
+  const create = { key: 'clip', type: 'create', offerId: 'o-gayd', codeWord: 'ГАЙД', params: PARAMS };
+  const malformed = [
+    null,
+    {},
+    { ...PARAMS, design: null },
+    { ...PARAMS, design: { ...PARAMS.design, references: null } },
+    { ...PARAMS, design: { ...PARAMS.design, references: [null] } },
+  ];
+  for (const params of malformed) {
+    const response = await post(session, '/api/lead-magnet/decision', { ...create, params });
+    assert.equal(response.status, 400, JSON.stringify(params));
+    assert.equal(response.json.code, 'INVALID_REQUEST');
+  }
+  assert.equal(readDecisions(path.join(projectsDir, 'clip')).length, 0);
+  const valid = await post(session, '/api/lead-magnet/decision', create);
+  assert.equal(valid.status, 201);
+  assert.equal(readDecisions(path.join(projectsDir, 'clip')).length, 1);
+});
+
 test('«Уже есть готовый» attaches the video to the chosen lead magnet at once', async (t) => {
   const projectsDir = root(t);
   const libraryId = approvedMagnet(projectsDir, 'other');

@@ -44,6 +44,14 @@ function exactKeys(body, keys) {
   return actual.length === keys.length && keys.every((key) => actual.includes(key));
 }
 
+function hasCreateParamsShape(params) {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return false;
+  const { design } = params;
+  return Boolean(design && typeof design === 'object' && !Array.isArray(design)
+    && Array.isArray(design.references)
+    && design.references.every((reference) => reference && typeof reference === 'object' && !Array.isArray(reference)));
+}
+
 function createLeadMagnetRoutes({
   projectsDir, getOrigin, findEntry, projectDirOf, mediaOptions = {}, revealImpl, logger, errorName, env = process.env,
 }) {
@@ -154,7 +162,7 @@ function createLeadMagnetRoutes({
   async function postDecision(request, response) {
     const body = await readJsonBody(request);
     const keys = body && typeof body === 'object' ? DECISION_KEYS[body.type] : null;
-    if (!keys || !exactKeys(body, keys)) throw bad();
+    if (!keys || !exactKeys(body, keys) || (body.type === 'create' && !hasCreateParamsShape(body.params))) throw bad();
     const entry = findEntry(body.key);
     if (!entry) throw notFound();
     const { key, ...input } = body;
