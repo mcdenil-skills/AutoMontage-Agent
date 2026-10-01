@@ -17,7 +17,7 @@ const { addDecision } = require('../lead-magnet/requests');
 const {
   PultRequestError, readJsonBody, readRawBody, safeTokenEqual, send, sendError, sendJson,
 } = require('./http');
-const { buildLeadMagnetIndex, folderLeadMagnet } = require('./lead-magnet-view');
+const { buildLeadMagnetIndex, currentPromiseFor, folderLeadMagnet } = require('./lead-magnet-view');
 const { cropImage } = require('./media-cache');
 
 const DECISION_KEYS = {
@@ -178,7 +178,11 @@ function createLeadMagnetRoutes({
     try { funnel = readFunnelState(projectsDir, passport.id); } catch (_) { funnel = null; }
     return {
       ...summary,
-      promise: { quote: passport.promise.quote, startSec: passport.promise.startSec },
+      promise: {
+        quote: passport.promise.quote, startSec: passport.promise.startSec,
+        sourceFolder: passport.promise.sourceFolder,
+        current: currentPromiseFor(projectsDir, passport),
+      },
       revision: revisionView(passport, summary),
       files: filesView(passport),
       commentsBroken: comments === null,

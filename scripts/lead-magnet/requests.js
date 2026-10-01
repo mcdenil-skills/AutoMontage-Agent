@@ -99,13 +99,30 @@ function checkParams(projectDir, params, { hasOffer }) {
 function addDecision(projectDir, input, { now = () => new Date(), id = () => `r-${randomBytes(4).toString('hex')}` } = {}) {
   if (!REQUIRED_BY_TYPE[input.type]) throw new Error('лид-магнит: неизвестное решение');
   if (!hasRequiredFields(input)) throw new Error('лид-магнит: обязательные поля решения не заполнены');
-  if (input.type === 'promise-keep' && typeof input.offerId !== 'string') {
-    throw new Error('лид-магнит: обязательный id обещания не указан');
-  }
   const createdAt = now().toISOString();
   const decision = { id: id(), type: input.type, createdAt, status: 'new' };
   for (const field of REQUIRED_BY_TYPE[input.type]) decision[field] = input[field];
   if (Object.hasOwn(decision, 'codeWord') && decision.codeWord !== null) decision.codeWord = normalizeCodeWord(decision.codeWord);
+  if (decision.type === 'promise-keep' || decision.type === 'promise-refresh') {
+    const passport = library.readLeadMagnet(path.dirname(projectDir), decision.leadMagnetId);
+    if (passport.promise.sourceFolder !== path.basename(projectDir)) {
+      throw new Error('лид-магнит: решение об обещании принимает только ролик-источник');
+    }
+    try {
+      resolveProjectPath(projectDir, 'lead-magnet/offers.json',
+        { label: 'обещания ролика-источника', mustExist: true, type: 'file' });
+    } catch (_) {
+      throw new Error('лид-магнит: обещания ролика-источника не читаются');
+    }
+    const words = passport.promise.sourceFolder === passport.videos[0]
+      ? passport.codeWords.slice(0, 1) : passport.codeWords;
+    const offers = readOffers(projectDir);
+    const current = words.map((word) => offers.find((item) => item.codeWord === word)).find(Boolean) || null;
+    if (decision.offerId !== (current ? current.id : null)
+      || (decision.type === 'promise-refresh' && !current)) {
+      throw new Error('лид-магнит: текущий id обещания не совпадает с роликом-источником');
+    }
+  }
   let offer = null;
   if (Object.hasOwn(decision, 'offerId') && decision.offerId !== null) {
     offer = readOffers(projectDir).find((item) => item.id === decision.offerId) || null;

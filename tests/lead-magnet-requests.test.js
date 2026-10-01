@@ -47,17 +47,17 @@ test('offer states follow the decisions: ask → declined → ask → requested'
 });
 
 test('automatic decisions are accepted at once, agent work stays new', (t) => {
-  const { projectDir, projectsDir } = withOffer(t);
+  const { projectDir, projectsDir, folder } = withOffer(t);
   const magnet = library.createLeadMagnet(projectsDir, {
-    codeWord: 'ГАЙД', title: 'Готовый гайд', promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: 'existing-video' },
-    units: UNITS, params: params(), videoFolder: 'existing-video',
+    codeWord: 'ГАЙД', title: 'Готовый гайд', promise: { quote: QUOTE, startSec: 60, endSec: 63.9, sourceFolder: folder },
+    units: UNITS, params: params(), videoFolder: folder,
   }, { now: NOW });
   const decline = addDecision(projectDir, { type: 'decline', offerId: 'o-gayd', codeWord: 'ГАЙД' }, { now: NOW, id: ID });
   assert.equal(decline.status, 'accepted');
   assert.equal(decline.acceptedAt, decline.createdAt);
   const link = addDecision(projectDir, { type: 'link', offerId: 'o-gayd', codeWord: 'ГАЙД', leadMagnetId: magnet.id }, { now: NOW, id: ID });
   assert.equal(link.status, 'accepted');
-  assert.deepEqual(library.readLeadMagnet(projectsDir, magnet.id).videos, ['existing-video', path.basename(projectDir)]);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, magnet.id).videos, [folder]);
   assert.deepEqual(library.readLeadMagnet(projectsDir, magnet.id).codeWords, ['ГАЙД']);
   assert.deepEqual(offerStates(projectDir)[0], { offer: offerStates(projectDir)[0].offer, state: 'linked', leadMagnetId: magnet.id });
   const refresh = addDecision(projectDir, { type: 'promise-refresh', offerId: 'o-gayd', leadMagnetId: magnet.id }, { now: NOW, id: ID });
@@ -101,7 +101,7 @@ test('promise-keep acknowledges a disappeared offer with null', (t) => {
   fs.writeFileSync(offersPath(projectDir), JSON.stringify({ version: 1, offers: [] }));
   const card = (passport) => deriveLeadMagnetStatus({ passport: { ...passport, current: 1, approved: 1 }, newComments: 0, checkOk: true, currentQuote: null });
   assert.equal(card(library.readLeadMagnet(projectsDir, magnet.id)).status, 'waiting');
-  const decision = addDecision(projectDir, { type: 'promise-keep', offerId: 'o-gayd', leadMagnetId: magnet.id }, { now: NOW, id: ID });
+  const decision = addDecision(projectDir, { type: 'promise-keep', offerId: null, leadMagnetId: magnet.id }, { now: NOW, id: ID });
   assert.equal(decision.status, 'accepted');
   assert.deepEqual(library.readLeadMagnet(projectsDir, magnet.id).promise.acknowledged, ['']);
   assert.equal(card(library.readLeadMagnet(projectsDir, magnet.id)).status, 'ready');
@@ -120,7 +120,7 @@ test('promise-keep without a usable offer id cannot mutate a passport or write a
     { type: 'promise-keep', offerId: undefined, leadMagnetId: magnet.id },
     { type: 'promise-keep', offerId: null, leadMagnetId: magnet.id },
   ]) {
-    assert.throws(() => addDecision(projectDir, omitted, { now: NOW, id: ID }), /обязательн|формат/);
+    assert.throws(() => addDecision(projectDir, omitted, { now: NOW, id: ID }), /обязательн|формат|id обещания/);
     assert.deepEqual(fs.readFileSync(passportPath), before);
     assert.equal(fs.existsSync(path.join(projectDir, 'pult', 'lead-magnet.json')), false);
   }

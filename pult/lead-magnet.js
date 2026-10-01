@@ -524,7 +524,7 @@ async function lmRenderTab(container, variant, loadedState = null) {
   const next = el('p', 'detail__next', magnet.nextStep);
   next.dataset.lmStatus = '';
   side.append(badge, next);
-  if (magnet.promiseChanged) side.append(lmPromisePanel(variant, leadState, magnet));
+  if (magnet.promiseChanged) side.append(lmPromisePanel(variant, magnet));
   side.append(lmChecksPanel(magnet), comments.box, lmApprovePanel(magnet), lmFilesPanel(magnet));
   if (magnet.funnel) side.append(lmFunnelPanel(variant, magnet));
   side.append(lmHandoff(variant, magnet));
@@ -836,23 +836,35 @@ window.addEventListener('message', lmHandleMessage);
 
 // Обещание в ролике изменилось после того, как лид-магнит сделан. Агент сам ничего не
 // переделывает: решение – кнопка человека.
-function lmPromisePanel(variant, leadState, magnet) {
+function lmPromisePanel(variant, magnet) {
   const box = el('div', 'lm-panel lm-warning');
   box.dataset.lmPromiseChanged = '';
-  const offer = leadState.offers.find((item) => magnet.codeWords.includes(item.codeWord));
+  const { sourceFolder, current } = magnet.promise;
+  const source = { key: sourceFolder };
+  const linked = sourceFolder !== variant.folder;
   box.append(
     el('h3', '', '⚠️ Обещание в ролике изменилось'),
+    ...(linked ? [el('p', 'hint', `Обещание из ролика „${sourceFolder}“`)] : []),
     el('p', 'hint', 'Лид-магнит сделан под прежнюю цитату.'),
     el('blockquote', 'lm-quote lm-quote--old', `Было: «${magnet.promise.quote}»`),
-    el('blockquote', 'lm-quote', offer ? `Стало: «${offer.quote}»` : 'Стало: обещания в ролике больше нет'),
+    el('blockquote', 'lm-quote', current.state === 'changed' ? `Стало: «${current.quote}»`
+      : current.state === 'missing' ? 'Стало: обещания в ролике больше нет' : 'Стало: источник недоступен'),
   );
-  if (offer) {
+  if (current.state === 'unknown') {
+    box.append(el('p', 'hint', 'ролик-источник не найден или его обещания не читаются'));
+  } else if (current.state === 'changed' || current.state === 'missing') {
     const row = el('div', 'lm-row');
+    const refresh = button('Обновить под новое', () => lmDecide(source,
+      { type: 'promise-refresh', offerId: current.offerId, leadMagnetId: magnet.id }), 'primary');
+    if (current.state === 'missing') refresh.disabled = true;
     row.append(
-      button('Обновить под новое', () => lmDecide(variant, { type: 'promise-refresh', offerId: offer.offerId, leadMagnetId: magnet.id }), 'primary'),
-      button('Оставить как есть', () => lmDecide(variant, { type: 'promise-keep', offerId: offer.offerId, leadMagnetId: magnet.id }), 'secondary'),
+      refresh,
+      button('Оставить как есть', () => lmDecide(source,
+        { type: 'promise-keep', offerId: current.offerId, leadMagnetId: magnet.id }), 'secondary'),
     );
     box.append(row, el('p', 'hint', 'Агент сам ничего не переделывает: ваша кнопка – его задание.'));
+    if (current.state === 'missing') box.append(el('p', 'hint',
+      'Сначала в ролике должно появиться новое обещание – агент запишет его при монтаже'));
   }
   return box;
 }

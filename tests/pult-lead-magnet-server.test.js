@@ -112,6 +112,50 @@ test('the video state lists the offer, brand defaults and the approved library, 
   assert.equal((await get(session, '/api/lead-magnet?key=nope')).status, 404);
 });
 
+test('promise current distinguishes same, changed, missing and unavailable source without paths', async (t) => {
+  const projectsDir = root(t);
+  const id = approvedMagnet(projectsDir, 'other');
+  const source = path.join(projectsDir, 'other');
+  const { session } = await start(t, projectsDir);
+  const current = async () => (await get(session, '/api/lead-magnet?key=other')).json.magnets[0].promise;
+  assert.deepEqual(await current(), { quote: QUOTE, startSec: null, sourceFolder: 'other',
+    current: { state: 'same', quote: QUOTE, offerId: 'o-gayd' } });
+  fs.writeFileSync(path.join(source, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+  require('../scripts/lead-magnet/offers').addOffer(source, {
+    codeWord: 'ГАЙД', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+    units: require('./helpers/lead-magnet-fixtures').UNITS, sourceKind: 'script', scriptPath: 'script.txt',
+  });
+  assert.deepEqual((await current()).current, { state: 'changed', quote: 'и я пришлю пошаговую инструкцию и семь промптов', offerId: 'o-gayd' });
+  fs.writeFileSync(path.join(source, 'lead-magnet', 'offers.json'), JSON.stringify({ version: 1, offers: [] }));
+  assert.deepEqual((await current()).current, { state: 'missing', quote: null, offerId: null });
+  fs.renameSync(path.join(source, 'lead-magnet', 'offers.json'), path.join(source, 'lead-magnet', 'offers.hidden'));
+  assert.deepEqual((await current()).current, { state: 'unknown', quote: null, offerId: null });
+  const state = (await get(session, '/api/lead-magnet?key=other')).json;
+  assert.equal(JSON.stringify(state).includes(projectsDir), false);
+  assert.equal(state.magnets[0].promiseChanged, true);
+  assert.equal(id, state.magnets[0].id);
+});
+
+test('promise decisions reject a linked video key and missing keep requires null offer ID', async (t) => {
+  const projectsDir = root(t);
+  const id = approvedMagnet(projectsDir, 'other');
+  library.linkVideo(projectsDir, id, { folder: 'clip', codeWord: 'ГАЙД' });
+  const { session } = await start(t, projectsDir);
+  const body = { type: 'promise-keep', offerId: 'o-gayd', leadMagnetId: id };
+  assert.equal((await post(session, '/api/lead-magnet/decision', { key: 'clip', ...body })).status, 400);
+  assert.equal((await post(session, '/api/lead-magnet/decision', { key: 'clip', ...body, type: 'promise-refresh' })).status, 400);
+  assert.equal(fs.existsSync(path.join(projectsDir, 'clip', 'pult', 'lead-magnet.json')), false);
+  fs.writeFileSync(path.join(projectsDir, 'other', 'lead-magnet', 'offers.json'), JSON.stringify({ version: 1, offers: [] }));
+  assert.equal((await post(session, '/api/lead-magnet/decision', { key: 'other', ...body })).status, 400);
+  assert.equal((await post(session, '/api/lead-magnet/decision', { key: 'other', ...body, offerId: null })).status, 201);
+  assert.deepEqual(library.readLeadMagnet(projectsDir, id).promise.acknowledged, ['']);
+  assert.equal(readDecisions(path.join(projectsDir, 'other')).at(-1).offerId, null);
+  fs.renameSync(path.join(projectsDir, 'other', 'lead-magnet', 'offers.json'),
+    path.join(projectsDir, 'other', 'lead-magnet', 'offers.hidden'));
+  assert.equal((await post(session, '/api/lead-magnet/decision', { key: 'other', ...body, offerId: null })).status, 400);
+  assert.equal(readDecisions(path.join(projectsDir, 'other')).length, 1);
+});
+
 test('decisions need exact bodies; create reaches the inbox, decline does not', async (t) => {
   const projectsDir = root(t);
   const { session } = await start(t, projectsDir);

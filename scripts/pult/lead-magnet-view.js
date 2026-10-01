@@ -1,11 +1,14 @@
 const path = require('node:path');
 
+const { resolveProjectPath } = require('../project/workspace');
 const { countNewLeadMagnetComments } = require('../lead-magnet/comments');
 const { listLeadMagnets } = require('../lead-magnet/library');
 const { readOffers } = require('../lead-magnet/offers');
 const { revisionReadiness } = require('../lead-magnet/readiness');
 const { offerStates, readDecisions } = require('../lead-magnet/requests');
 const { deriveLeadMagnetStatus } = require('../lead-magnet/status');
+const { normalizeText } = require('../lead-magnet/text');
+const { isSafeName } = require('./names');
 const { STATUS_ORDER } = require('./status');
 
 const PENDING_STEP = 'Агент готовит лид-магнит';
@@ -26,22 +29,30 @@ function buildLeadMagnetIndex(projectsDir) {
   return { entries, broken, byFolder };
 }
 
-// undefined – сравнивать не с чем (не ролик-источник); null – обещание с этим
-// словом из ролика-источника пропало; строка – текущая цитата.
-function currentQuoteFor(projectsDir, passport) {
+// Читаем обещание только из проверенной папки источника. Отсутствующий оффер и
+// недоступный источник различаем: лишь для первого можно принять «Оставить как есть».
+function currentPromiseFor(projectsDir, passport) {
   const folder = passport.promise.sourceFolder;
-  if (!folder || !passport.promise.quote) return undefined;
+  const unknown = { state: 'unknown', quote: null, offerId: null };
+  if (!isSafeName(folder) || !passport.promise.quote) return unknown;
   let offers;
   try {
-    offers = readOffers(path.join(projectsDir, folder));
+    const source = resolveProjectPath(projectsDir, folder, { label: 'ролик-источник', mustExist: true, type: 'directory' });
+    resolveProjectPath(projectsDir, path.join(folder, 'lead-magnet', 'offers.json'),
+      { label: 'обещания ролика-источника', mustExist: true, type: 'file' });
+    offers = readOffers(source);
   } catch (_) {
-    return undefined;
+    return unknown;
   }
   // В исходном ролике linkVideo не должен подменять исчезнувшее первое обещание.
   // После promise update из другого ролика CLI выбирает первое доступное слово в порядке codeWords.
   const words = folder === passport.videos[0] ? passport.codeWords.slice(0, 1) : passport.codeWords;
   const match = words.map((word) => offers.find((offer) => offer.codeWord === word)).find(Boolean);
-  return match ? match.quote : null;
+  if (!match) return { state: 'missing', quote: null, offerId: null };
+  return {
+    state: normalizeText(match.quote) === normalizeText(passport.promise.quote) ? 'same' : 'changed',
+    quote: match.quote, offerId: match.id,
+  };
 }
 
 function magnetSummary(projectsDir, passport) {
@@ -52,7 +63,10 @@ function magnetSummary(projectsDir, passport) {
     const newComments = countNewLeadMagnetComments(projectsDir, passport.id);
     const needsCheck = passport.current !== null && passport.current !== passport.approved;
     const checkOk = needsCheck ? revisionReadiness(projectsDir, passport, passport.current).ok : false;
-    const status = deriveLeadMagnetStatus({ passport, newComments, checkOk, currentQuote: currentQuoteFor(projectsDir, passport) });
+    const currentPromise = currentPromiseFor(projectsDir, passport);
+    const status = currentPromise.state === 'unknown' && passport.promise.quote
+      ? { status: 'waiting', nextStep: 'Обещание в ролике изменилось – проверьте лид-магнит', approvable: false, promiseChanged: true }
+      : deriveLeadMagnetStatus({ passport, newComments, checkOk, currentQuote: currentPromise.quote });
     return { ...base, newComments, error: false, ...status, promiseChanged: Boolean(status.promiseChanged) };
   } catch (_) {
     return { ...base, newComments: 0, error: true, status: 'working', nextStep: BROKEN_STEP, approvable: false, promiseChanged: false };
@@ -126,4 +140,4 @@ function attachLeadMagnets(projectsDir, entries) {
   });
 }
 
-module.exports = { attachLeadMagnets, buildLeadMagnetIndex, folderLeadMagnet, magnetSummary };
+module.exports = { attachLeadMagnets, buildLeadMagnetIndex, currentPromiseFor, folderLeadMagnet, magnetSummary };

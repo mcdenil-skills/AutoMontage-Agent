@@ -69,6 +69,15 @@ git config core.hooksPath .githooks
 | `GET /lm/page?id=&rev=&ticket=` | страница «за стеклом» (без ключа пульта) |
 | `GET /media/lm-snapshot?id=&comment=&token=` | снимок места правки |
 
+Для каждого `magnet` в `GET /api/lead-magnet` поле `promise` содержит
+`{ quote, startSec, sourceFolder, current: { state, quote, offerId } }`. `sourceFolder` —
+только имя папки ролика-источника, без пути. `current.state` принимает `same`, `changed`,
+`missing` или `unknown`. Для `missing` и `unknown` текущие `quote` и `offerId` равны `null`:
+`missing` означает читаемый `offers.json` без исходного обещания, `unknown` — недоступный
+ролик-источник или файл обещаний. Решения `promise-refresh` и `promise-keep` записываются
+только по ключу ролика-источника; `promise-keep` принимает `offerId: null` лишь для
+подтверждённого `missing`. Это уточнение контракта одобрено владельцем для задачи 1B-2/6.
+
 ---
 
 ### Task 1: Общее правило готовности ревизии

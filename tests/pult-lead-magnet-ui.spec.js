@@ -269,6 +269,56 @@ test('a changed promise shows both quotes and «Оставить как есть
   await expect(page.locator('[data-lm-promise-changed]')).toHaveCount(0);
 });
 
+test('a missing source offer keeps the old promise and offers only Keep', async ({ page }) => {
+  await startWith((dir) => {
+    approvedIn(dir, 'clip');
+    fs.writeFileSync(path.join(dir, 'clip', 'lead-magnet', 'offers.json'), JSON.stringify({ version: 1, offers: [] }));
+  });
+  await openLeadTab(page);
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText(`Было: «${QUOTE}»`);
+  await expect(warning).toContainText('Стало: обещания в ролике больше нет');
+  await expect(warning.getByRole('button', { name: 'Обновить под новое' })).toBeDisabled();
+  await expect(warning).toContainText('Сначала в ролике должно появиться новое обещание');
+  await warning.getByRole('button', { name: 'Оставить как есть' }).click();
+  await expect(page.locator('[data-lm-promise-changed]')).toHaveCount(0);
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит утверждён');
+  expect(readDecisions(path.join(projectsDir, 'clip')).at(-1).offerId).toBeNull();
+});
+
+test('a linked video shows its source promise and writes the decision to the source', async ({ page }) => {
+  await startWith((dir) => {
+    addVideoWithOffer(dir, { folder: 'source', name: 'Ролик-источник' });
+    const id = approvedIn(dir, 'source');
+    library.linkVideo(dir, id, { folder: 'clip', codeWord: 'ГАЙД' });
+    const source = path.join(dir, 'source');
+    fs.writeFileSync(path.join(source, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+    addOffer(source, { codeWord: 'ГАЙД', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+      units: UNITS, sourceKind: 'script', scriptPath: 'script.txt' });
+  });
+  await openLeadTab(page);
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText('Обещание из ролика „source“');
+  await expect(warning).toContainText('Стало: «и я пришлю пошаговую инструкцию и семь промптов»');
+  await warning.getByRole('button', { name: 'Оставить как есть' }).click();
+  await expect(warning).toHaveCount(0);
+  expect(readDecisions(path.join(projectsDir, 'source')).at(-1).type).toBe('promise-keep');
+  expect(fs.existsSync(path.join(projectsDir, 'clip', 'pult', 'lead-magnet.json'))).toBe(false);
+});
+
+test('an unavailable source explains the issue and offers no decision buttons', async ({ page }) => {
+  await startWith((dir) => {
+    addVideoWithOffer(dir, { folder: 'source' });
+    const id = approvedIn(dir, 'source');
+    library.linkVideo(dir, id, { folder: 'clip', codeWord: 'ГАЙД' });
+    fs.renameSync(path.join(dir, 'source'), path.join(dir, 'source-hidden'));
+  });
+  await openLeadTab(page);
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText('ролик-источник не найден');
+  await expect(warning.locator('button')).toHaveCount(0);
+});
+
 test('the lead tab shows the sandboxed page on desktop and phone width', async ({ page }) => {
   await startWith(withDraft);
   await openLeadTab(page);
