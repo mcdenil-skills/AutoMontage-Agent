@@ -25,10 +25,11 @@ allow-scripts`, без сети (`connect-src 'none'`), встраивание �
 
 ## Подготовка
 
-- [ ] Ветка от свежего `main` (часть 1A уже влита, merge `3c783af`):
+- [ ] Ветка от ветки с планами (в ней уже есть влитая часть 1A, merge `3c783af`). Работай в основной
+  папке проекта: 1C идёт параллельно в отдельной копии (`git worktree`), в эту папку она не заходит.
 
 ```bash
-git switch main && git pull --ff-only && git switch -c feat/lead-magnet-pult-server
+git switch docs/lead-magnet-1b-1c-plans && git switch -c feat/lead-magnet-pult-server
 git config core.hooksPath .githooks
 ```
 

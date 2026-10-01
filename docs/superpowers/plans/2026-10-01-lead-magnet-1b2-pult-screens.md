@@ -28,11 +28,11 @@
 
 ## Подготовка
 
-- [ ] Ветка от `main` **после слияния 1B-1**:
+- [ ] Продолжай в той же ветке `feat/lead-magnet-pult-server` сразу после задачи 9 плана 1B-1:
+  экраны опираются на её маршруты, а часть 1B уходит одним PR (сервер + экраны).
 
 ```bash
-git switch main && git pull --ff-only && git switch -c feat/lead-magnet-pult-screens
-git config core.hooksPath .githooks
+git switch feat/lead-magnet-pult-server
 ```
 
 - [ ] Базовая линия: `npm test` и `npm run test:review-ui` – зелёные (Chromium установлен:

@@ -30,12 +30,15 @@
 
 ## Подготовка
 
-- [ ] Ветка от свежего `main` (с влитой 1A):
+- [ ] Отдельная копия папки (`git worktree`): в основной папке параллельно идёт 1B, две ветки в
+  одной папке одновременно невозможны. Ветка – от ветки с планами (в ней влитая 1A).
 
 ```bash
-git switch main && git pull --ff-only && git switch -c feat/lead-magnet-agent-skill
-git config core.hooksPath .githooks
+git worktree add ../AutoMontage-Agent-lm-1c -b feat/lead-magnet-agent-skill docs/lead-magnet-1b-1c-plans
+cd ../AutoMontage-Agent-lm-1c && npm ci && git config core.hooksPath .githooks
 ```
+
+  Дальше все команды – в `../AutoMontage-Agent-lm-1c`. Задачи 3 и 8 – только после слияния 1B.
 
 - [ ] Базовая линия: `npm test` – зелёный.
 
