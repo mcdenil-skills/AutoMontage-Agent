@@ -144,7 +144,7 @@ const COMMANDS = {
   'reference shot': async (flags, write) => {
     const result = await shootReference(flags.projectsDir, need(flags, 'id'), { url: flags.url || null, file: flags.file || null });
     write(`Снимки: ${result.files.join(', ')}`);
-    write(`Текст страницы (начало): ${result.text.slice(0, 600)}`);
+    write(`Текст страницы (начало): ${result.text}`);
   },
   check: async (flags, write) => {
     const report = await checkRevision(flags.projectsDir, need(flags, 'id'), Number(need(flags, 'revision')));

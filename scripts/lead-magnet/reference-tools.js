@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { resolveProjectPath } = require('../project/workspace');
+const { captureProjectDirectoryGuard, resolveProjectPath, stageOwnedSiblingFile } = require('../project/workspace');
 const { ensureDirectory, hashBytes, readJsonIfExists, writeJsonAtomic } = require('../pult/files');
 const { leadMagnetDir, readLeadMagnet } = require('./library');
 const { normalizeReferenceUrl, REFS_DIR } = require('./references');
@@ -69,7 +69,18 @@ async function shoot(context, url, dir, prefix) {
       await page.goto(url, { waitUntil: 'load', timeout: 30000 });
       const height = Math.max(1, Math.min(MAX_SHOT_HEIGHT, await page.evaluate(() => document.documentElement.scrollHeight)));
       const name = `${prefix}-${view}.png`;
-      await page.screenshot({ path: path.join(dir, name), clip: { x: 0, y: 0, width, height } });
+      const destination = resolveProjectPath(dir, name, { label: 'reference screenshot', type: 'file' });
+      const guard = captureProjectDirectoryGuard(dir, destination, fs, 'reference screenshot');
+      const bytes = await page.screenshot({ clip: { x: 0, y: 0, width, height } });
+      resolveProjectPath(dir, name, { label: 'reference screenshot', type: 'file' });
+      const stage = stageOwnedSiblingFile(destination, bytes, {
+        purpose: 'lead-reference-shot', assertParentCurrent: guard.assertCurrent, verifyPublishedIdentity: true,
+      });
+      try {
+        stage.commitReplace();
+      } finally {
+        stage.cleanupTemp();
+      }
       files.push(name);
       if (!text) text = (await page.evaluate(() => document.body ? document.body.innerText : '')).slice(0, TEXT_LIMIT);
     } finally {

@@ -77,6 +77,36 @@ test('an HTML reference is shot offline with scripts off and only from reference
   await assert.rejects(shootReference(projectsDir, id, { file: 'untrusted.html', launch }), /references/);
 });
 
+test('a planted screenshot symlink cannot redirect the write outside references', async (t) => {
+  const { base, projectsDir, folder, id, stored } = magnetWith(t, [HTML_REF]);
+  importReference(projectsDir, id, { folder, storedPath: stored[0].path });
+  const file = `references/${path.basename(stored[0].path)}`;
+  const origin = file;
+  const prefix = `shot-${require('../scripts/pult/files').hashBytes(Buffer.from(origin)).slice(0, 12)}`;
+  const outside = path.join(base, 'outside.png');
+  fs.writeFileSync(outside, 'sentinel');
+  const destination = path.join(library.leadMagnetDir(projectsDir, id), 'references', `${prefix}-desktop.png`);
+  fs.symlinkSync(outside, destination);
+  await assert.rejects(shootReference(projectsDir, id, { file, launch }), /reference|symlink|symbolic link|project workspace/i);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'sentinel');
+  assert.equal(readProvenance(projectsDir, id).length, 1);
+});
+
+test('reference shot CLI returns text past character 600 up to the 4000-character bound', async (t) => {
+  const marker = 'TEXT_AFTER_SIX_HUNDRED';
+  const html = Buffer.from(`<!doctype html><html><body><p>${'A'.repeat(800)}${marker}${'B'.repeat(4000)}</p></body></html>`);
+  const { projectsDir, folder, id, stored } = magnetWith(t, [html]);
+  importReference(projectsDir, id, { folder, storedPath: stored[0].path });
+  const lines = [];
+  const code = await main(['reference', 'shot', '--projects-dir', projectsDir, '--id', id,
+    '--file', `references/${path.basename(stored[0].path)}`], { write: (line) => lines.push(line) });
+  assert.equal(code, 0, lines.join('\n'));
+  const textLine = lines.find((line) => line.startsWith('Текст страницы (начало): '));
+  assert.ok(textLine);
+  assert.match(textLine, new RegExp(marker));
+  assert.equal(textLine.slice('Текст страницы (начало): '.length).length, 4000);
+});
+
 test('a link is shot at desktop and phone width and recorded', async (t) => {
   const server = http.createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
