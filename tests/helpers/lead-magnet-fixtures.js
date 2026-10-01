@@ -2,7 +2,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { makePultRoot } = require('./pult-projects');
+const { inputFingerprint } = require('../../scripts/lead-magnet/check');
+const { addOffer } = require('../../scripts/lead-magnet/offers');
+const { hashFile } = require('../../scripts/pult/files');
+const { addDraftProject, makePultRoot } = require('./pult-projects');
 
 const WORDS = [
   { start: 58, end: 64, text: 'Напишите ГАЙД в комментариях, и я пришлю пошаговую инструкцию и пять промптов.', words: [
@@ -70,4 +73,53 @@ function writeRevision(dir, { page = goodPage(), texts = { dm: 'Привет', t
   fs.writeFileSync(path.join(dir, 'facts.json'), JSON.stringify({ version: 1, checkedAt: '2026-09-30T12:00:00.000Z', items: facts }));
 }
 
-module.exports = { PARAMS, QUOTE, UNITS, WORDS, goodPage, makeLeadMagnet, makeVideoProject, writeRevision };
+// Настоящий PNG 1×1: снимкам правок нужна сигнатура PNG, а не текст.
+const PNG_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+const CHECK_IDS = ['promise', 'cta', 'phone-width', 'copy-buttons', 'logo', 'header', 'self-contained', 'blocks', 'texts', 'facts'];
+
+// Публикует ревизию с отчётом проверки, записанным вручную: тестам пульта и утверждения
+// нужна логика, а не настоящий Chromium (его проверяет tests/lead-magnet-check.test.js).
+function publishCheckedRevision(projectsDir, id, { ok = true, facts = [], page } = {}) {
+  const { n, dir } = library.startRevision(projectsDir, id);
+  writeRevision(dir, page === undefined ? { facts } : { facts, page });
+  for (const shot of ['desktop.png', 'phone-390.png']) fs.writeFileSync(path.join(dir, 'qa', shot), PNG_BYTES);
+  const pageSha256 = hashFile(path.join(dir, 'page.html'));
+  const factsSha256 = hashFile(path.join(dir, 'facts.json'));
+  fs.writeFileSync(path.join(dir, 'qa', 'check.json'), JSON.stringify({
+    version: 1,
+    checkedAt: '2026-10-01T12:00:00.000Z',
+    pageSha256,
+    factsSha256,
+    inputSha256: inputFingerprint(projectsDir, dir, library.readLeadMagnet(projectsDir, id)),
+    ok,
+    items: CHECK_IDS.map((itemId) => ({ id: itemId, ok, message: 'проверено' })),
+  }));
+  library.publishRevision(projectsDir, id, n);
+  return { n, dir, pageSha256 };
+}
+
+// Ролик пульта (настоящий project.json с preview) и обещание из сценария: расшифровка тестам
+// пульта не нужна, поэтому источник обещания – script.txt внутри папки ролика.
+function addVideoWithOffer(projectsDir, { folder, name = folder, approve = false, final = false, codeWord = 'ГАЙД' } = {}) {
+  addDraftProject(projectsDir, { folder, name, approve, final });
+  const projectDir = path.join(projectsDir, folder);
+  fs.writeFileSync(path.join(projectDir, 'script.txt'), `Финал ролика. ${QUOTE}.`);
+  addOffer(projectDir, {
+    codeWord, kind: 'comment-keyword', quote: QUOTE, units: UNITS, sourceKind: 'script', scriptPath: 'script.txt', audience: 'новички',
+  });
+  return projectDir;
+}
+
+// Лид-магнит, привязанный к ролику пульта.
+function addLeadMagnetFor(projectsDir, folder) {
+  return library.createLeadMagnet(projectsDir, {
+    codeWord: 'ГАЙД', title: 'Сайт без кода',
+    promise: { quote: QUOTE, startSec: null, endSec: null, sourceFolder: folder },
+    units: UNITS, params: PARAMS, videoFolder: folder,
+  }).id;
+}
+
+module.exports = {
+  PARAMS, PNG_BYTES, QUOTE, UNITS, WORDS,
+  addLeadMagnetFor, addVideoWithOffer, goodPage, makeLeadMagnet, makeVideoProject, publishCheckedRevision, writeRevision,
+};

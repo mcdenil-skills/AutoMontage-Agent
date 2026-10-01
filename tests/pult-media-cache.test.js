@@ -1,9 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
-const { extractFrame, probeMedia, thumbnailFor } = require('../scripts/pult/media-cache');
+const { cropImage, extractFrame, probeMedia, thumbnailFor } = require('../scripts/pult/media-cache');
 const { makePultRoot } = require('./helpers/pult-projects');
 
 const PROBE = JSON.stringify({
@@ -279,4 +280,32 @@ test('a zero-byte cached thumbnail is treated as a miss and re-rendered', (t) =>
   assert.equal(again, target);
   assert.equal(calls, 2);
   assert.equal(fs.statSync(target).size, 3);
+});
+
+function snapshotDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-crop-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+test('cropImage cuts a clamped rectangle and scales it down', (t) => {
+  const dir = snapshotDir(t);
+  const calls = [];
+  const out = path.join(dir, 'snap.png');
+  const ok = cropImage(path.join(dir, 'shot.png'), { x: -5, y: 10.4, w: 5000, h: 300 }, out, {
+    captureImpl: (command, args) => { calls.push(args); fs.writeFileSync(args.at(-1), 'png'); return { stdout: '' }; },
+  });
+  assert.equal(ok, true);
+  assert.equal(calls[0][calls[0].indexOf('-vf') + 1], "crop='min(1280,iw-0)':'min(300,ih-10)':0:10,scale='min(640,iw)':-2");
+});
+
+test('cropImage refuses tiny or invalid rectangles and cleans up after a failure', (t) => {
+  const dir = snapshotDir(t);
+  const out = path.join(dir, 'snap.png');
+  const never = () => { throw new Error('ffmpeg must not run'); };
+  assert.equal(cropImage(path.join(dir, 'shot.png'), { x: 0, y: 0, w: 2, h: 2 }, out, { captureImpl: never }), false);
+  assert.equal(cropImage(path.join(dir, 'shot.png'), { x: Number.NaN, y: 0, w: 100, h: 100 }, out, { captureImpl: never }), false);
+  const failing = (command, args) => { fs.writeFileSync(args.at(-1), 'half'); throw new Error('ffmpeg failed'); };
+  assert.equal(cropImage(path.join(dir, 'shot.png'), { x: 0, y: 0, w: 100, h: 100 }, out, { captureImpl: failing }), false);
+  assert.equal(fs.existsSync(out), false);
 });

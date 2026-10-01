@@ -9,6 +9,8 @@ const { buildCards, cardIdFor } = require('./cards');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalog');
 const { addComment, deleteComment, readComments } = require('./comments');
 const { hashFile } = require('./files');
+const { attachLeadMagnets } = require('./lead-magnet-view');
+const { createLeadMagnetRoutes } = require('./lead-magnet-routes');
 const {
   PultRequestError,
   hasUnsafePath,
@@ -88,6 +90,7 @@ async function startPultServer({
   captureImpl = null,
   onIdle = () => {},
   logger = console,
+  env = process.env,
 } = {}) {
   const resolvedRoot = path.resolve(root);
   const resolvedProjectsDir = path.resolve(projectsDir);
@@ -111,6 +114,19 @@ async function startPultServer({
     if (typeof key !== 'string' || !ENTRY_KEY.test(key)) return null;
     return scanFolder(resolvedProjectsDir, folderFromKey(key)).entries.find((entry) => entry.key === key) || null;
   }
+
+  // Маршруты лид-магнита используют проверенные функции поиска ролика из пульта.
+  const leadMagnet = createLeadMagnetRoutes({
+    projectsDir: resolvedProjectsDir,
+    getOrigin: () => origin,
+    findEntry,
+    projectDirOf,
+    mediaOptions,
+    revealImpl,
+    logger,
+    errorName,
+    env,
+  });
 
   function entryFile(entry, relative) {
     try {
@@ -215,11 +231,14 @@ async function startPultServer({
       thumbUrl: videoFile ? `/media/thumb?${versioned}` : null,
       meta: playable ? probeMedia(resolvedProjectsDir, videoFile, mediaOptions) : null,
       history: entry.history.map((item, index) => ({ label: item.label, url: `/media/history?${query}&index=${index}` })),
+      // Лёгкая сводка лид-магнита (lead-magnet-view.js): без путей и хешей.
+      leadMagnet: entry.leadMagnet || null,
     };
   }
 
   function browserCards() {
-    const sections = buildCards(scanProjects({ projectsDir: resolvedProjectsDir }), {
+    const scan = scanProjects({ projectsDir: resolvedProjectsDir });
+    const sections = buildCards({ ...scan, entries: attachLeadMagnets(resolvedProjectsDir, scan.entries) }, {
       archived: readPultState(resolvedProjectsDir).archived,
     });
     const mapCard = (card) => ({ ...card, variants: card.variants.map(browserVariant) });
@@ -311,6 +330,16 @@ async function startPultServer({
 
   function handleMedia(url, request, response) {
     const head = request.method === 'HEAD';
+    if (url.pathname === '/media/lm-snapshot') {
+      const snapshot = leadMagnet.snapshotFile(url);
+      if (!snapshot) {
+        sendError(response, 404, head);
+        return;
+      }
+      serveFile(request, response, snapshot);
+      return;
+    }
+
     const entry = findEntry(url.searchParams.get('key'));
     if (!entry) {
       sendError(response, 404, head);
@@ -513,7 +542,7 @@ async function startPultServer({
     const { pathname } = url;
     // Закрывающийся пульт больше не принимает работу: страница увидит 503, а не
     // ответ сервера, который через миг исчезнет.
-    if (closing && (pathname.startsWith('/api/') || pathname.startsWith('/media/'))) {
+    if (closing && (pathname.startsWith('/api/') || pathname.startsWith('/media/') || pathname.startsWith('/lm/'))) {
       request.resume();
       sendError(response, 503, head);
       return;
@@ -525,6 +554,12 @@ async function startPultServer({
         return;
       }
       sendJson(response, 200, { app: 'automontage-pult', version: 1 });
+      return;
+    }
+    // Страница лид-магнита для iframe: без ключа пульта, по собственному пропуску
+    // (lead-magnet-routes.js, handlePage). Проверка Host выше уже пройдена.
+    if (pathname === '/lm/page') {
+      leadMagnet.handlePage(url, request, response);
       return;
     }
     if (safeMethod && serveStatic(resolvedRoot, pathname, request, response)) return;
@@ -570,6 +605,10 @@ async function startPultServer({
         throw new PultRequestError(409, 'COMMENTS_BROKEN', COMMENTS_BROKEN_MESSAGE);
       }
       sendJson(response, 200, { comments: comments.map((comment) => browserComment(entry, comment)) });
+      return;
+    }
+    if (pathname === '/api/lead-magnet' || pathname.startsWith('/api/lead-magnet/')) {
+      await leadMagnet.handleApi(pathname, url, request, response);
       return;
     }
     if (request.method !== 'POST') {
