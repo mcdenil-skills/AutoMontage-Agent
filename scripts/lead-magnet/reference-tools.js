@@ -59,7 +59,7 @@ function importReference(projectsDir, id, { folder, storedPath, now = () => new 
   return target;
 }
 
-async function shoot(context, url, dir, prefix) {
+async function shoot(context, url, projectsDir, dir, prefix, guard) {
   const files = [];
   let text = '';
   for (const [view, width] of [['desktop', 1280], ['phone', 390]]) {
@@ -69,10 +69,12 @@ async function shoot(context, url, dir, prefix) {
       await page.goto(url, { waitUntil: 'load', timeout: 30000 });
       const height = Math.max(1, Math.min(MAX_SHOT_HEIGHT, await page.evaluate(() => document.documentElement.scrollHeight)));
       const name = `${prefix}-${view}.png`;
-      const destination = resolveProjectPath(dir, name, { label: 'reference screenshot', type: 'file' });
-      const guard = captureProjectDirectoryGuard(dir, destination, fs, 'reference screenshot');
+      guard.assertCurrent();
+      const relative = path.relative(projectsDir, path.join(dir, name));
+      const destination = resolveProjectPath(projectsDir, relative, { label: 'reference screenshot', type: 'file' });
       const bytes = await page.screenshot({ clip: { x: 0, y: 0, width, height } });
-      resolveProjectPath(dir, name, { label: 'reference screenshot', type: 'file' });
+      guard.assertCurrent();
+      resolveProjectPath(projectsDir, relative, { label: 'reference screenshot', type: 'file' });
       const stage = stageOwnedSiblingFile(destination, bytes, {
         purpose: 'lead-reference-shot', assertParentCurrent: guard.assertCurrent, verifyPublishedIdentity: true,
       });
@@ -117,6 +119,8 @@ async function shootReference(projectsDir, id, {
     origin = file;
   }
   const prefix = `shot-${hashBytes(Buffer.from(origin)).slice(0, 12)}`;
+  // Snapshot every ancestor before browser work can yield to a directory swap.
+  const guard = captureProjectDirectoryGuard(projectsDir, path.join(dir, `${prefix}-desktop.png`), fs, 'reference screenshot');
   const browser = await launch();
   let result;
   try {
@@ -124,13 +128,14 @@ async function shootReference(projectsDir, id, {
     try {
       if (htmlBytes) await context.route('**/*', (route) => (route.request().url() === target
         ? route.fulfill({ contentType: 'text/html; charset=utf-8', body: htmlBytes }) : route.abort()));
-      result = await shoot(context, target, dir, prefix);
+      result = await shoot(context, target, projectsDir, dir, prefix, guard);
     } finally {
       await context.close();
     }
   } finally {
     await browser.close();
   }
+  guard.assertCurrent();
   const files = result.files.map((name) => `references/${name}`);
   addProvenance(projectsDir, id, { file: files.join(', '), source: url ? 'url' : 'html', origin, sha256: null, at: now().toISOString() });
   return { files, text: result.text };

@@ -65,11 +65,18 @@ test('reference import is available through the agent CLI', async (t) => {
 });
 
 test('an HTML reference is shot offline with scripts off and only from references', async (t) => {
-  const { projectsDir, folder, id, stored } = magnetWith(t, [HTML_REF]);
+  let requests = 0;
+  const server = http.createServer((_request, response) => { requests += 1; response.end('external'); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const html = Buffer.from(HTML_REF.toString().replace('</body>',
+    `<img src="http://127.0.0.1:${server.address().port}/external.png"></body>`));
+  const { projectsDir, folder, id, stored } = magnetWith(t, [html]);
   importReference(projectsDir, id, { folder, storedPath: stored[0].path });
   const result = await shootReference(projectsDir, id, { file: `references/${path.basename(stored[0].path)}`, launch });
   assert.match(result.text, /Карточки шагов/);
   assert.doesNotMatch(result.text, /СКРИПТ ВЫПОЛНИЛСЯ/);
+  assert.equal(requests, 0, 'HTML resources must never reach the local HTTP server');
   for (const file of result.files) assert.ok(fs.statSync(path.join(library.leadMagnetDir(projectsDir, id), file)).size > 0);
   assert.equal(readProvenance(projectsDir, id).at(-1).source, 'html');
   const outside = path.join(library.leadMagnetDir(projectsDir, id), 'untrusted.html');
@@ -90,6 +97,33 @@ test('a planted screenshot symlink cannot redirect the write outside references'
   await assert.rejects(shootReference(projectsDir, id, { file, launch }), /reference|symlink|symbolic link|project workspace/i);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'sentinel');
   assert.equal(readProvenance(projectsDir, id).length, 1);
+});
+
+test('an ancestor swapped during browser launch cannot publish screenshots outside projects', async (t) => {
+  const { base, projectsDir, folder, id, stored } = magnetWith(t, [HTML_REF]);
+  importReference(projectsDir, id, { folder, storedPath: stored[0].path });
+  const file = `references/${path.basename(stored[0].path)}`;
+  const root = library.leadMagnetDir(projectsDir, id);
+  const outside = path.join(base, 'outside-magnet');
+  fs.mkdirSync(path.join(outside, 'references'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'references', 'sentinel'), 'unchanged');
+  let error;
+  try {
+    await shootReference(projectsDir, id, { file, launch: async () => {
+      fs.renameSync(root, `${root}-original`);
+      fs.symlinkSync(outside, root, 'dir');
+      return launch();
+    } });
+  } catch (caught) { error = caught; }
+  assert.deepEqual(fs.readdirSync(path.join(outside, 'references')), ['sentinel'],
+    'no screenshot or temporary file may be written through the swapped ancestor');
+  assert.equal(fs.readFileSync(path.join(outside, 'references', 'sentinel'), 'utf8'), 'unchanged');
+  assert.match(error?.message || '', /reference|symlink|symbolic link|directory identity|project workspace/i);
+  fs.unlinkSync(root);
+  fs.renameSync(`${root}-original`, root);
+  const result = await shootReference(projectsDir, id, { file, launch });
+  assert.equal(result.files.length, 2);
+  for (const shot of result.files) assert.ok(fs.statSync(path.join(root, shot)).size > 0);
 });
 
 test('reference shot CLI returns text past character 600 up to the 4000-character bound', async (t) => {
