@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { addOffer } = require('../scripts/lead-magnet/offers');
+const { main: leadMagnetCli } = require('../scripts/lead-magnet/cli');
 const { linkVideo } = require('../scripts/lead-magnet/library');
 const { addDecision } = require('../scripts/lead-magnet/requests');
 const { attachLeadMagnets, buildLeadMagnetIndex, folderLeadMagnet } = require('../scripts/pult/lead-magnet-view');
@@ -71,6 +72,27 @@ test('an unrelated linked code word cannot replace the source promise', (t) => {
     units: UNITS, sourceKind: 'script', scriptPath: 'script.txt',
   });
   fs.writeFileSync(path.join(projectDir, 'lead-magnet', 'offers.json'), JSON.stringify({ version: 1, offers: [bonus] }));
+  assert.equal(view(projectsDir).magnets[0].promiseChanged, true);
+});
+
+test('promise update can move the source to a linked video with a later code word', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addVideoWithOffer(projectsDir, { folder: 'clip' });
+  const linkedDir = addVideoWithOffer(projectsDir, { folder: 'linked', codeWord: 'БОНУС' });
+  const id = addLeadMagnetFor(projectsDir, 'clip');
+  linkVideo(projectsDir, id, { folder: 'linked', codeWord: 'БОНУС' });
+  const output = [];
+  assert.equal(await leadMagnetCli(['promise', 'update', '--projects-dir', projectsDir,
+    '--id', id, '--from', 'linked'], { write: (line) => output.push(line) }), 0, output.join('\n'));
+  publishCheckedRevision(projectsDir, id);
+  const current = view(projectsDir);
+  assert.equal(current.magnets[0].promiseChanged, false);
+  assert.deepEqual([current.status, current.magnets[0].approvable], ['waiting', true]);
+  fs.writeFileSync(path.join(linkedDir, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+  addOffer(linkedDir, {
+    codeWord: 'БОНУС', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+    units: UNITS, sourceKind: 'script', scriptPath: 'script.txt',
+  });
   assert.equal(view(projectsDir).magnets[0].promiseChanged, true);
 });
 

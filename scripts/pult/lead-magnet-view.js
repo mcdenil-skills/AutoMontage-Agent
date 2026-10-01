@@ -37,9 +37,10 @@ function currentQuoteFor(projectsDir, passport) {
   } catch (_) {
     return undefined;
   }
-  // Первое слово задано при создании паспорта; linkVideo дописывает слова других роликов.
-  // По ним нельзя подменять исчезнувшее обещание ролика-источника.
-  const match = offers.find((offer) => offer.codeWord === passport.codeWords[0]);
+  // В исходном ролике linkVideo не должен подменять исчезнувшее первое обещание.
+  // После promise update из другого ролика CLI выбирает первое доступное слово в порядке codeWords.
+  const words = folder === passport.videos[0] ? passport.codeWords.slice(0, 1) : passport.codeWords;
+  const match = words.map((word) => offers.find((offer) => offer.codeWord === word)).find(Boolean);
   return match ? match.quote : null;
 }
 
