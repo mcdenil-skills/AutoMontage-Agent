@@ -134,6 +134,16 @@ test('the wizard needs the promise checkbox and sends parameters with an uploade
   expect(create.params.promiseConfirmed).toBe(true);
 });
 
+test('the wizard send action stays in the viewport at 700px height', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await startWith();
+  await openClip(page);
+  await page.locator('[data-lm-offer] button', { hasText: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await expect(wizard).toBeVisible();
+  await expect(wizard.locator('[data-lm-send]')).toBeInViewport();
+});
+
 test('a broken upload is explained inside the wizard', async ({ page }) => {
   await startWith();
   await openClip(page);
