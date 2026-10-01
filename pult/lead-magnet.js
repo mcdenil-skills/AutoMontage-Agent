@@ -437,15 +437,38 @@ async function lmCopyText(text) {
   }
 }
 
-async function lmRenderTab(container, variant) {
+function lmTabFingerprint(leadState) {
+  return JSON.stringify({ error: leadState.error, pending: leadState.pending, magnets: leadState.magnets });
+}
+
+async function lmPollTab(container, variant) {
+  if (!container || !container.isConnected) return;
+  const cardId = state.openCardId;
+  const request = (container.lmPollRequest || 0) + 1;
+  container.lmPollRequest = request;
+  const leadState = await lmLoadState(variant);
+  if (!container.isConnected || document.querySelector('.lm-tab') !== container
+    || state.openCardId !== cardId || state.detailTab !== 'lead'
+    || shownDetail.key !== variant.key || container.lmPollRequest !== request) return;
+  const fingerprint = lmTabFingerprint(leadState);
+  if (fingerprint !== container.lmFingerprint) {
+    lmRenderTab(container, variant, leadState);
+    notify('Лид-магнит обновился.');
+  }
+}
+
+async function lmRenderTab(container, variant, loadedState = null) {
   container.replaceChildren(el('p', 'hint', 'Загружаю лид-магнит…'));
   let leadState;
   try {
-    leadState = await lmLoadState(variant);
+    leadState = loadedState || await lmLoadState(variant);
   } catch (error) {
+    if (!container.isConnected) return;
     container.replaceChildren(el('p', 'lm-error', error.message));
     return;
   }
+  if (!container.isConnected) return;
+  container.lmFingerprint = lmTabFingerprint(leadState);
   lmActive = null;
   container.replaceChildren();
   if (leadState.error) container.append(el('p', 'lm-error', leadState.error));
@@ -611,22 +634,31 @@ function lmApprovePanel(magnet) {
   const viewed = lmChoice('checkbox', 'lm-viewed', 'yes', 'Я просмотрел страницу на компьютере и телефоне и все тексты', false);
   const approve = el('button', 'primary', 'Утверждаю лид-магнит');
   approve.type = 'button';
-  approve.disabled = true;
-  viewed.input.addEventListener('change', () => { approve.disabled = !viewed.input.checked; });
+  let submitting = false;
+  let locked = false;
+  const update = () => { approve.disabled = submitting || locked || !viewed.input.checked; };
+  update();
+  viewed.input.addEventListener('change', update);
   approve.addEventListener('click', async () => {
-    approve.disabled = true;
+    if (submitting || locked || approve.disabled) return;
+    submitting = true;
+    update();
     try {
       await api('/api/lead-magnet/approve', { method: 'POST', body: { id: magnet.id, ticket, confirmViewed: true } });
+      locked = true;
       notify('Лид-магнит утверждён. Файлы и тексты – в блоке «Файлы».');
       await refresh();
     } catch (error) {
       if (error.code === 'LM_CHANGED') {
+        locked = true;
         await refresh();
         notify('Появилась новая версия лид-магнита – посмотрите её перед утверждением.', 'error');
         return;
       }
       notify(error.message, 'error');
-      approve.disabled = !viewed.input.checked;
+    } finally {
+      submitting = false;
+      update();
     }
   });
   box.append(viewed.wrap, approve);

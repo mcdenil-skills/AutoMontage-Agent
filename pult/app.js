@@ -23,6 +23,12 @@ let lastCardsJson = null;
 // новую версию целиком. videoUrl несёт метку версии файла (v=…), поэтому новый preview
 // меняет его даже по тому же ключу.
 const shownDetail = { key: '', videoUrl: '', ticket: '', leadSignature: '' };
+const videoDrafts = new Map();
+
+function rememberVideoDraft() {
+  const field = document.querySelector('[data-comment-text]');
+  if (field && shownDetail.key) videoDrafts.set(shownDetail.key, field.value);
+}
 // true, пока в строке уведомлений висит ошибка, поставленная самим refresh: успешный
 // опрос убирает только её, а не ошибки действий человека.
 let refreshErrorShown = false;
@@ -579,6 +585,7 @@ function commentsBlock(variant, getVideo) {
         body: { key: variant.key, timeSec: currentSecond(), text: text.value },
       });
       text.value = '';
+      videoDrafts.delete(variant.key);
       await loadComments(variant, list, getVideo);
       notify('Правка сохранена. Когда закончите, скопируйте фразу для агента.');
       await refresh({ keepDetail: true });
@@ -606,6 +613,8 @@ function detailTabs(variant) {
     tab.type = 'button';
     tab.setAttribute('aria-pressed', String(state.detailTab === key));
     tab.addEventListener('click', () => {
+      if (state.detailTab === key) return;
+      if (state.detailTab === 'video') rememberVideoDraft();
       state.detailTab = key;
       renderDetail();
     });
@@ -634,6 +643,7 @@ function renderDetail() {
       tab.type = 'button';
       tab.setAttribute('aria-pressed', String(option.key === variant.key));
       tab.addEventListener('click', () => {
+        if (state.detailTab === 'video') rememberVideoDraft();
         state.variantKey = option.key;
         renderDetail();
       });
@@ -763,6 +773,8 @@ function renderDetail() {
   lmRenderBanner(offerSlot, variant, getVideo);
   layout.append(playerColumn, side);
   view.append(layout);
+  const draft = view.querySelector('[data-comment-text]');
+  if (draft) draft.value = videoDrafts.get(variant.key) || '';
   shownDetail.key = variant.key;
   shownDetail.videoUrl = variant.video ? variant.video.url : '';
   shownDetail.ticket = variant.approvalTicket || '';
@@ -771,11 +783,8 @@ function renderDetail() {
 // Полная перерисовка карточки без потери недописанной правки: человек мог печатать её,
 // когда агент прислал новую версию.
 function rerenderDetailKeepingDraft() {
-  const field = document.querySelector('[data-comment-text]');
-  const draft = field ? field.value : '';
+  rememberVideoDraft();
   renderDetail();
-  const fresh = document.querySelector('[data-comment-text]');
-  if (fresh && draft) fresh.value = draft;
 }
 
 // Фоновое обновление открытой карточки. Перерисовываем целиком только когда человеку
@@ -803,7 +812,13 @@ function syncDetail(card) {
     }
     shownDetail.leadSignature = leadSignature;
   }
-  if (state.detailTab === 'lead') return;
+  if (state.detailTab === 'lead') {
+    const container = document.querySelector('.lm-tab');
+    lmPollTab(container, variant).catch((error) => {
+      if (container && container.isConnected && state.detailTab === 'lead') notify(error.message, 'error');
+    });
+    return;
+  }
   const freshVideoUrl = variant.video ? variant.video.url : '';
   const freshTicket = variant.approvalTicket || '';
   if (freshVideoUrl !== shownDetail.videoUrl) {

@@ -276,6 +276,88 @@ test('approval needs the checkbox and then shows the files', async ({ page }) =>
   await expect.poll(() => calls.reveal.at(-1) || '').toMatch(/v01[\\/]page\.pdf$/);
 });
 
+test('a new lead revision appears while the waiting card summary stays the same', async ({ page }) => {
+  const { id } = await startWith(withDraft);
+  await openLeadTab(page);
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Сайт без кода');
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит: посмотрите и утвердите');
+  publishCheckedRevision(projectsDir, id, { page: goodPage({ title: 'Новая версия' }) });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Новая версия');
+  await expect(page.locator('.lm-viewer')).toContainText('Версия v02');
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит: посмотрите и утвердите');
+});
+
+test('a late lead state response cannot update a tab that was closed', async ({ page }) => {
+  const { id } = await startWith(withDraft);
+  await openLeadTab(page);
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Сайт без кода');
+  publishCheckedRevision(projectsDir, id, { page: goodPage({ title: 'Новая версия' }) });
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet?**', async (route) => {
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await pending;
+  await page.locator('[data-detail-tabs] button', { hasText: 'Видео' }).click();
+  const response = page.waitForResponse('**/api/lead-magnet?**');
+  release();
+  await response;
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.locator('.lm-tab')).toHaveCount(0);
+  await expect(page.locator('[data-notice]')).not.toContainText('Лид-магнит обновился');
+});
+
+test('clicking the active video tab keeps an unfinished video comment', async ({ page }) => {
+  await startWith(withDraft);
+  await openClip(page);
+  const draft = page.locator('[data-comment-text]');
+  await draft.fill('Не потерять правку');
+  await page.locator('[data-detail-tabs] button', { hasText: 'Видео' }).click();
+  await expect(draft).toHaveValue('Не потерять правку');
+});
+
+test('an unfinished video comment survives a trip to the lead tab', async ({ page }) => {
+  await startWith(withDraft);
+  await openClip(page);
+  await page.locator('[data-comment-text]').fill('Не потерять правку');
+  await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
+  await expect(page.locator('[data-lm-status]')).toBeVisible();
+  await page.locator('[data-detail-tabs] button', { hasText: 'Видео' }).click();
+  await expect(page.locator('[data-comment-text]')).toHaveValue('Не потерять правку');
+});
+
+test('approval stays locked if its checkbox changes during the pending request', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  const box = page.locator('[data-lm-approve]');
+  const viewed = box.locator('input[type="checkbox"]');
+  const approve = box.locator('button', { hasText: 'Утверждаю лид-магнит' });
+  await viewed.check();
+  let posts = 0;
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet/approve', async (route) => {
+    posts += 1;
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await approve.click();
+  await pending;
+  await viewed.uncheck();
+  await viewed.check();
+  await expect(approve).toBeDisabled();
+  expect(posts).toBe(1);
+  release();
+  await expect(page.locator('[data-lm-status]')).toHaveText('Лид-магнит утверждён');
+});
+
 test('a red check shows its items and offers no approval', async ({ page }) => {
   await startWith((dir) => withDraft(dir, { ok: false }));
   await openLeadTab(page);
