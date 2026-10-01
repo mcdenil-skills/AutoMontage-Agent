@@ -136,6 +136,28 @@ test('promise current distinguishes same, changed, missing and unavailable sourc
   assert.equal(id, state.magnets[0].id);
 });
 
+test('the browser response never exposes an unsafe source folder from a passport', async (t) => {
+  const projectsDir = root(t);
+  const id = approvedMagnet(projectsDir, 'other');
+  library.linkVideo(projectsDir, id, { folder: 'clip', codeWord: 'ГАЙД' });
+  const passportPath = path.join(projectsDir, '.lead-magnets', id, 'lead-magnet.json');
+  const original = JSON.parse(fs.readFileSync(passportPath, 'utf8'));
+  const { session } = await start(t, projectsDir);
+  const safe = (await get(session, '/api/lead-magnet?key=clip')).json.magnets[0].promise;
+  assert.equal(safe.sourceFolder, 'other');
+  for (const unsafe of ['/private/client/source', '../client/source']) {
+    const passport = structuredClone(original);
+    passport.promise.sourceFolder = unsafe;
+    fs.writeFileSync(passportPath, JSON.stringify(passport));
+    const response = await get(session, '/api/lead-magnet?key=clip');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.toString('utf8').includes(unsafe), false);
+    assert.deepEqual(response.json.magnets[0].promise.current,
+      { state: 'unknown', quote: null, offerId: null });
+    assert.equal(response.json.magnets[0].promiseChanged, true);
+  }
+});
+
 test('promise decisions reject a linked video key and missing keep requires null offer ID', async (t) => {
   const projectsDir = root(t);
   const id = approvedMagnet(projectsDir, 'other');

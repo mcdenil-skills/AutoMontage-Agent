@@ -9,7 +9,7 @@ const library = require('../scripts/lead-magnet/library');
 const { addOffer } = require('../scripts/lead-magnet/offers');
 const { readDecisions } = require('../scripts/lead-magnet/requests');
 const { startPultServer } = require('../scripts/pult/server');
-const { makePultRoot } = require('./helpers/pult-projects');
+const { addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
 const {
   PARAMS, PNG_BYTES, QUOTE, UNITS, addLeadMagnetFor, addVideoWithOffer, goodPage, publishCheckedRevision,
 } = require('./helpers/lead-magnet-fixtures');
@@ -304,6 +304,53 @@ test('a linked video shows its source promise and writes the decision to the sou
   await expect(warning).toHaveCount(0);
   expect(readDecisions(path.join(projectsDir, 'source')).at(-1).type).toBe('promise-keep');
   expect(fs.existsSync(path.join(projectsDir, 'clip', 'pult', 'lead-magnet.json'))).toBe(false);
+});
+
+test('a linked video settles a promise from a legacy source variant key', async ({ page }) => {
+  await startWith((dir) => {
+    addVideoWithOffer(dir, { folder: 'source' });
+    const id = approvedIn(dir, 'source');
+    library.linkVideo(dir, id, { folder: 'clip', codeWord: 'ГАЙД' });
+    const source = path.join(dir, 'source');
+    fs.writeFileSync(path.join(source, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+    addOffer(source, { codeWord: 'ГАЙД', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+      units: UNITS, sourceKind: 'script', scriptPath: 'script.txt' });
+    fs.renameSync(path.join(source, 'project.json'), path.join(source, 'project.hidden'));
+    addLegacyFolder(dir, 'source', { files: { 'out/old.mp4': 'video' }, card: {
+      version: 1, title: 'Архивный источник',
+      legacy: { status: 'ready', variants: [{ label: 'Первый', video: 'out/old.mp4', final: true }] },
+    } });
+  });
+  await openLeadTab(page);
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText('Стало: «и я пришлю пошаговую инструкцию и семь промптов»');
+  await warning.getByRole('button', { name: 'Оставить как есть' }).click();
+  await expect(warning).toHaveCount(0);
+  expect(readDecisions(path.join(projectsDir, 'source')).at(-1).type).toBe('promise-keep');
+});
+
+test('a legacy source uses its own variant key to settle its promise', async ({ page }) => {
+  await startWith((dir) => {
+    addVideoWithOffer(dir, { folder: 'source' });
+    approvedIn(dir, 'source');
+    const source = path.join(dir, 'source');
+    fs.writeFileSync(path.join(source, 'script.txt'), 'Финал. и я пришлю пошаговую инструкцию и семь промптов.');
+    addOffer(source, { codeWord: 'ГАЙД', kind: 'comment-keyword', quote: 'и я пришлю пошаговую инструкцию и семь промптов',
+      units: UNITS, sourceKind: 'script', scriptPath: 'script.txt' });
+    fs.renameSync(path.join(source, 'project.json'), path.join(source, 'project.hidden'));
+    addLegacyFolder(dir, 'source', { files: { 'out/old.mp4': 'video' }, card: {
+      version: 1, title: 'Архивный источник',
+      legacy: { status: 'ready', variants: [{ label: 'Первый', video: 'out/old.mp4', final: true }] },
+    } });
+  });
+  await page.goto(session.url);
+  await page.locator('.card', { hasText: 'Архивный источник' }).click();
+  await page.locator('[data-detail-tabs] button', { hasText: 'Лид-магнит' }).click();
+  const warning = page.locator('[data-lm-promise-changed]');
+  await expect(warning).toContainText('Стало: «и я пришлю пошаговую инструкцию и семь промптов»');
+  await warning.getByRole('button', { name: 'Оставить как есть' }).click();
+  await expect(warning).toHaveCount(0);
+  expect(readDecisions(path.join(projectsDir, 'source')).at(-1).type).toBe('promise-keep');
 });
 
 test('an unavailable source explains the issue and offers no decision buttons', async ({ page }) => {

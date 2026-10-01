@@ -840,17 +840,19 @@ function lmPromisePanel(variant, magnet) {
   const box = el('div', 'lm-panel lm-warning');
   box.dataset.lmPromiseChanged = '';
   const { sourceFolder, current } = magnet.promise;
-  const source = { key: sourceFolder };
+  const sourceKey = sourceFolder === variant.folder ? variant.key
+    : allCards().flatMap((card) => card.variants).find((item) => item.folder === sourceFolder)?.key;
+  const source = { key: sourceKey };
   const linked = sourceFolder !== variant.folder;
   box.append(
     el('h3', '', '⚠️ Обещание в ролике изменилось'),
-    ...(linked ? [el('p', 'hint', `Обещание из ролика „${sourceFolder}“`)] : []),
+    ...(linked && sourceFolder ? [el('p', 'hint', `Обещание из ролика „${sourceFolder}“`)] : []),
     el('p', 'hint', 'Лид-магнит сделан под прежнюю цитату.'),
     el('blockquote', 'lm-quote lm-quote--old', `Было: «${magnet.promise.quote}»`),
     el('blockquote', 'lm-quote', current.state === 'changed' ? `Стало: «${current.quote}»`
       : current.state === 'missing' ? 'Стало: обещания в ролике больше нет' : 'Стало: источник недоступен'),
   );
-  if (current.state === 'unknown') {
+  if (current.state === 'unknown' || !sourceKey) {
     box.append(el('p', 'hint', 'ролик-источник не найден или его обещания не читаются'));
   } else if (current.state === 'changed' || current.state === 'missing') {
     const row = el('div', 'lm-row');

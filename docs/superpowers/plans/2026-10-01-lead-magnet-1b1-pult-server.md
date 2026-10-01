@@ -71,7 +71,8 @@ git config core.hooksPath .githooks
 
 Для каждого `magnet` в `GET /api/lead-magnet` поле `promise` содержит
 `{ quote, startSec, sourceFolder, current: { state, quote, offerId } }`. `sourceFolder` —
-только имя папки ролика-источника, без пути. `current.state` принимает `same`, `changed`,
+только безопасное имя папки ролика-источника, без пути; для небезопасного значения в паспорте
+публичный ответ отдаёт `null` и состояние `unknown`. `current.state` принимает `same`, `changed`,
 `missing` или `unknown`. Для `missing` и `unknown` текущие `quote` и `offerId` равны `null`:
 `missing` означает читаемый `offers.json` без исходного обещания, `unknown` — недоступный
 ролик-источник или файл обещаний. Решения `promise-refresh` и `promise-keep` записываются

@@ -18,6 +18,7 @@ const {
   PultRequestError, readJsonBody, readRawBody, safeTokenEqual, send, sendError, sendJson,
 } = require('./http');
 const { buildLeadMagnetIndex, currentPromiseFor, folderLeadMagnet } = require('./lead-magnet-view');
+const { isSafeName } = require('./names');
 const { cropImage } = require('./media-cache');
 
 const DECISION_KEYS = {
@@ -180,7 +181,7 @@ function createLeadMagnetRoutes({
       ...summary,
       promise: {
         quote: passport.promise.quote, startSec: passport.promise.startSec,
-        sourceFolder: passport.promise.sourceFolder,
+        sourceFolder: isSafeName(passport.promise.sourceFolder) ? passport.promise.sourceFolder : null,
         current: currentPromiseFor(projectsDir, passport),
       },
       revision: revisionView(passport, summary),
