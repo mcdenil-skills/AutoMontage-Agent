@@ -62,8 +62,12 @@ function buildSegmentsConcatFilter(segments, {
   precision = null,
   fps = null,
   audioFormat = null,
+  scale = null,
 } = {}) {
   const list = validateSegments(segments, inputCount);
+  if (scale !== null && ![scale.width, scale.height].every((side) => Number.isSafeInteger(side) && side > 0 && side % 2 === 0)) {
+    throw new Error('scale: размеры масштаба должны быть целыми чётными числами > 0');
+  }
   const fade = finiteNumber(audioFadeSec, 'audio fade', { min: 0, max: 1 });
   if (fps !== null && !FILTER_RATE.test(String(fps))) {
     throw new Error('FPS для склейки должен быть дробью вида 30000/1001');
@@ -102,17 +106,19 @@ function buildSegmentsConcatFilter(segments, {
     videoInputs += `[v${index}]`;
     audioInputs += `[a${index}]`;
   });
-  return `${filter}${videoInputs}concat=n=${list.length}:v=1:a=0[vout];${audioInputs}concat=n=${list.length}:v=0:a=1[aout]`;
+  const videoOutput = scale === null ? '[vout]' : `[vcat];[vcat]scale=${scale.width}:${scale.height}:flags=lanczos,setsar=1[vout]`;
+  return `${filter}${videoInputs}concat=n=${list.length}:v=1:a=0${videoOutput};${audioInputs}concat=n=${list.length}:v=0:a=1[aout]`;
 }
 
 function buildConcatFilter(intervals, {
   audioFadeSec = 0,
   precision = null,
+  scale = null,
 } = {}) {
   const keep = validateIntervals(intervals);
   return buildSegmentsConcatFilter(
     keep.map(([start, end]) => ({ input: 0, start, end })),
-    { inputCount: 1, audioFadeSec, precision },
+    { inputCount: 1, audioFadeSec, precision, scale },
   );
 }
 
@@ -193,11 +199,12 @@ function runTrim({
   input,
   output,
   intervals,
+  scale = null,
   audioFadeSec = 0,
   precision = null,
   filterPath = defaultFilterPath(),
 }, dependencies = {}) {
-  const filter = buildConcatFilter(intervals, { audioFadeSec, precision });
+  const filter = buildConcatFilter(intervals, { audioFadeSec, precision, scale });
   return runFilterScript({
     inputs: [input], output, filter, filterPath, stage: 'trim encode',
   }, dependencies);
@@ -211,13 +218,14 @@ function runSegmentsTrim({
   precision = null,
   fps = null,
   audioFormat = null,
+  scale = null,
   filterPath = defaultFilterPath(),
 }, dependencies = {}) {
   if (!Array.isArray(inputs) || inputs.length === 0) {
     throw new Error('нужен хотя бы один входной файл');
   }
   const filter = buildSegmentsConcatFilter(segments, {
-    inputCount: inputs.length, audioFadeSec, precision, fps, audioFormat,
+    inputCount: inputs.length, audioFadeSec, precision, fps, audioFormat, scale,
   });
   return runFilterScript({
     inputs, output, filter, filterPath, stage: 'takes encode',
