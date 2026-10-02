@@ -18,6 +18,7 @@ test('Remotion bundles JSX under an installed package while keeping other node_m
   fs.mkdirSync(path.join(installedRoot, 'scripts'));
   fs.copyFileSync(path.join(ROOT, 'remotion.config.js'), path.join(installedRoot, 'remotion.config.js'));
   fs.copyFileSync(path.join(ROOT, 'scripts/remotion-webpack.js'), path.join(installedRoot, 'scripts/remotion-webpack.js'));
+  fs.copyFileSync(path.join(ROOT, 'scripts/remotion-ffmpeg-override.js'), path.join(installedRoot, 'scripts/remotion-ffmpeg-override.js'));
   const cliPackage = path.dirname(require.resolve('@remotion/cli/package.json'));
   const { loadConfigFile } = require(path.join(cliPackage, 'dist/load-config.js'));
   const { getWebpackOverrideFn, resetBundlerOverrides } = require(path.join(cliPackage, 'dist/config/override-webpack.js'));

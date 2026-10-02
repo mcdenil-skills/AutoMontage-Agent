@@ -31,6 +31,7 @@ function help() {
   automontage pult                    открыть «Пульт роликов» со всеми роликами
   automontage pult --install-shortcut создать значок пульта (macOS/Windows)
   automontage inbox                   правки и утверждения из пульта для агента
+  automontage queue                   состояние очереди тяжёлых задач
   automontage lead-magnet --help      лид-магниты: обещание, сборка, проверка (для агента)
   automontage preview --project-dir . --brief brief/v01-draft.lesson.json
                                       собрать настоящий Remotion-предпросмотр draft
@@ -237,6 +238,23 @@ function main(argv = process.argv.slice(2)) {
         stdio: 'inherit', cwd: process.cwd(), shell: false,
       });
     } catch (error) { process.exit(error.status || 1); }
+    process.exit(0);
+  }
+
+  if (argv[0] === 'queue') {
+    try {
+      const { heavyQueueConfig, listHeavySlots } = require('./heavy-queue');
+      const config = heavyQueueConfig();
+      const busy = listHeavySlots(config).filter((slot) => slot.busy);
+      console.log(`Очередь тяжёлых задач: ${busy.length ? 'занято' : 'свободно'} (слотов: ${config.slots})`);
+      for (const slot of busy) {
+        console.log(`Слот ${slot.index}: ${slot.label || 'другая тяжёлая задача'}; pid: ${slot.pid ?? 'неизвестен'}; начало: ${slot.acquiredAt || 'неизвестно'}`);
+      }
+      console.log(`Папка очереди: ${config.dir}`);
+    } catch (error) {
+      console.error(`❌ ${error.message}`);
+      process.exit(1);
+    }
     process.exit(0);
   }
 

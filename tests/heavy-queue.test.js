@@ -238,3 +238,36 @@ test('preloaded test process has an isolated temporary queue', () => {
   assert.ok(child.stdout.startsWith(path.join(os.tmpdir(), 'automontage-heavy-test-')));
   assert.equal(fs.existsSync(child.stdout), false);
 });
+
+function queueStatus(config) {
+  return spawnSync(process.execPath, [require.resolve('../scripts/cli'), 'queue'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      AUTOMONTAGE_HEAVY_DIR: config.dir,
+      AUTOMONTAGE_HEAVY_SLOTS: String(config.slots),
+    },
+  });
+}
+
+test('queue CLI reports a free queue and its directory without acquiring a slot', (t) => {
+  const config = configFor(t);
+  const result = queueStatus(config);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `Очередь тяжёлых задач: свободно (слотов: 1)\nПапка очереди: ${config.dir}\n`);
+  assert.deepEqual(fs.readdirSync(config.dir), []);
+});
+
+test('queue CLI reports occupied slots with their label, pid and start time', (t) => {
+  const config = configFor(t, { slots: 2 });
+  hold(t, config, 'layer render demo/motion-v01');
+  const holder = listHeavySlots(config)[0];
+  const result = queueStatus(config);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes('layer render demo/motion-v01'));
+  assert.ok(result.stdout.includes(`pid: ${holder.pid}`));
+  assert.ok(result.stdout.includes(`начало: ${holder.acquiredAt}`));
+  assert.ok(result.stdout.includes(`Папка очереди: ${config.dir}`));
+  assert.equal(listHeavySlots(config)[0].busy, true);
+  assert.equal(fs.existsSync(path.join(config.dir, 'slot-1')), false);
+});

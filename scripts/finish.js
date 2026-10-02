@@ -89,7 +89,7 @@ function finishEncodeCommand(input, output, options, isHDR) {
 function loudnessCommand(output) {
   return {
     command: 'ffmpeg',
-    args: ['-i', hostPath(output), '-af', 'loudnorm=print_format=summary', '-f', 'null', '-'],
+    args: ['-i', hostPath(output), '-vn', '-af', 'loudnorm=print_format=summary', '-f', 'null', '-'],
   };
 }
 
