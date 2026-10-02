@@ -10,6 +10,7 @@ const { displayDimensions, probeMediaPath, probeVideo } = require('../media-prob
 const { runTool } = require('../process');
 const { collectWords } = require('../tighten');
 const { runSegmentsTrim, runTrim } = require('../trim-media');
+const { parseQuality, workingSize } = require('../working-quality');
 const {
   normalizeSourceMetadata,
   projectRelative,
@@ -65,7 +66,8 @@ function resolveRequestedEdit(workspace, requested, fileSystem) {
   });
 }
 
-function buildMaster({ projectDir, editPath }, dependencies = {}) {
+function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies = {}) {
+  quality = parseQuality(quality);
   const fileSystem = dependencies.fileSystem || fs;
   const runTrimImpl = dependencies.runTrimImpl || runTrim;
   const probeVideoImpl = dependencies.probeVideoImpl || probeVideo;
@@ -86,7 +88,7 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
   const editRelative = projectRelative(workspace.dir, editAbsolute);
   const source = normalizeSourceMetadata(manifest.source);
   if (isTakesEdit(edit)) {
-    return buildTakesMaster({ workspace, edit, editRelative, source }, {
+    return buildTakesMaster({ workspace, edit, editRelative, source, quality }, {
       ...publishDependencies,
       probeMediaPathImpl,
       runSegmentsTrimImpl: dependencies.runSegmentsTrimImpl || runSegmentsTrim,
@@ -115,6 +117,8 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
     stage: 'master source media probe',
     containerDurationFallback: true,
   });
+  const target = workingSize(displayDimensions(sourceMedia), quality);
+  const size = { width: target.width, height: target.height };
   const result = publishSourceRevision({
     workspace,
     source,
@@ -122,12 +126,13 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
     words: remapped,
     duration,
     fps: normalizedEdit.fps,
-    expected: displayDimensions(sourceMedia),
+    expected: size,
     encode(output) {
       runTrimImpl({
         input: sourcePath,
         output,
         intervals: normalizedEdit.keep.map(({ start, end }) => [start, end]),
+        scale: target.scaled ? size : null,
         audioFadeSec: 0.04,
         precision: 6,
       });
@@ -136,6 +141,8 @@ function buildMaster({ projectDir, editPath }, dependencies = {}) {
   return {
     ...result,
     kind: 'source',
+    ...size,
+    quality,
     duration: roundedTime(duration, normalizedEdit.fps),
     removedDuration: roundedTime(sourceProbe.duration - duration, normalizedEdit.fps),
   };
@@ -166,13 +173,14 @@ function takesSummaryLines(result) {
 }
 
 function parseMasterOptions(argv) {
-  const options = { projectDir: null, editPath: null };
+  const options = { projectDir: null, editPath: null, quality: '1080p' };
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`${key} requires a value`);
     if (key === '--project-dir') options.projectDir = value;
     else if (key === '--edit') options.editPath = value;
+    else if (key === '--quality') options.quality = parseQuality(value);
     else throw new Error(`unknown master option: ${key}`);
   }
   if (!options.projectDir || !options.editPath) {
@@ -187,6 +195,7 @@ function main(argv = process.argv.slice(2)) {
     const result = buildMaster(parseMasterOptions(argv));
     console.log(`✅ source revision: ${result.revision}`);
     console.log(`   duration: ${result.duration.toFixed(2)} sec`);
+    console.log(`   size: ${result.width}×${result.height} (${result.quality})`);
     if (result.kind === 'takes') {
       for (const line of takesSummaryLines(result)) console.log(line);
     } else {

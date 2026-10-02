@@ -351,3 +351,40 @@ test('master rejects a portrait output from an unrotated landscape source', (t) 
   assert.equal(readProjectManifest(fixture.workspace.dir).source.localPath, 'input/source.mp4');
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'input', 'source-v02.mp4')), false);
 });
+
+test('master quality defaults to 1080p and CLI aliases normalize', () => {
+  const { parseMasterOptions } = require('../scripts/project/build-master');
+  assert.equal(parseMasterOptions(['--project-dir', 'p', '--edit', 'e']).quality, '1080p');
+  assert.equal(parseMasterOptions(['--project-dir', 'p', '--edit', 'e', '--quality', '4k']).quality, 'source');
+  assert.throws(() => parseMasterOptions(['--project-dir', 'p', '--edit', 'e', '--quality', '720p']), /неизвестное качество/);
+});
+for (const [label, quality, media, target] of [
+  ['portrait', undefined, { width: 2160, height: 3840, rotation: 0 }, { width: 1080, height: 1920 }],
+  ['source', 'source', { width: 2160, height: 3840, rotation: 0 }, { width: 2160, height: 3840 }],
+  ['rotated phone', undefined, { width: 3840, height: 2160, rotation: 90 }, { width: 1080, height: 1920 }],
+  ['landscape', undefined, { width: 3840, height: 2160, rotation: 0 }, { width: 1920, height: 1080 }],
+]) {
+  test(`master publishes the working geometry for ${label}`, (t) => {
+    const fixture = makeProject(t);
+    let trim;
+    const result = buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath, quality }, {
+      runTrimImpl(options) { trim = options; fs.writeFileSync(options.output, 'NEW-MASTER'); },
+      runToolImpl() {},
+      probeVideoImpl: (file) => file.endsWith('source.mp4')
+        ? { ...media, duration: 8, fps: 25 } : { ...target, duration: 6, fps: 25 },
+      probeMediaPathImpl: () => ({ ...media, mediaKind: 'video' }),
+    });
+    assert.deepEqual(trim.scale, quality === 'source' ? null : target);
+    assert.equal(result.revision, 2);
+  });
+}
+test('master rejects native output when working 1080p was requested', (t) => {
+  const fixture = makeProject(t);
+  const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+  assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+    runTrimImpl(options) { fs.writeFileSync(options.output, 'WRONG-SIZE'); }, runToolImpl() {},
+    probeVideoImpl: (file) => ({ width: 2160, height: 3840, duration: file.endsWith('source.mp4') ? 8 : 6, fps: 25 }),
+    probeMediaPathImpl: () => ({ width: 2160, height: 3840, rotation: 0, mediaKind: 'video' }),
+  }), /master output does not match the source edit/);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+});

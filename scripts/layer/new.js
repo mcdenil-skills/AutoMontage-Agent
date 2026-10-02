@@ -218,6 +218,10 @@ async function run(options, deps = {}) {
   transcriptPath(projectDir, manifest);
   const source = inspectSource(sourcePath, manifest, { probeVideoImpl: deps.probeVideo || probeVideo, probeMediaImpl: deps.probeMedia || probeMediaPath });
 
+  if (Math.min(source.width, source.height) > 1080) {
+    warn(`⚠️ исходник ${source.width}×${source.height} больше рабочего 1080p – слой будет рендериться в родном размере и в разы дольше. Соберите master (automontage master --project-dir "${projectDir}" --edit edit/vNN-source.json); если правок нарезки нет – edit с одним keep на весь ролик`);
+  }
+
   const guard = interruptGuard({
     signals: deps.signals || process,
     kill: deps.kill || ((signal) => process.kill(process.pid, signal)),

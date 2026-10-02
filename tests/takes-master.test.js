@@ -330,3 +330,20 @@ test('master summary lists final ranges, joints and every pause decision', () =>
     '   kept: ranges[1].end 6.00 (moving would collapse or overlap)',
   ]);
 });
+
+for (const [quality, target] of [
+  [undefined, { width: 1080, height: 1920 }],
+  ['source', { width: 2160, height: 3840 }],
+]) {
+  test(`takes master applies ${quality || 'default'} quality to its concat`, (t) => {
+    const fixture = setupTakes(t);
+    const calls = [];
+    const result = buildMaster({ projectDir: fixture.dir, editPath: writeEdit(fixture.dir), quality }, masterDependencies(calls, {
+      probeVideoImpl: (file) => path.basename(file).startsWith('.source-v')
+        ? { ...target, fps: 25, duration: 3.52 } : { width: 2160, height: 3840, fps: 25, duration: 10 },
+      probeMediaPathImpl: () => media({ width: 2160, height: 3840 }),
+    }));
+    assert.equal(result.revision, 2);
+    assert.deepEqual(calls[0][1].scale, quality === 'source' ? null : target);
+  });
+}
