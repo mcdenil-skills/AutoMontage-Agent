@@ -17,7 +17,8 @@ const { ROOT, resolveRemotionCommand } = require('../env');
 const { remotionLayerRenderCommand } = require('../build-commands');
 const { probeMediaPath, probeVideo } = require('../media-probe');
 const { hashBytes } = require('../pult/files');
-const { runTool } = require('../process');
+const { runTool, captureTool } = require('../process');
+const { LIMITED_RANGE_ENV } = require('../remotion-ffmpeg-override');
 const { acquireHeavySlot, heavyQueueConfig } = require('../heavy-queue');
 const { decodeAudio, envelopeDb } = require('../qa/audio');
 const { gateLayerDuration, gateVoiceLeak } = require('../qa/media-gates');
@@ -83,9 +84,9 @@ function readCheckedManifest(projectDir, layerDir) {
 
 const AUDIO_RATE = 48000;
 
-// Remotion пишет полный диапазон (yuvj420p, color_range pc); мастер и Review ждут обычный ограниченный
-// yuv420p. Диапазон входа ffmpeg берёт из его метки: на полнодиапазонном рендере Remotion это побитно то
-// же, что in_range=full, и верно, если вход когда-нибудь окажется ограниченным. Звук эффектов сохраняется
+// Remotion слоя сразу пишет ограниченный yuv420p; у такого файла видео копируется. Для старого или
+// неожиданного диапазона оставлена полная нормализация: диапазон входа ffmpeg берёт из его метки.
+// Звук эффектов сохраняется
 // (audioMode mix), но только на длину кадров: Remotion дописывает хвост AAC на 43–64 мс, правило владельца –
 // резать его до длительности кадров. aresample async/first_pts кладёт звук на таймкод с 0 (поздний старт –
 // тишина), apad + atrim дополняют и режут ровно до durationInFrames/fps. Режется только звук: -t или
@@ -95,7 +96,13 @@ function normalizeArgs(raw, out, samples) {
   return ['-hide_banner', '-loglevel', 'error', '-y', '-i', raw,
     '-vf', 'scale=out_range=tv,format=yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '14',
     '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,apad,atrim=end_sample=${samples}`,
-    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), out];
+    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), '-ac', '2', out];
+}
+
+function normalizeAudioArgs(raw, out, samples) {
+  return ['-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-c:v', 'copy',
+    '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,apad,atrim=end_sample=${samples}`,
+    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), '-ac', '2', out];
 }
 
 // deps: log/warn – вывод; runToolImpl – запуск Remotion и ffmpeg (подмена рендера в тестах); checkImpl –
@@ -146,7 +153,7 @@ async function run(options, deps = {}) {
       return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
         reportName: reportName(claim.n), command: remotionLayerRenderCommand(remotion, {
           entry: path.join(layerDir, 'src', 'index.jsx'), composition: layer.composition, output: claim.raw, publicDir: path.join(layerDir, 'public'),
-        }), runToolImpl, log });
+        }), runToolImpl, log, warn });
     } finally {
       claim.release();
     }
@@ -156,15 +163,23 @@ async function run(options, deps = {}) {
 }
 
 // Рендер под уже занятым номером: Remotion → нормализация → G6 и G7 → отчёт. Код выхода по отчёту.
-function renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples, reportName, command, runToolImpl, log }) {
+function renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples, reportName, command, runToolImpl, log, warn }) {
   // С запуска Remotion любой отказ (сам рендер, нормализация, probe, декодирование, гейт, испорченный
   // манифест) – отчёт с error и код 2, а не «layer render отменён» без отчёта.
   let gates = [];
   let error = null;
   try {
-    runToolImpl(command.command, command.args, { cwd: ROOT, stage: 'layer Remotion render' });
+    runToolImpl(command.command, command.args, { cwd: ROOT, stage: 'layer Remotion render',
+      env: { ...process.env, [LIMITED_RANGE_ENV]: '1' } });
+    const rawProbe = JSON.parse(captureTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=pix_fmt,color_range', '-of', 'json', claim.raw],
+    { cwd: ROOT, stage: 'layer raw probe', maxBuffer: 64 * 1024 }));
+    const video = rawProbe.streams?.[0];
+    const conforming = video?.pix_fmt === 'yuv420p' && video?.color_range === 'tv';
+    if (!conforming) warn('Remotion отдал full range – перекодирую видео');
     try {
-      runToolImpl('ffmpeg', normalizeArgs(claim.raw, claim.out, samples), { cwd: ROOT, stage: 'layer normalize' });
+      const args = (conforming ? normalizeAudioArgs : normalizeArgs)(claim.raw, claim.out, samples);
+      runToolImpl('ffmpeg', args, { cwd: ROOT, stage: 'layer normalize' });
     } catch (caught) {
       fs.rmSync(claim.out, { force: true }); // недописанный слой этого номера – наш, после отказа он не нужен
       throw caught;

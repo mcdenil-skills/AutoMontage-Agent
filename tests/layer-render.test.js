@@ -16,25 +16,28 @@ const hasFfmpeg = toolAvailable('ffmpeg') && toolAvailable('ffprobe');
 const STATIC_PLAN = "export default function buildPlan({ face }) { return { camera: { face, shots: [{ at: 0, preset: 'W', drift: 'none' }] }, items: [] }; }\n";
 
 // Подмена Remotion: ролик lavfi нужной длины и fps в полном диапазоне с теми же метками, что у настоящего
-// Remotion 4.0.504 (yuvj420p, color_range pc, colorspace bt470bg).
+// Remotion 4.0.504 (yuvj420p, color_range pc, colorspace bt470bg); limitedRange включает новый диапазон tv.
 // audio – lavfi-строка со своей длиной d, функция, которая строит её уже во время «рендера» (манифест слоя к
 // этому моменту записан), или null – ролик без звуковой дорожки. Без -shortest: звук может быть длиннее
 // видео – настоящий Remotion дописывает хвост AAC на 43–64 мс. after – что сделать после записи файла.
 // Остальная цепочка (нормализация ffmpeg, probe, PCM, гейты, отчёт) – настоящая.
-function fakeRemotion(seconds, audio, { after, fps = 25 } = {}) {
+function fakeRemotion(seconds, audio, { after, fps = 25, limitedRange = false } = {}) {
   const calls = [];
+  const environments = [];
   const runToolImpl = (command, args, options) => {
     if (options.stage !== 'layer Remotion render') return runProcessTool(command, args, options);
     calls.push(args);
+    environments.push(options.env);
     const output = args[args.indexOf('render') + 3];
     const audioInput = typeof audio === 'function' ? audio() : audio;
     runTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=540x960:r=${fps}:d=${seconds}`,
       ...(audioInput ? ['-f', 'lavfi', '-i', audioInput, '-c:a', 'aac'] : []),
-      '-pix_fmt', 'yuvj420p', '-colorspace', 'bt470bg', '-c:v', 'libx264', output]);
-    if (after) after();
+      '-pix_fmt', limitedRange ? 'yuv420p' : 'yuvj420p', ...(limitedRange ? ['-color_range', 'tv'] : []),
+      '-colorspace', 'bt470bg', '-c:v', 'libx264', output]);
+    if (after) after(output);
     return null;
   };
-  return { calls, runToolImpl };
+  return { calls, environments, runToolImpl };
 }
 
 async function scaffold(t, projectOptions) {
@@ -74,7 +77,7 @@ function videoStream(file) {
 }
 // Длины потоков и контейнера готового слоя.
 function streams(file) {
-  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,duration,nb_frames:format=duration',
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,duration,nb_frames,channels:format=duration',
     '-of', 'json', file], { encoding: 'utf8' }));
   const [video, audio] = ['video', 'audio'].map((kind) => probe.streams.find((st) => st.codec_type === kind));
   return { video, audio, container: Number(probe.format.duration) };
@@ -91,6 +94,9 @@ test('a good layer renders, normalises to limited-range yuv420p and passes G6 an
   const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
   assert.equal(await run({ runToolImpl: fake.runToolImpl }), 0);
   assert.equal(fake.calls.length, 1);
+  assert.equal(fake.environments[0]?.AUTOMONTAGE_LAYER_LIMITED_RANGE, '1');
+  assert.equal(fake.environments[0]?.PATH, process.env.PATH);
+  assert.ok(logs.includes('Remotion отдал full range – перекодирую видео'));
   const args = fake.calls[0];
   assert.ok(args.some((a) => String(a).startsWith('--env-file=')));
   assert.equal(args[args.indexOf('--public-dir') + 1], path.join(layerDir, 'public'));
@@ -147,6 +153,30 @@ test('normalisation pads audio shorter than the video with silence to the full l
   assert.equal(await run({ runToolImpl: fakeRemotion(6, 'anullsrc=r=48000:cl=mono:d=5.5').runToolImpl }), 0);
   const { audio } = streams(path.join(layerDir, 'renders', 'layer-01.mp4'));
   assert.equal(Number(audio.duration), 6);
+  assert.equal(audio.channels, 2);
+});
+
+function videoMd5(file) {
+  return execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-map', '0:v', '-c', 'copy', '-f', 'md5', '-'], { encoding: 'utf8' }).trim();
+}
+
+test('limited-range video is copied intact while mono audio is trimmed exactly and becomes stereo at 60 fps', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, layerDir, logs, run, report } = await scaffold(t, { fps: 60 });
+  let rawMd5;
+  const fake = fakeRemotion(6, () => effectsOf(projectDir, 6.06), {
+    fps: 60, limitedRange: true, after: (raw) => { rawMd5 = videoMd5(raw); },
+  });
+  assert.equal(await run({ runToolImpl: fake.runToolImpl }), 0);
+  const out = path.join(layerDir, 'renders', 'layer-01.mp4');
+  assert.equal(videoMd5(out), rawMd5, 'видеопоток сохраняется побитно');
+  assert.deepEqual(videoStream(out), { pix_fmt: 'yuv420p', color_range: 'tv' });
+  const { video, audio, container } = streams(out);
+  assert.equal(Number(video.nb_frames), 360);
+  assert.equal(Number(audio.duration), 6);
+  assert.equal(audio.channels, 2);
+  assert.equal(container, 6);
+  assert.deepEqual(report().gates.map((g) => [g.id, g.status, g.value]), [['G6', 'pass', 0], ['G7', 'pass', 0]]);
+  assert.ok(!logs.includes('Remotion отдал full range – перекодирую видео'));
 });
 
 // Мутант «убрали first_pts=0»: звук исходника начинается на 0,1 с позже видео (буфер энкодера, как у
