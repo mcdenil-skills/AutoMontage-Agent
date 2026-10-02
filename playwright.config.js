@@ -1,4 +1,4 @@
-require('./tests/helpers/heavy-queue-isolation.cjs');
+require('./tests/helpers/playwright-heavy-queue-isolation.cjs');
 
 module.exports = {
   testDir: './tests',

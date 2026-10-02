@@ -3,6 +3,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { acquireProjectMutationLease } = require('./project/workspace');
 
+const { executionBusy, wasReleased, registerExecutionSlot } = require('./heavy-execution');
+
 const HEAVY_QUEUE_BUSY = 'HEAVY_QUEUE_BUSY';
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
@@ -31,7 +33,17 @@ function tryAcquireHeavySlot({ label, config = heavyQueueConfig(), leaseOptions 
     fs.mkdirSync(slotDir, { recursive: true });
     let lease;
     try {
-      lease = acquireProjectMutationLease(slotDir, leaseOptions);
+      lease = acquireProjectMutationLease(slotDir, {
+        ...leaseOptions,
+        killProcess(pid, signal) {
+          const owner = readJson(path.join(slotDir, '.project-mutation.lock'));
+          if (owner && owner.pid === pid) {
+            if (executionBusy(slotDir, owner)) return;
+            if (wasReleased(slotDir, owner)) throw Object.assign(new Error('released'), { code: 'ESRCH' });
+          }
+          return (leaseOptions.killProcess || process.kill)(pid, signal);
+        },
+      });
     } catch (error) {
       if (error && error.code === 'PROJECT_MANIFEST_CONFLICT') continue;
       throw error;
@@ -44,12 +56,21 @@ function tryAcquireHeavySlot({ label, config = heavyQueueConfig(), leaseOptions 
     } catch (_) {
       // Metadata is advisory; the project mutation lease provides exclusion.
     }
+    const execution = registerExecutionSlot(slotDir, lease.owner);
     let released = false;
     return {
       index,
       waited: false,
       release() {
         if (released) return;
+        execution.stop();
+        if (executionBusy(slotDir, lease.owner)) {
+          // Keep the atomic lease until the owned group ends, even if this process
+          // remains alive. The token-scoped release marker permits later recovery.
+          execution.deferRelease();
+          released = true;
+          return;
+        }
         try {
           fs.unlinkSync(holderPath);
         } catch (_) {
@@ -93,7 +114,8 @@ function listHeavySlots(config = heavyQueueConfig()) {
     const empty = { index, busy: false, label: null, pid: null, acquiredAt: null };
     const slotDir = path.join(config.dir, `slot-${index}`);
     const owner = readJson(path.join(slotDir, '.project-mutation.lock'));
-    if (!owner || ownerIsDead(owner)) return empty;
+    if (!owner || ((ownerIsDead(owner) || wasReleased(slotDir, owner))
+      && !executionBusy(slotDir, owner))) return empty;
     const holder = readJson(path.join(slotDir, 'holder.json'));
     const matchingHolder = holder && holder.pid === owner.pid && holder.acquiredAt === owner.acquiredAt;
     return {

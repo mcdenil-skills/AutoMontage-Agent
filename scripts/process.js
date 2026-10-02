@@ -58,13 +58,20 @@ function invoke(command, args, options, stdioOptions) {
   // однопоточный сервер пульта навечно – timeout настраивается только по явному
   // запросу вызывающего кода, старые вызовы без него ведут себя как прежде.
   const timeoutOptions = timeout === undefined ? {} : { timeout, killSignal: 'SIGKILL' };
-  const result = spawnSyncImpl(command, args, {
+  const spawnOptions = {
     cwd,
     env,
     shell: false,
     ...timeoutOptions,
     ...stdioOptions,
-  });
+  };
+  const invocation = spawnSyncImpl === spawnSync
+    ? require('./heavy-execution').managedInvocation(command, args, spawnOptions)
+    : { command, args, options: spawnOptions };
+  const result = spawnSyncImpl(invocation.command, invocation.args, invocation.options);
+  const launchError = invocation.launchError?.();
+  if (launchError) result.error = launchError;
+  invocation.complete?.(!result.error && !result.signal && result.status === 0);
   return assertProcessResult(result, { command, stage });
 }
 

@@ -829,8 +829,26 @@ flowchart TD
 - **Машинная очередь** (`scripts/heavy-queue.js`, D-044) общая для `layer render`,
   `layer import`, `preview`, final render (lesson и Dynamic) и `master`. Атомарные
   project mutation leases папок `slot-0` … `slot-(N-1)` исключают одновременное занятие слота,
-  умерший локальный PID восстанавливается по тому же протоколу. Слот берётся до lease проекта
-  и освобождается в `finally`; ожидание не держит проект заблокированным.
+  recovery использует тот же identity-проверенный протокол, но смерти оркестратора недостаточно.
+  `heavy-execution.js` пишет intent в `.execution-<lease-token>/` до запуска;
+  `heavy-worker.js` становится POSIX group leader и подтверждает PGID до запуска инструмента.
+  Общие sync `process.js` и async `review/media-process.js` используют этот supervisor.
+  Через наследуемый Node preload `heavy-child-preload.js` регистрирует дополнительные
+  `spawn`/`spawnSync` с `detached: true`, включая реальный запуск Chromium в Remotion.
+  Аргументы, stdio и окружение этих внутренних запусков сохраняются; добавляются только
+  внутренний execution context и preload. Никакого поиска процессов по командной строке нет.
+  Recovery и `queue` требуют ESRCH для всех записанных групп и неизменившегося списка tickets;
+  pending/повреждённые записи, ошибки доступа и повторно использованный PGID блокируют слот.
+  Lease берётся до lease проекта. `finally` прекращает регистрацию новых запусков; если работа
+  ещё жива, token-scoped `released` разрешает reclaim лишь после её окончания, даже когда
+  оркестратор остался жив. Без потомков обычный dead-owner recovery сохраняется.
+  Supervisor пересылает SIGTERM/SIGINT/SIGHUP своей группе и ждёт close ребёнка;
+  surviving descendants и аварийное завершение supervisor всё равно защищены tickets.
+  На Windows успешный запуск может убрать свои tickets только в живом исходном оркестраторе;
+  ошибка или его смерть оставляет fail-closed блокировку до ручной проверки. Job Objects нет:
+  намеренно отделённый потомок после формально успешной Windows-команды не покрывается.
+  Нативная самостоятельная daemonization и удаление preload из Node env также вне контракта.
+  Ожидание очереди не держит проект заблокированным.
   `AUTOMONTAGE_HEAVY_DIR` задаёт общий каталог (по умолчанию `os.tmpdir()/automontage-heavy`),
   `AUTOMONTAGE_HEAVY_SLOTS` – целое 1–8 (по умолчанию 1), `AUTOMONTAGE_HEAVY_WAIT_MS` –
   целое ≥ 0 (по умолчанию 10800000 мс, 3 ч); проверка слота каждые 5000 мс.

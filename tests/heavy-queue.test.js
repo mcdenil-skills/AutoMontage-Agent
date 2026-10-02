@@ -271,3 +271,181 @@ test('queue CLI reports occupied slots with their label, pid and start time', (t
   assert.equal(listHeavySlots(config)[0].busy, true);
   assert.equal(fs.existsSync(path.join(config.dir, 'slot-1')), false);
 });
+
+async function waitUntil(predicate, message) {
+  const deadline = Date.now() + 10_000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+for (const launcher of ['sync', 'async']) {
+  for (const descendant of ['child', 'grandchild', 'detached grandchild']) {
+    test(`dead ${launcher} owner cannot release a surviving ${descendant}`, {
+      skip: process.platform === 'win32', timeout: 20_000,
+    }, async (t) => {
+      const config = { ...heavyQueueConfig({}), dir: fs.mkdtempSync(path.join(os.tmpdir(), 'automontage-heavy-owned-')) };
+      const marker = path.join(config.dir, 'worker.json');
+      const stop = path.join(config.dir, 'stop');
+      const worker = `
+        const fs = require('node:fs');
+        fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid }));
+        setTimeout(() => process.exit(0), 12_000).unref();
+        const timer = setInterval(() => {
+          if (fs.existsSync(${JSON.stringify(stop)})) { clearInterval(timer); process.exit(0); }
+        }, 25);
+      `;
+      const command = descendant === 'child' ? worker : `
+        require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(worker)}], {
+          stdio: 'ignore', detached: ${descendant === 'detached grandchild'}
+        }).unref();
+      `;
+      const owner = spawn(process.execPath, ['-e', `
+        require(${JSON.stringify(require.resolve('../scripts/heavy-queue'))})
+          .tryAcquireHeavySlot({ label: 'owned surrogate', config: ${JSON.stringify(config)} });
+        const args = ['-e', ${JSON.stringify(command)}];
+        ${launcher === 'sync'
+    ? `require(${JSON.stringify(require.resolve('../scripts/process'))}).runTool(process.execPath, args);`
+    : `require(${JSON.stringify(require.resolve('../scripts/review/media-process'))})
+          .runMediaProcess({ command: process.execPath, args }).catch(() => {});`}
+        setInterval(() => {}, 1000);
+      `], { stdio: 'ignore' });
+      t.after(async () => {
+        fs.writeFileSync(stop, 'stop');
+        if (owner.exitCode === null && owner.signalCode === null) {
+          const exited = once(owner, 'exit');
+          owner.kill('SIGTERM');
+          await exited;
+        }
+        if (fs.existsSync(marker)) {
+          const pid = JSON.parse(fs.readFileSync(marker)).pid;
+          await waitUntil(() => {
+            try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
+          }, 'owned worker cleanup');
+        }
+        fs.rmSync(config.dir, { recursive: true, force: true });
+      });
+      await waitUntil(() => fs.existsSync(marker), 'surrogate did not start');
+      if (descendant !== 'child') await new Promise((resolve) => setTimeout(resolve, 150));
+      const exited = once(owner, 'exit');
+      owner.kill('SIGTERM');
+      await exited;
+      process.kill(JSON.parse(fs.readFileSync(marker)).pid, 0);
+      assert.equal(listHeavySlots(config)[0].busy, true);
+      const overlapping = tryAcquireHeavySlot({ label: 'next surrogate', config });
+      overlapping?.release();
+      assert.equal(overlapping, null, 'surviving owned work must keep the slot occupied');
+      fs.writeFileSync(stop, 'stop');
+      let next;
+      await waitUntil(() => {
+        next = tryAcquireHeavySlot({ label: 'next surrogate', config });
+        return Boolean(next);
+      }, 'slot was not recovered after owned work ended');
+      next.release();
+    });
+  }
+}
+
+
+test('pending launch blocks dead-owner recovery; old generation tickets do not', async (t) => {
+  const config = configFor(t);
+  writeDeadOwner(config, await deadPid());
+  const slotDir = path.join(config.dir, 'slot-0');
+  const owner = JSON.parse(fs.readFileSync(path.join(slotDir, '.project-mutation.lock')));
+  const ticketDir = path.join(slotDir, `.execution-${owner.token}`);
+  fs.mkdirSync(ticketDir);
+  fs.writeFileSync(path.join(ticketDir, 'pending.json'), JSON.stringify({ token: owner.token }));
+  assert.equal(listHeavySlots(config)[0].busy, true);
+  assert.equal(tryAcquireHeavySlot({ label: 'blocked', config }), null);
+  // Model operator verification of an interrupted, never-started launch.
+  fs.unlinkSync(path.join(ticketDir, 'pending.json'));
+  const next = hold(t, config);
+  fs.writeFileSync(path.join(ticketDir, 'stale.json'), 'invalid old generation');
+  next.release();
+  assert.equal(hold(t, config).index, 0);
+});
+
+test('owned sync capture preserves argv and explicit environment', (t) => {
+  const config = configFor(t);
+  hold(t, config);
+  const { captureTool } = require('../scripts/process');
+  const args = ['literal;$(no-command)', 'Кириллица', 'line\nbreak'];
+  const output = captureTool(process.execPath, ['-e',
+    'process.stdout.write(JSON.stringify({args:process.argv.slice(1), env:process.env.OWNED_SENTINEL}))',
+    ...args,
+  ], { maxBuffer: 65536, env: { ...process.env, OWNED_SENTINEL: 'preserved' } });
+  assert.deepEqual(JSON.parse(output), { args, env: 'preserved' });
+});
+
+test('owned async abort waits for child shutdown and preserves binary pipes', {
+  skip: process.platform === 'win32', timeout: 10_000,
+}, async (t) => {
+  const config = configFor(t);
+  const slot = hold(t, config);
+  const { runMediaProcess } = require('../scripts/review/media-process');
+  const binary = Buffer.from([0, 255, 1, 128]);
+  const result = await runMediaProcess({ command: process.execPath,
+    args: ['-e', 'process.stdin.pipe(process.stdout)'], stdin: binary, stdoutEncoding: null });
+  assert.deepEqual(result.stdout, binary);
+  const ready = path.join(config.dir, 'ready');
+  const stopped = path.join(config.dir, 'stopped');
+  const controller = new AbortController();
+  const running = runMediaProcess({ command: process.execPath, signal: controller.signal,
+    terminationGraceMs: 3000, args: ['-e', `
+      const fs = require('node:fs');
+      process.on('SIGTERM', () => setTimeout(() => {
+        fs.writeFileSync(${JSON.stringify(stopped)}, 'done'); process.exit(0);
+      }, 150));
+      fs.writeFileSync(${JSON.stringify(ready)}, 'ready');
+      setInterval(() => {}, 1000);
+    `] });
+  const rejected = assert.rejects(running, { code: 'MEDIA_PROCESS_ABORTED' });
+  await waitUntil(() => fs.existsSync(ready), 'child not ready');
+  controller.abort();
+  slot.release();
+  assert.equal(tryAcquireHeavySlot({ label: 'too soon', config }), null);
+  await rejected;
+  assert.ok(fs.existsSync(stopped), 'abort must wait for actual child shutdown');
+  const next = hold(t, config);
+  next.release();
+});
+
+
+test('owned missing executable retains normal sync and async spawn diagnostics', async (t) => {
+  const config = configFor(t);
+  hold(t, config);
+  assert.throws(() => require('../scripts/process').captureTool('automontage-missing-executable', [], {
+    maxBuffer: 1024,
+  }), /не найден.*npm run doctor/);
+  await assert.rejects(require('../scripts/review/media-process').runMediaProcess({
+    command: 'automontage-missing-executable', args: [],
+  }), { code: 'MEDIA_PROCESS_SPAWN' });
+});
+
+
+for (const status of [0, 7]) {
+  test(`Windows completion policy simulation: status ${status}`, (t) => {
+    const config = configFor(t);
+    const result = spawnSync(process.execPath, ['-e', `
+      const slot = require(${JSON.stringify(require.resolve('../scripts/heavy-queue'))})
+        .tryAcquireHeavySlot({ label: 'Windows policy surrogate', config: ${JSON.stringify(config)} });
+      // Exercise policy on the current host; this is not native Windows validation.
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      try {
+        require(${JSON.stringify(require.resolve('../scripts/process'))})
+          .runTool(process.execPath, ['-e', 'process.exit(${status})']);
+      } catch (_) {}
+      slot.release();
+    `], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const next = tryAcquireHeavySlot({ label: 'next surrogate', config });
+    if (status === 0) {
+      assert.ok(next, 'ordinary successful Windows invocation releases normally');
+      next.release();
+    } else {
+      assert.equal(next, null, 'unproven Windows completion requires operator verification');
+      assert.equal(listHeavySlots(config)[0].busy, true);
+    }
+  });
+}

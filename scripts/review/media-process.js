@@ -23,16 +23,21 @@ function runMediaProcess({
 }) {
   return new Promise((resolve, reject) => {
     let child;
+    let invocation;
     try {
       if (!(stdin === null || Buffer.isBuffer(stdin))
         || ![null, 'utf8'].includes(stdoutEncoding)) {
         throw processError('MEDIA_PROCESS_INPUT_INVALID', `invalid ${command} process input`);
       }
-      child = spawnImpl(command, args, {
+      const spawnOptions = {
         cwd,
         shell: false,
         stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-      });
+      };
+      invocation = spawnImpl === spawn
+        ? require('../heavy-execution').managedInvocation(command, args, spawnOptions)
+        : { command, args, options: spawnOptions };
+      child = spawnImpl(invocation.command, invocation.args, invocation.options);
     } catch (error) {
       reject(processError('MEDIA_PROCESS_SPAWN', `cannot start ${command}`, { cause: error }));
       return;
@@ -94,6 +99,13 @@ function runMediaProcess({
       }
     });
     child.once('close', (code, closeSignal) => {
+      const launchError = invocation.launchError?.();
+      if (!pendingError && launchError) {
+        pendingError = processError('MEDIA_PROCESS_SPAWN', `cannot start ${command}`, { cause: launchError });
+      }
+      try { invocation.complete?.(!pendingError && code === 0 && !closeSignal); } catch (error) {
+        if (!pendingError) pendingError = processError('MEDIA_PROCESS_COMPLETION', `cannot record ${command} completion`, { cause: error });
+      }
       if (timer) clearTimeout(timer);
       if (escalationTimer) clearTimeout(escalationTimer);
       signal?.removeEventListener('abort', onAbort);

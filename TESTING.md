@@ -18,14 +18,27 @@ npm test
 
 `npm test` и `npm run test:video-edit` загружают `tests/helpers/heavy-queue-isolation.cjs`:
 каждый тестовый файл получает отдельный временный каталог очереди, дочерние CLI наследуют
-его; каталог удаляется при выходе. Для отдельного теста сохраняйте preload:
+его; каталог удаляется при выходе. Playwright использует отдельный root-bootstrap:
+он принудительно создаёт свежую очередь даже при входящем `AUTOMONTAGE_HEAVY_DIR`,
+а workers и их дети наследуют её. Production sentinel проверяется в
+`heavy-queue-isolation.test.js`. Для отдельного теста сохраняйте preload:
 
 ```bash
 node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/heavy-queue.test.js
 ```
 
 Очередь и оптимизации покрывают `heavy-queue.test.js` (межпроцессное исключение,
-освобождение, мёртвый PID, таймаут, sync/async, CLI `queue` и настройки),
+освобождение, мёртвый PID, таймаут, sync/async, CLI `queue` и настройки). Его реальные
+дешёвые child-process regressions завершают только собственный surrogate-owner по SIGTERM:
+child, grandchild и detached-grandchild удерживают очередь до окончания работы для обоих
+launchers. Проверяются pending intent, старый token, binary pipes, argv/env и ожидание shutdown
+при abort. Это проверка изменённого lifecycle без дорогого полного медиа-рендера; прежние
+замеры качества/скорости остаются историческим свидетельством обычного пути. Native Windows
+и полное дерево Job Objects этой проверкой не сертифицируются.
+`build-security.test.js` и `lesson-build.test.js` подменяют managedInvocation вместе с
+своим spawnSync: их заглушки не запускают процессы и не должны создавать pending tickets.
+Реальный lifetime проверяется только отдельными cross-process regressions выше.
+Также используются `process-security.test.js`, `review-media-process.test.js`,
 `layer-render.test.js` (повторная проверка после ожидания, `--no-wait`, освобождение при ошибке,
 копирование видео и fallback), `remotion-ffmpeg-override.test.js` (изолированный limited-range
 override и команды mux/copy), `layer-import.test.js` и `review-media-import.test.js`
