@@ -13,6 +13,7 @@ const {
   createImportController,
   deriveOutputBudgets,
   importReviewMedia,
+  remuxConformity,
   parseImportHeaders,
   requiredFreeBytes,
 } = require('../scripts/review/media-import');
@@ -26,6 +27,28 @@ const {
 const { windowsFileSystem } = require('./helpers/windows-filesystem');
 
 const UUID = '4af36be4-0b26-4e6f-bd48-8bdd2215a4f1';
+
+test('remux conformity requires the full normalized master contract', () => {
+  const source = { videoCodec: 'h264', pixelFormat: 'yuv420p', rotation: 0, width: 320, height: 180,
+    fps: 30, hasAudio: true, audioCodec: 'aac', audioSampleRate: 48000, audioChannels: 2 };
+  assert.deepEqual(remuxConformity(source, 30), { ok: true, reason: null });
+  assert.deepEqual(remuxConformity({ ...source, hasAudio: false, audioCodec: null }, 30), { ok: true, reason: null });
+  assert.equal(remuxConformity(source, NaN).ok, false);
+  for (const patch of [{ videoCodec: 'hevc' }, { pixelFormat: 'yuv444p' }, { rotation: 90 }, { width: 319 },
+    { height: 179 }, { fps: 29.97 }, { audioCodec: 'mp3' }, { audioChannels: 1 }, { audioSampleRate: 44100 }]) {
+    const result = remuxConformity({ ...source, ...patch }, 30);
+    assert.equal(result.ok, false, JSON.stringify(patch));
+    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
+  }
+});
+
+test('invalid master strategy is rejected before acquiring the import controller', async () => {
+  let acquired = false;
+  await assert.rejects(importReviewMedia({ masterStrategy: 'zip',
+    controller: { acquire: () => { acquired = true; return false; } },
+  }), /masterStrategy/);
+  assert.equal(acquired, false);
+});
 
 function rawHeaders(filename, contentType, contentLength) {
   return {
