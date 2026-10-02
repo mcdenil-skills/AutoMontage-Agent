@@ -1,5 +1,5 @@
 // automontage layer render – рендер слоя kit и гейты по готовому файлу: layer check (план, секунды) →
-// ожидание свободной машины → Remotion защищённой командой → нормализация ffmpeg → G6 (длина и размер
+// слот очереди тяжёлых задач → Remotion защищённой командой → нормализация ffmpeg → G6 (длина и размер
 // к исходнику) и G7 (голос в звуке слоя) → qa/layer-<слой>-render-NN.{json,txt}.
 // Код: 0 – пройдено или только предупреждения, 1 – стоп (в том числе стоп layer check), 2 – оценить нельзя.
 //
@@ -18,12 +18,12 @@ const { remotionLayerRenderCommand } = require('../build-commands');
 const { probeMediaPath, probeVideo } = require('../media-probe');
 const { hashBytes } = require('../pult/files');
 const { runTool } = require('../process');
+const { acquireHeavySlot, heavyQueueConfig } = require('../heavy-queue');
 const { decodeAudio, envelopeDb } = require('../qa/audio');
 const { gateLayerDuration, gateVoiceLeak } = require('../qa/media-gates');
 const { getProfile } = require('../qa/profiles');
 const { buildReport, exitCodeFor, formatReport, writeReport } = require('../qa/report');
 const check = require('./check');
-const { busyRenders, waitUntilFree } = require('./busy');
 const { readLayerJson, relative, resolveLayer, sha256File } = require('./common');
 
 const FLAGS = { 'project-dir': 'value', layer: 'value', profile: 'value', 'no-wait': 'bool' };
@@ -99,7 +99,7 @@ function normalizeArgs(raw, out, samples) {
 }
 
 // deps: log/warn – вывод; runToolImpl – запуск Remotion и ffmpeg (подмена рендера в тестах); checkImpl –
-// layer check; busyImpl/sleep – опрос занятости и пауза ожидания.
+// layer check; acquireSlot – занятие слота общей очереди (контракт acquireHeavySlot).
 async function run(options, deps = {}) {
   const log = deps.log || console.log;
   const warn = deps.warn || console.error;
@@ -115,48 +115,43 @@ async function run(options, deps = {}) {
   };
   let code = await runCheck();
   if (code !== 0) return code;
-  if (!options['no-wait']) {
-    // Ожидание длится до 3 ч. Если оно было, план за это время могли поправить – проверяем его заново,
-    // чтобы рендер и G7 шли по одному и тому же плану. Машина свободна сразу – вторая проверка не нужна.
-    let waited = false;
-    const busyImpl = deps.busyImpl || busyRenders;
-    await waitUntilFree({
-      busyImpl: () => {
-        const busy = busyImpl();
-        if (busy.length) waited = true;
-        return busy;
-      },
-      log,
-      ...(deps.sleep ? { sleep: deps.sleep } : {}),
-    });
-    if (waited) {
-      log('Машина освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить');
+  const config = heavyQueueConfig();
+  if (options['no-wait']) config.waitMs = 0;
+  const slot = await (deps.acquireSlot || acquireHeavySlot)({
+    label: `layer render ${path.basename(projectDir)}/${layerName}`, config, log,
+  });
+  // Слот держится и во время нормализации/QA, до записи отчёта или отказа подготовки рендера.
+  try {
+    if (slot.waited) {
+      log('Очередь освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить');
       code = await runCheck();
       if (code !== 0) return code;
     }
-  }
-  const held = readCheckedManifest(projectDir, layerDir);
+    const held = readCheckedManifest(projectDir, layerDir);
 
-  const layer = readLayerJson(layerDir);
-  const profileName = options.profile || layer.profile || 'avatar';
-  const profile = getProfile(profileName);
-  const samples = Math.round(layer.durationInFrames * AUDIO_RATE / layer.fps);
-  if (!(Number.isSafeInteger(samples) && samples > 0)) throw new Error('layer.json: durationInFrames и fps должны быть числами больше 0');
-  const remotion = resolveRemotionCommand(ROOT);
-  const rendersDir = path.join(layerDir, 'renders');
-  fs.mkdirSync(rendersDir, { recursive: true });
-  if (!fs.lstatSync(rendersDir).isDirectory()) throw new Error(`${relative(projectDir, rendersDir)} должна быть папкой, а не ссылкой`);
-  const reportName = (n) => `layer-${layerName}-render-${pad(n)}`;
-  const claim = claimRender(rendersDir, fs, { reportFile: (n) => path.join(projectDir, 'qa', `${reportName(n)}.json`) });
-  // Заявка снимается только после записи отчёта: иначе после сбоя без готового слоя второй рендер успел
-  // бы занять этот номер до записи отчёта и потом перезаписать его.
-  try {
-    return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
-      reportName: reportName(claim.n), command: remotionLayerRenderCommand(remotion, {
-        entry: path.join(layerDir, 'src', 'index.jsx'), composition: layer.composition, output: claim.raw, publicDir: path.join(layerDir, 'public'),
-      }), runToolImpl, log });
+    const layer = readLayerJson(layerDir);
+    const profileName = options.profile || layer.profile || 'avatar';
+    const profile = getProfile(profileName);
+    const samples = Math.round(layer.durationInFrames * AUDIO_RATE / layer.fps);
+    if (!(Number.isSafeInteger(samples) && samples > 0)) throw new Error('layer.json: durationInFrames и fps должны быть числами больше 0');
+    const remotion = resolveRemotionCommand(ROOT);
+    const rendersDir = path.join(layerDir, 'renders');
+    fs.mkdirSync(rendersDir, { recursive: true });
+    if (!fs.lstatSync(rendersDir).isDirectory()) throw new Error(`${relative(projectDir, rendersDir)} должна быть папкой, а не ссылкой`);
+    const reportName = (n) => `layer-${layerName}-render-${pad(n)}`;
+    const claim = claimRender(rendersDir, fs, { reportFile: (n) => path.join(projectDir, 'qa', `${reportName(n)}.json`) });
+    // Заявка снимается только после записи отчёта: иначе после сбоя без готового слоя второй рендер успел
+    // бы занять этот номер до записи отчёта и потом перезаписать его.
+    try {
+      return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
+        reportName: reportName(claim.n), command: remotionLayerRenderCommand(remotion, {
+          entry: path.join(layerDir, 'src', 'index.jsx'), composition: layer.composition, output: claim.raw, publicDir: path.join(layerDir, 'public'),
+        }), runToolImpl, log });
+    } finally {
+      claim.release();
+    }
   } finally {
-    claim.release();
+    slot.release();
   }
 }
 

@@ -46,7 +46,7 @@ async function scaffold(t, projectOptions) {
   const logs = [];
   const quiet = { log: (line) => logs.push(String(line)), warn: (line) => logs.push(String(line)) };
   const run = (deps = {}, options = {}) => render.run({ 'project-dir': project.projectDir, layer: 'motion-v01', 'no-wait': true, ...options },
-    { ...quiet, ...deps });
+    { ...quiet, acquireSlot: async () => ({ index: 0, waited: false, release() {} }), ...deps });
   const report = (n = '01') => JSON.parse(fs.readFileSync(path.join(project.projectDir, 'qa', `layer-motion-v01-render-${n}.json`), 'utf8'));
   const sourcePath = path.join(project.projectDir, project.workspace.manifest.source.localPath);
   return { ...project, layerDir, logs, quiet, run, report, sourcePath };
@@ -368,29 +368,85 @@ test('claimRender re-checks the finished file after claiming and moves on if ano
   assert.equal(fs.readFileSync(path.join(dir, 'layer-01.mp4'), 'utf8'), 'чужой готовый слой');
 });
 
-// Отклонение от плана: после ожидания свободной машины layer check запускается ещё раз. Ожидание длится до
+// После ожидания очереди layer check запускается ещё раз. Ожидание длится до
 // 3 ч; план, поправленный за это время, рендерится уже новым, и G7 должен судить по его манифесту, а не по
 // манифесту проверки трёхчасовой давности. Без ожидания – одна проверка.
-test('a plan edited while waiting for a free machine is checked again before the render', { skip: !hasFfmpeg }, async (t) => {
-  const { layerDir, run } = await scaffold(t);
+test('a plan edited while waiting in the queue is checked again before the render', { skip: !hasFfmpeg }, async (t) => {
+  const { layerDir, run, logs } = await scaffold(t);
   let checks = 0;
   const checkImpl = (options, deps) => { checks += 1; return check.run(options, deps); };
-  let polls = 0;
-  const busyImpl = () => (polls++ === 0 ? [{ pid: 4242, command: 'node node_modules/@remotion/cli/remotion-cli.js render x' }] : []);
-  const sleep = async () => fs.writeFileSync(path.join(layerDir, 'src', 'plan.js'), STATIC_PLAN);
+  let releases = 0;
+  const acquireSlot = async () => {
+    assert.equal(checks, 1, 'первая проверка проходит до занятия слота');
+    fs.writeFileSync(path.join(layerDir, 'src', 'plan.js'), STATIC_PLAN);
+    return { index: 0, waited: true, release() { releases += 1; } };
+  };
   const fake = fakeRemotion(6, 'anullsrc=r=48000:cl=stereo:d=6');
-  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, busyImpl, sleep }, { 'no-wait': false }), 1);
+  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, acquireSlot }, { 'no-wait': false }), 1);
   assert.equal(checks, 2);
   assert.equal(fake.calls.length, 0);
+  assert.equal(releases, 1);
+  assert.ok(logs.includes('Очередь освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить'));
 });
 
-test('without waiting (the machine is already free) layer check runs once', { skip: !hasFfmpeg }, async (t) => {
+test('a free queue means one layer check', { skip: !hasFfmpeg }, async (t) => {
   const { projectDir, run } = await scaffold(t);
   let checks = 0;
   const checkImpl = (options, deps) => { checks += 1; return check.run(options, deps); };
   const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
-  const sleep = async () => { throw new Error('машина свободна – ждать нечего'); };
-  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, busyImpl: () => [], sleep }, { 'no-wait': false }), 0);
+  let acquired = 0;
+  const acquireSlot = async () => {
+    assert.equal(checks, 1);
+    acquired += 1;
+    return { index: 0, waited: false, release() {} };
+  };
+  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, acquireSlot }, { 'no-wait': false }), 0);
+  assert.equal(acquired, 1);
   assert.equal(checks, 1);
   assert.equal(fake.calls.length, 1);
+});
+
+test('the slot is held until the report is written, also when Remotion throws', { skip: !hasFfmpeg }, async (t) => {
+  for (const fails of [false, true]) {
+    const { projectDir, run, report } = await scaffold(t);
+    let held = false;
+    let releases = 0;
+    const acquireSlot = async () => {
+      held = true;
+      return { index: 0, waited: false, release() {
+        assert.ok(fs.existsSync(path.join(projectDir, 'qa', 'layer-motion-v01-render-01.json')));
+        held = false;
+        releases += 1;
+      } };
+    };
+    const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
+    const runToolImpl = (command, args, options) => {
+      assert.ok(held, `${options.stage} должен выполняться внутри слота`);
+      if (fails && options.stage === 'layer Remotion render') throw new Error('Remotion failed');
+      return fake.runToolImpl(command, args, options);
+    };
+    const log = (line) => {
+      if (String(line).startsWith('Отчёт:') && String(line).includes('render-01')) assert.ok(held);
+    };
+    assert.equal(await run({ acquireSlot, runToolImpl, log }), fails ? 2 : 0);
+    assert.equal(held, false);
+    assert.equal(releases, 1);
+    assert.equal(report().error, fails ? 'Remotion failed' : null);
+  }
+});
+
+test('--no-wait does not wait in the queue and the label only contains the project basename', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, run } = await scaffold(t);
+  let acquired = 0;
+  const busy = Object.assign(new Error('машина занята: другая задача'), { code: 'HEAVY_QUEUE_BUSY' });
+  const acquireSlot = async ({ config, label }) => {
+    acquired += 1;
+    assert.equal(config.waitMs, 0);
+    assert.equal(label, `layer render ${path.basename(projectDir)}/motion-v01`);
+    throw busy;
+  };
+  let renders = 0;
+  await assert.rejects(run({ acquireSlot, runToolImpl() { renders += 1; } }), (error) => error === busy);
+  assert.equal(acquired, 1);
+  assert.equal(renders, 0);
 });
