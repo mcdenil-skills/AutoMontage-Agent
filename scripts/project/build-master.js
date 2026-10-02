@@ -10,7 +10,7 @@ const { displayDimensions, probeMediaPath, probeVideo } = require('../media-prob
 const { runTool } = require('../process');
 const { collectWords } = require('../tighten');
 const { runSegmentsTrim, runTrim } = require('../trim-media');
-const { parseQuality, workingSize } = require('../working-quality');
+const { parseQuality, workingSize, orientedSampleAspectRatio } = require('../working-quality');
 const {
   normalizeSourceMetadata,
   projectRelative,
@@ -117,7 +117,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
     stage: 'master source media probe',
     containerDurationFallback: true,
   });
-  const target = workingSize(displayDimensions(sourceMedia), quality);
+  const target = workingSize({ ...displayDimensions(sourceMedia), sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) }, quality);
   const size = { width: target.width, height: target.height };
   const result = publishSourceRevision({
     workspace,
@@ -132,7 +132,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
         input: sourcePath,
         output,
         intervals: normalizedEdit.keep.map(({ start, end }) => [start, end]),
-        scale: target.scaled ? size : null,
+        scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) } : {}) } : null,
         audioFadeSec: 0.04,
         precision: 6,
       });

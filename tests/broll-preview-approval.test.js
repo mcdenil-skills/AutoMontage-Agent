@@ -16,7 +16,7 @@ const {
 } = require('../scripts/project/preview-workspace');
 const { validateLessonBrief } = require('../scripts/lesson/brief');
 const hash = (x) => createHash('sha256').update(x).digest('hex');
-function fixture(t) {
+function fixture(t, {width=320,height=180,previewWidth=width,previewHeight=height} = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'broll-gate-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const source = path.join(dir, 'source.mp4');
@@ -35,8 +35,8 @@ function fixture(t) {
     brollReviewPolicy: 'preview-required',
     output: {
       aspect: 'horizontal',
-      width: 320,
-      height: 180,
+      width,
+      height,
       fps: 25,
       durationInFrames: 100,
     },
@@ -53,8 +53,8 @@ function fixture(t) {
     const staged = path.join(workspace.dir, 'previews', 'stage.mp4');
     fs.writeFileSync(staged, 'preview bytes');
     return publishCurrentPreview(workspace, plan, staged, {
-      width: 320,
-      height: 180,
+      width: previewWidth,
+      height: previewHeight,
       fps: 25,
       generatedAt: new Date().toISOString(),
     });
@@ -793,3 +793,11 @@ test('final all-file barrier rejects a prior preview modified during the later s
   assert.throws(() => approveBrief(f.workspace, f.draft.jsonPath, {confirmPreviewViewed:true,fileSystem}), /preview/i);
   assert.equal(mutated,true);assert.equal(readProjectManifest(f.workspace.dir).briefs.length,1);
 });
+
+for (const [width,height,previewWidth,previewHeight] of [[2048,1080,1920,1012],[1080,2048,1012,1920]]) {
+  test(`approval accepts actual even DCI preview ${width}x${height}`, (t) => {
+    const f=fixture(t,{width,height,previewWidth,previewHeight});
+    f.preview();
+    assert.doesNotThrow(() => approveBrief(f.workspace,f.draft.jsonPath,{confirmPreviewViewed:true}));
+  });
+}

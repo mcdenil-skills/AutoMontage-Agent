@@ -359,6 +359,8 @@ test('master quality defaults to 1080p and CLI aliases normalize', () => {
   assert.throws(() => parseMasterOptions(['--project-dir', 'p', '--edit', 'e', '--quality', '720p']), /неизвестное качество/);
 });
 for (const [label, quality, media, target] of [
+  ['anamorphic', undefined, { width: 2880, height: 2160, rotation: 0, sampleAspectRatio: '4:3' }, { width: 1920, height: 1080 }],
+  ['rotated anamorphic', undefined, { width: 2880, height: 2160, rotation: 90, sampleAspectRatio: '4:3' }, { width: 1080, height: 1920 }],
   ['portrait', undefined, { width: 2160, height: 3840, rotation: 0 }, { width: 1080, height: 1920 }],
   ['source', 'source', { width: 2160, height: 3840, rotation: 0 }, { width: 2160, height: 3840 }],
   ['rotated phone', undefined, { width: 3840, height: 2160, rotation: 90 }, { width: 1080, height: 1920 }],

@@ -68,6 +68,9 @@ function buildSegmentsConcatFilter(segments, {
   if (scale !== null && ![scale.width, scale.height].every((side) => Number.isSafeInteger(side) && side > 0 && side % 2 === 0)) {
     throw new Error('scale: размеры масштаба должны быть целыми чётными числами > 0');
   }
+  if (scale?.sampleAspectRatio !== undefined && !/^[1-9]\d*:[1-9]\d*$/.test(scale.sampleAspectRatio)) {
+    throw new Error('scale: неверное соотношение пикселей');
+  }
   const fade = finiteNumber(audioFadeSec, 'audio fade', { min: 0, max: 1 });
   if (fps !== null && !FILTER_RATE.test(String(fps))) {
     throw new Error('FPS для склейки должен быть дробью вида 30000/1001');
@@ -106,7 +109,7 @@ function buildSegmentsConcatFilter(segments, {
     videoInputs += `[v${index}]`;
     audioInputs += `[a${index}]`;
   });
-  const videoOutput = scale === null ? '[vout]' : `[vcat];[vcat]scale=${scale.width}:${scale.height}:flags=lanczos,setsar=1[vout]`;
+  const videoOutput = scale === null ? '[vout]' : `[vcat];[vcat]scale=${scale.width}:${scale.height}:flags=lanczos,setsar=${scale.sampleAspectRatio ? scale.sampleAspectRatio.replace(':', '/') : '1'}[vout]`;
   return `${filter}${videoInputs}concat=n=${list.length}:v=1:a=0${videoOutput};${audioInputs}concat=n=${list.length}:v=0:a=1[aout]`;
 }
 

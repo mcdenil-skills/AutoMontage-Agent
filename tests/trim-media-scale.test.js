@@ -28,3 +28,8 @@ test('invalid scale cannot enter the ffmpeg filter', () => {
     }
   }
 });
+
+test('native odd-side scaling preserves an explicit SAR and rejects filter injection', () => {
+  assert.match(buildConcatFilter([[0,1]],{scale:{width:720,height:1280,sampleAspectRatio:'4:3'}}), /setsar=4\/3\[vout\]/);
+  for (const sampleAspectRatio of ['4:3;null','0:1','1:0','1/1']) assert.throws(() => buildConcatFilter([[0,1]],{scale:{...scale,sampleAspectRatio}}), /scale/);
+});

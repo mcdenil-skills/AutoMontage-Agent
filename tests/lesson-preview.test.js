@@ -300,8 +300,8 @@ test('runPreview binds the exact bytes parsed before preparation, not a later sa
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'previews/current-preview.mp4')), false);
 });
 
-for (const [width, height, scale] of [[2160, 3840, 0.5], [1080, 1920, 1]]) {
-  test(`preview ${width}x${height} renders 1080x1920 with scale ${scale}`, (t) => {
+for (const [width, height, scale, expectedWidth, expectedHeight] of [[2160, 3840, 0.5, 1080, 1920], [1080, 1920, 1, 1080, 1920], [2048, 1080, 0.9375, 1920, 1012], [1080, 2048, 0.9375, 1012, 1920]]) {
+  test(`preview ${width}x${height} renders even H264 dimensions with scale ${scale}`, (t) => {
     const fixture = makeProject(t);
     const { prepareLessonPreview } = require('../scripts/lesson/preview');
     let renderArgs;
@@ -317,9 +317,9 @@ for (const [width, height, scale] of [[2160, 3840, 0.5], [1080, 1920, 1]]) {
         if (options.stage === 'preview Remotion') renderArgs = args;
         tools.runToolImpl(command, args, options);
       },
-      probeVideoImpl: () => ({ width: 1080, height: 1920, fps: 25, duration: 4 }),
+      probeVideoImpl: () => ({ width: expectedWidth, height: expectedHeight, fps: 25, duration: 4 }),
     });
     assert.ok(renderArgs.includes(`--scale=${scale}`), renderArgs.join(' '));
-    assert.deepEqual([result.metadata.width, result.metadata.height], [1080, 1920]);
+    assert.deepEqual([result.metadata.width, result.metadata.height], [expectedWidth, expectedHeight]);
   });
 }

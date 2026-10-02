@@ -98,7 +98,7 @@ function buildTakesMaster({ workspace, edit, editRelative, source, quality = '10
         inputs,
         output,
         segments,
-        scale: target.scaled ? size : null,
+        scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: first.sampleAspectRatio } : {}) } : null,
         audioFadeSec: 0.04,
         precision: 6,
         fps: `${rate.numerator}/${rate.denominator}`,

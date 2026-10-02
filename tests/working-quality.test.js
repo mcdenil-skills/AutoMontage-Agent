@@ -43,3 +43,14 @@ test('invalid dimensions fail before arithmetic', () => {
   }
   assert.throws(() => workingSize({ width: 1, height: 100 }), /минимум 2/);
 });
+
+test('preview H264 geometry matches Remotion even rounding for DCI in both orientations', () => {
+  const { previewSize } = require('../scripts/working-quality');
+  assert.deepEqual(previewSize({width:2048,height:1080}), {width:1920,height:1012});
+  assert.deepEqual(previewSize({width:1080,height:2048}), {width:1012,height:1920});
+});
+test('working square pixels preserve anamorphic proportions without upscaling', () => {
+  assert.deepEqual(workingSize({width:2880,height:2160,sampleAspectRatio:'4:3'}), {width:1920,height:1080,scaled:true});
+  assert.deepEqual(workingSize({width:2160,height:2880,sampleAspectRatio:'3:4'}), {width:1080,height:1920,scaled:true});
+  assert.deepEqual(workingSize({width:2880,height:2160,sampleAspectRatio:'4:3'}, 'source'), {width:2880,height:2160,scaled:false});
+});

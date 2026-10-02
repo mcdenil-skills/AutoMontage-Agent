@@ -111,3 +111,17 @@ test('real trim scales a portrait in the same encode to 1080p square pixels', { 
   assert.equal(probe.status, 0, probe.stderr);
   assert.deepEqual(JSON.parse(probe.stdout).streams[0], { width: 1080, height: 1920, sample_aspect_ratio: '1:1', r_frame_rate: '30/1' });
 });
+
+test('real anamorphic trim preserves display proportions when converting to square pixels', {timeout:120000}, (t) => {
+  if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {t.skip('requires ffmpeg');return;}
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'automontage-sar-real-'));
+  t.after(() => fs.rmSync(dir,{recursive:true,force:true}));
+  const input=path.join(dir,'input.mp4'); const output=path.join(dir,'output.mp4');
+  runFixture('ffmpeg',['-y','-v','error','-f','lavfi','-i','testsrc2=s=160x120:r=25:d=0.4','-f','lavfi','-i','sine=duration=0.4','-vf','setsar=4/3','-c:v','libx264','-c:a','aac','-shortest',input],dir);
+  const {workingSize}=require('../scripts/working-quality');
+  const {width,height}=workingSize({width:160,height:120,sampleAspectRatio:'4:3'});
+  runTrim({input,output,intervals:[[0,0.4]],scale:{width,height}});
+  const probe=spawnSync('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height,sample_aspect_ratio,display_aspect_ratio','-of','json',output],{encoding:'utf8'});
+  assert.equal(probe.status,0,probe.stderr);
+  assert.deepEqual(JSON.parse(probe.stdout).streams[0],{width:160,height:90,sample_aspect_ratio:'1:1',display_aspect_ratio:'16:9'});
+});
