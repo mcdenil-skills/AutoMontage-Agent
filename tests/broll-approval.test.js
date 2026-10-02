@@ -274,7 +274,7 @@ test('common approval barrier catches b-roll bytes changed during the final prev
   fs.writeFileSync(draftPath, JSON.stringify(b.brief));
   const planned = planPreview(b.workspace, {briefPath:draftPath,briefSha256:crypto.createHash('sha256').update(fs.readFileSync(draftPath)).digest('hex'),range:{kind:'full',fromSec:0,toSec:4}});
   const staged = path.join(b.workspace.dir,'previews/stage.mp4');fs.writeFileSync(staged,'preview');
-  publishCurrentPreview(b.workspace,planned,staged,{width:960,height:540,fps:25,generatedAt:new Date().toISOString()});
+  publishCurrentPreview(b.workspace,planned,staged,{width:1920,height:1080,fps:25,generatedAt:new Date().toISOString()});
   const descriptors = new Map();let sourceReads=0;let changed=false;
   const fileSystem = new Proxy(fs,{get(target,key){
     if(key==='openSync')return (filename,...args)=>{const fd=target.openSync(filename,...args);descriptors.set(fd,String(filename));return fd;};

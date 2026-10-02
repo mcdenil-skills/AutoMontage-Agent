@@ -710,6 +710,12 @@ for (const [width, height, warns] of [[2160, 3840, true], [1080, 1920, false]]) 
       ...deps,
       probeVideo: () => ({ width, height, fps: 25, duration: 6 }),
       probeMedia: () => ({ mediaKind: 'video', width, height, rotation: 0, videoDurationSec: 6 }),
+      // The warning/manifest contract does not depend on encoding a four-second 4K placeholder.
+      runToolImpl(command, args, options) {
+        assert.equal(command, 'ffmpeg');
+        assert.match(options.stage, /^layer placeholder (stock|screenshot)$/);
+        fs.writeFileSync(args.at(-1), 'placeholder');
+      },
     });
     assert.equal(result, 0);
     const layer = JSON.parse(fs.readFileSync(path.join(projectDir, 'motion-v01', 'layer.json')));

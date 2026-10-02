@@ -201,7 +201,7 @@ test('workspace approval rejects pending intent and strips resolved intent while
   const {planPreview,publishCurrentPreview} = require('../scripts/project/preview-workspace');
   const plan = planPreview(workspace,{briefPath:paths.jsonPath,briefSha256:require('node:crypto').createHash('sha256').update(fs.readFileSync(paths.jsonPath)).digest('hex'),range:{kind:'full',fromSec:0,toSec:4}});
   const staged = path.join(workspace.dir,'previews','stage.mp4'); fs.writeFileSync(staged,'preview fixture');
-  publishCurrentPreview(workspace,plan,staged,{width:960,height:540,fps:25,generatedAt:new Date().toISOString()});
+  publishCurrentPreview(workspace,plan,staged,{width:1920,height:1080,fps:25,generatedAt:new Date().toISOString()});
   const approved = approveBrief(workspace, paths.jsonPath,{confirmPreviewViewed:true});
   const approvedBrief = JSON.parse(fs.readFileSync(approved.jsonPath, 'utf8'));
   assert.equal(approvedBrief.brollReviewPolicy, 'preview-required');

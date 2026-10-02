@@ -53,8 +53,8 @@ function fixture(t) {
     const staged = path.join(workspace.dir, 'previews', 'stage.mp4');
     fs.writeFileSync(staged, 'preview bytes');
     return publishCurrentPreview(workspace, plan, staged, {
-      width: 160,
-      height: 90,
+      width: 320,
+      height: 180,
       fps: 25,
       generatedAt: new Date().toISOString(),
     });
@@ -129,8 +129,8 @@ test('preview publication rejects same-path draft edits after planning', (t) => 
   assert.throws(
     () =>
       publishCurrentPreview(f.workspace, plan, staged, {
-        width: 160,
-        height: 90,
+        width: 320,
+        height: 180,
         fps: 25,
         generatedAt: new Date().toISOString(),
       }),
