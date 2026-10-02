@@ -801,3 +801,16 @@ for (const [width,height,previewWidth,previewHeight] of [[2048,1080,1920,1012],[
     assert.doesNotThrow(() => approveBrief(f.workspace,f.draft.jsonPath,{confirmPreviewViewed:true}));
   });
 }
+
+// Ролики, начатые до рабочего 1080p, хранят preview в половину композиции: их утверждение не требует пересборки.
+test('approval still accepts a legacy half-size preview of an unchanged draft', (t) => {
+  const f=fixture(t,{width:1080,height:1920,previewWidth:540,previewHeight:960});
+  f.preview();
+  assert.doesNotThrow(() => approveBrief(f.workspace,f.draft.jsonPath,{confirmPreviewViewed:true}));
+});
+
+test('approval rejects a preview that is neither the current nor the legacy size', (t) => {
+  const f=fixture(t,{width:1080,height:1920,previewWidth:720,previewHeight:1280});
+  f.preview();
+  assert.throws(() => approveBrief(f.workspace,f.draft.jsonPath,{confirmPreviewViewed:true}), /preview/i);
+});

@@ -399,7 +399,8 @@ resolver: они возвращали бы race/path leak или ослабля�
 persisted draft, использует те же `ReelScenes` props, isolated media bundle, finishing и music
 ducking, но имеет закрытый output contract только в `previews/`.
 
-Preview отличается от финала только половинным разрешением, CRF 28 и меткой «ЧЕРНОВИК».
+Preview отличается от финала только разрешением (длинная сторона не больше 1920, см. D-043), CRF 28
+и меткой «ЧЕРНОВИК».
 Он не может обновлять `renders`, `latestRender` или `final`; approved-only builder по-прежнему
 отклоняет draft. Review server сам render не запускает, а лишь показывает уже опубликованный
 `current-preview.mp4` отдельным token-protected плеером с identity/SHA-256 проверкой. Отклонены
