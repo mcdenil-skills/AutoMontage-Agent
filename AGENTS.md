@@ -228,6 +228,7 @@ npm run review -- --project-dir <путь>  # локальная проверк�
 node scripts/cli.js --help     # актуальные пользовательские флаги
 automontage pult                        # «Пульт роликов» со всеми роликами
 automontage inbox                       # правки и утверждения из пульта для агента
+automontage clean                       # отчёт, что можно удалить у готовых роликов; --yes удаляет
 ```
 
 Боевые команды и проверки lesson-процесса описаны в `docs/TEMPLATES.md` и `TESTING.md`,
