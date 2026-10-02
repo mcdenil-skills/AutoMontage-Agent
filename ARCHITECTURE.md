@@ -203,7 +203,8 @@ mutation lease, отпускается в `finally`) и под lease, по об�
 lease ставит `confirmed` с `confirmedAt`/`confirmedBy` только для активной записи в `review`
 (иначе `code: 'ROUGH_CUT_MISSING'`) и только если байты копии равны `sha256`, байты списка –
 `editSha256`, а заданный `expectedSha256` – `sha256` (иначе `code: 'ROUGH_CUT_CHANGED'`).
-`automontage roughcut confirm` вызывает её с `by: 'chat'`.
+`automontage roughcut confirm` вызывает её с `by: 'chat'`, маршрут пульта
+`POST /api/roughcut/confirm` – с `by: 'pult'` (раздел 3.4).
 
 `scripts/project/clean.js` (`automontage clean`) чистит диск у готовых роликов. Планировщик
 `planProjectCleanup` берёт только проекты, которые пульт считает готовыми (`deriveVariantStatus`
@@ -695,7 +696,7 @@ flowchart LR
   S --> C["catalog: project.json + pult-card.json"]
   S --> K["projects/.pult: state, cache, instance, serve.log"]
   S --> M["projects/&lt;id&gt;/pult: comments.json, frames"]
-  S --> B["approveBrief движка"]
+  S --> B["approveBrief и confirmRoughCut движка"]
   S --> R["Review Workbench в том же процессе"]
   A["Агент"] --> X["automontage inbox"] --> M
   X --> K
@@ -754,6 +755,26 @@ flowchart LR
   а nextStep карточки заменяется на `Утверждено, в архиве – агент соберёт финал по вашей
   просьбе` только без невыполненных правок – иначе он остаётся обычным `Ждёт агента: …`, не
   трогая сами entries каталога.
+- Черновая нарезка (раздел 3.2) – отдельный вид видео `roughcut`. Пока этап активен и копия
+  лежит на диске, статус берётся из `roughCut.status` (новые правки по-прежнему первыми):
+  `review` – «Ждёт меня», «Черновая нарезка – посмотрите и отметьте оговорки»; `confirmed` –
+  «В работе», «Нарезка подтверждена – агент собирает слой». На экране – копия нарезки, и
+  `approvable` ложно: утвердить можно только preview, билета утверждения у нарезки нет. Вариант
+  получает `roughCutConfirmable` (нарезка в `review` и видео играет), `roughCutCuts` (время
+  выреза в нарезке, сколько секунд убрано, причина из `note` не длиннее 500 знаков) и
+  `roughCutTicket` – HMAC того же секрета сессии от `key\0roughcut\0editPath\0sha256`: новая
+  нарезка делает старый билет недействительным, а слово `roughcut` не даёт выдать билет нарезки
+  за билет утверждения и наоборот. `POST /api/roughcut/confirm` принимает ровно
+  `{key, ticket, confirmViewed}` (`confirmViewed` не `true` – `400 CONFIRMATION_REQUIRED`) и
+  проходит те же три шага, что и утверждение: билет (иначе `409 ROUGHCUT_CHANGED`), байты
+  отдаваемой копии против `roughCut.sha256` (иначе `409 ROUGHCUT_DAMAGED`) и
+  `confirmRoughCut(workspace, { expectedSha256, by: 'pult' })`. Отказ движка сначала сверяется с
+  билетом текущей записи: нарезка сменилась или `ROUGH_CUT_MISSING` (гонка с master) –
+  `409 ROUGHCUT_CHANGED`; `ROUGH_CUT_CHANGED` при актуальном билете (байты копии или списка
+  кусков, который правили после сборки) – `409 ROUGHCUT_DAMAGED`, обновление страницы тут не
+  поможет; `PROJECT_MANIFEST_CONFLICT` – `409 PROJECT_BUSY`; остальное – `500 INTERNAL`, в лог
+  – только класс ошибки. Подтверждает нарезку только человек этой кнопкой или словами в чате
+  (`automontage roughcut confirm`); агент маршрут не вызывает.
 - Сервер слушает только `127.0.0.1`, требует `Bearer`-токен для API (для медиа – `?token=`,
   потому что `<video>` и `<img>` не шлют заголовки), проверяет `Host` на всех маршрутах и
   `Origin` на изменяющих. Тело запроса – JSON до 64 KiB ровно с ожидаемыми полями. Файлы
@@ -768,7 +789,8 @@ flowchart LR
   'self'` в CSP уже разрешает его загрузку без отдельного `font-src`.
 - Пульт ничего не удаляет и не перемещает в папках роликов. Он пишет только `projects/.pult/`
   (`state.json` архива, `cache/`, `instance.json`, `starting.lock`, `serve.log`) и
-  `projects/<id>/pult/` (`comments.json`, `frames/`); утверждённый brief создаёт движок.
+  `projects/<id>/pult/` (`comments.json`, `frames/`); утверждённый brief и подтверждение
+  черновой нарезки в `project.json` записывает движок.
   Симлинк вместо `.pult` или `pult/` отклоняется до записи и до чтения кэша, служебные JSON
   читаются без следования симлинку.
 - Живой экземпляр описывает `instance.json` (права `0600`: pid, порт, токен). `checkHealth`
