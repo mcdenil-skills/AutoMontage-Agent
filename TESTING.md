@@ -229,7 +229,8 @@ SIGTERM, `/dev/fd`) пропускаются сами через `process.platfo
 PowerShell может скрыть код выхода нативной команды за пайпом. Браузерный `pult-ui.spec.js`
 в этот шаг не входит и остаётся в `review-ui`. Ещё один шаг запускает настоящие тесты склейки
 дублей (`tests/trim-media-real.test.js`, `tests/takes-master-media.test.js`,
-`tests/take-pauses.test.js`, `tests/project-takes.test.js`) после проверки кодера `libx264`.
+`tests/take-pauses.test.js`, `tests/project-takes.test.js`) и черновой нарезки
+(`tests/rough-cut-media.test.js`) после проверки кодера `libx264`.
 Локально проверяются команды и YAML; hosted Windows run остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
@@ -248,6 +249,16 @@ Windows CI прогоняет их вместе с `tests/project-takes.test.js`
 FFmpeg нет `libx264`, чтобы тесты не пропустились молча. Контракт дублей закрывают
 `tests/takes-edit.test.js`, `tests/take-pauses.test.js`, `tests/takes-master.test.js`,
 `tests/project-takes.test.js` и `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
+Черновую нарезку (`automontage roughcut`) закрывают два файла, тоже входящие в
+`npm run test:video-edit`. `tests/rough-cut.test.js` на фейках ffmpeg/ffprobe проверяет аргументы
+`encoder: 'proxy'`, граф склейки как у master, размер 720p (и у повёрнутой телефонной записи –
+портрет, а копия в чужом размере отвергается), слот очереди до блокировки проекта и его возврат при
+ошибке, отказы без записи в паспорт (имя, ревизия, уже готовая копия, FPS), абсолютный `--edit`,
+запись `roughCut` без новой ревизии, `confirm` (`ROUGH_CUT_MISSING`, `ROUGH_CUT_CHANGED` при
+подменённой копии, изменённом списке или чужом `expectedSha256`), разбор опций и склонение
+«месте/местах». `tests/rough-cut-media.test.js` на настоящем FFmpeg собирает копию из прямого и
+повёрнутого на 90° исходника 540×960: `h264`, `yuv420p`, 4 ± 0,08 с, тот же 540×960 без увеличения
+и атом `moov` перед `mdat`; Windows CI запускает его в шаге склейки дублей.
 `tests/take-pauses.test.js` закрывает уровни, порог паузы, выбор точки разреза, запрет перехода
 через другое слово, общие стыки и чтение звука на оси `trim` (в том числе MPEG-TS с поздним звуком);
 `tests/takes-master-media.test.js` проверяет на настоящем FFmpeg, что граница внутри звучания

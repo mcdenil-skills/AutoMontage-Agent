@@ -143,7 +143,7 @@ jobs:
 
       - name: Проверить склейку дублей на настоящем FFmpeg 7
         shell: pwsh
-        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/trim-media-real.test.js tests/takes-master-media.test.js tests/take-pauses.test.js tests/project-takes.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/trim-media-real.test.js tests/takes-master-media.test.js tests/take-pauses.test.js tests/project-takes.test.js tests/rough-cut-media.test.js
 
   review-ui:
     name: Node 20 · Review Chromium tests

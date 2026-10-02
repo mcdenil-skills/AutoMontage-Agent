@@ -180,6 +180,27 @@ Master полностью декодирует результат и атома�
 (короткая сторона 720, без увеличения, чётные стороны) и определяет охрану
 `assertRoughCutSettled` для `master` и `layer new` (ошибка с `code === 'ROUGH_CUT_PENDING'`).
 
+`automontage roughcut` (`scripts/project/rough-cut-cli.js` → `buildRoughCut` в
+`scripts/project/rough-cut.js`) собирает копию нарезки, не создавая ревизии исходника. До слота
+очереди: имя `edit/roughcut-vNN.json` (абсолютный `--edit` внутри проекта сначала переводится в
+относительный), та же `validateSourceEdit`, что у master, FPS исходника и отказ, если
+`previews/roughcut-vNN.mp4` уже есть (нужен `edit/roughcut-v(NN+1).json`). Размер копии –
+`roughCutSize(workingSize(displayDimensions + orientedSampleAspectRatio, '1080p'))`, то есть повёрнутая
+телефонная запись даёт портретную копию. Затем слот общей очереди `roughcut <папка>` (до project
+mutation lease, отпускается в `finally`) и под lease, по образцу `publishSourceRevision`: сверка
+активных `source.revision`/`localPath` и SHA-256 байтов списка, `runTrim()` тем же графом
+`buildConcatFilter` (`audioFadeSec: 0.04`, `precision: 6`, `scale`) в
+`previews/.roughcut-vNN-<token>.tmp.mp4`, но с `encoder: 'proxy'` (`-preset ultrafast -crf 26
+-pix_fmt yuv420p`, `aac -b:a 128k`, `-movflags +faststart`; по умолчанию `encoder: 'master'` с
+прежними аргументами), полное декодирование `ffmpeg -f null`, сверка длительности
+(`max(0.08, 1/fps)`), FPS и размера копии, повторная сверка байтов списка, `linkSync` в итоговое имя
+и последней – запись `roughCut` со `status: review` (`purpose: 'rough-cut-manifest'`). Ошибка на любом
+шаге убирает стадию и не меняет паспорт. `confirmRoughCut(workspace, { expectedSha256, by })` под
+lease ставит `confirmed` с `confirmedAt`/`confirmedBy` только для активной записи в `review`
+(иначе `code: 'ROUGH_CUT_MISSING'`) и только если байты копии равны `sha256`, байты списка –
+`editSha256`, а заданный `expectedSha256` – `sha256` (иначе `code: 'ROUGH_CUT_CHANGED'`).
+`automontage roughcut confirm` вызывает её с `by: 'chat'`.
+
 `scripts/project/clean.js` (`automontage clean`) чистит диск у готовых роликов. Планировщик
 `planProjectCleanup` берёт только проекты, которые пульт считает готовыми (`deriveVariantStatus`
 из `scripts/pult/status.js` и новые правки из `scripts/pult/comments.js`), без lock и старше
@@ -842,7 +863,7 @@ flowchart TD
   G9–G11, исключения через `applyWaivers`), дополнительно меряя ffprobe клипы stock-вставок для
   G10. Любой отказ сборки или формы манифеста – отчёт с `error`, код 2.
 - **Машинная очередь** (`scripts/heavy-queue.js`, D-044) общая для `layer render`,
-  `layer import`, `preview`, final render (lesson и Dynamic) и `master`. Атомарные
+  `layer import`, `preview`, final render (lesson и Dynamic), `master` и `roughcut`. Атомарные
   project mutation leases папок `slot-0` … `slot-(N-1)` исключают одновременное занятие слота,
   recovery использует тот же identity-проверенный протокол, но смерти оркестратора недостаточно.
   `heavy-execution.js` пишет intent в `.execution-<lease-token>/` до запуска;
@@ -1036,7 +1057,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Пользовательский CLI | `scripts/cli.js`, `scripts/doctor.js` |
 | Оркестрация и процессы | `scripts/build.js`, `scripts/env.js`, `scripts/process.js`, `scripts/media-probe.js`, `scripts/source-timing.js` |
 | Папки и версии роликов | `scripts/project/workspace.js`, `scripts/project/build-context.js` |
-| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/project/take-pauses.js`, `scripts/trim-media.js` |
+| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/project/take-pauses.js`, `scripts/project/rough-cut-model.js`, `scripts/project/rough-cut.js`, `scripts/project/rough-cut-cli.js`, `scripts/trim-media.js` |
 | Транскрипция и субтитры | `scripts/transcribe.py`, `scripts/build-captions.js` |
 | Lesson brief | `scripts/gen-brief.js`, `scripts/lesson/*` |
 | Локальная проверка | `scripts/review/*`, `review/*` |
