@@ -22,6 +22,7 @@ const {
   preflightBriefBrollMedia,
   verifyBriefBrollMedia,
 } = require('../lesson/broll-media-files');
+const { roughCutPaths } = require('./rough-cut-model');
 const projectManifestValidator = new Ajv({ allErrors: true }).compile(projectSchema);
 const TEMPORARY_ID = /^[A-Za-z0-9_-]+$/;
 
@@ -511,6 +512,24 @@ function validateProjectManifest(manifest, { projectDir, fileSystem = fs } = {})
   if (new Set(takeIds).size !== takeIds.length) {
     throw new Error('manifest.takes ids must be unique');
   }
+  const roughCut = migratedManifest.roughCut;
+  if (roughCut) {
+    if (roughCut.status === 'confirmed') {
+      if (!roughCut.confirmedAt) {
+        throw new Error('manifest.roughCut.confirmedAt is required when status is confirmed');
+      }
+      if (!roughCut.confirmedBy) {
+        throw new Error('manifest.roughCut.confirmedBy is required when status is confirmed');
+      }
+    } else if (roughCut.confirmedAt !== undefined || roughCut.confirmedBy !== undefined) {
+      const extra = roughCut.confirmedAt !== undefined ? 'confirmedAt' : 'confirmedBy';
+      throw new Error(`manifest.roughCut.${extra} is allowed only when status is confirmed`);
+    }
+    const pair = roughCutPaths(roughCut.editPath);
+    if (pair.filePath !== roughCut.filePath) {
+      throw new Error(`manifest.roughCut.filePath must be ${pair.filePath} for manifest.roughCut.editPath ${roughCut.editPath}`);
+    }
+  }
   if (!projectDir) return migratedManifest;
 
   const paths = [
@@ -526,6 +545,13 @@ function validateProjectManifest(manifest, { projectDir, fileSystem = fs } = {})
     paths.push(
       ['manifest.currentPreview.filePath', migratedManifest.currentPreview.filePath],
       ['manifest.currentPreview.briefPath', migratedManifest.currentPreview.briefPath],
+    );
+  }
+  if (roughCut) {
+    // Только containment: файла копии может ещё не быть (сборка идёт после записи паспорта).
+    paths.push(
+      ['manifest.roughCut.editPath', roughCut.editPath],
+      ['manifest.roughCut.filePath', roughCut.filePath],
     );
   }
   migratedManifest.briefs.forEach((brief, index) => {

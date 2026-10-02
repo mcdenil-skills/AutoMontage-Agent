@@ -165,6 +165,21 @@ Master полностью декодирует результат и атома�
 `currentPreview`. Draft не переписывается автоматически: новая режиссура должна явно зафиксировать
 новую source revision.
 
+Черновая нарезка – проверка сокращения до motion-слоя. Её данные живут в необязательном поле
+`project.json.roughCut` (`null` или запись по `schema/project.schema.json`): список кусков
+`edit/roughcut-vNN.json` (обычный source-edit, NN – 2–3 цифры), копия `previews/roughcut-vNN.mp4` с тем
+же NN, их SHA-256, размер, длительность, `sourceDuration`, `status` (`review` – ждёт автора,
+`confirmed` – подтверждена) и у `confirmed` ещё `confirmedAt` и `confirmedBy` (`pult` | `chat`).
+Этап активен, пока `roughCut.sourceRevision` равна `source.revision`: первый же master поднимает
+ревизию, и запись становится историей. `validateProjectManifest` проверяет согласованность
+`status` с `confirmedAt`/`confirmedBy`, пару `editPath`↔`filePath` (до проверки путей, поэтому и без
+каталога проекта) и containment обоих путей; отсутствие файла копии паспорт не ломает.
+Чистая модель `scripts/project/rough-cut-model.js` (без чтения диска и без `workspace.js`, чтобы не
+было цикла require) переводит секунды нарезки в секунды исходника (`roughCutTimeToSource`),
+перечисляет вырезы с причинами из `note` (`removedRanges`), считает размер копии `roughCutSize`
+(короткая сторона 720, без увеличения, чётные стороны) и определяет охрану
+`assertRoughCutSettled` для `master` и `layer new` (ошибка с `code === 'ROUGH_CUT_PENDING'`).
+
 `scripts/project/clean.js` (`automontage clean`) чистит диск у готовых роликов. Планировщик
 `planProjectCleanup` берёт только проекты, которые пульт считает готовыми (`deriveVariantStatus`
 из `scripts/pult/status.js` и новые правки из `scripts/pult/comments.js`), без lock и старше
@@ -1061,9 +1076,9 @@ symlink; symlink прерывает построение cache key.
   создаёт движок через `approveBrief`.
 - Локальный batch index – игнорируемый сводный указатель на независимые project workspace; он не
   заменяет их manifest, не является release asset и не попадает в Git.
-- `project.json` – журнал относительных project-путей, статусов brief и рендеров. Только
-  `source.originalPath` и `takes[].originalPath` хранят исторические абсолютные
-  пути исходника и дублей.
+- `project.json` – журнал относительных project-путей, статусов brief и рендеров, а также записи
+  черновой нарезки `roughCut` (раздел 3.2). Только `source.originalPath` и `takes[].originalPath`
+  хранят исторические абсолютные пути исходника и дублей.
 - `input/takes/take-NN.<ext>` (начиная с take-02; take-01 ссылается на оригинальный исходник
   проекта) и `transcript/takes/take-NN.json` (для всех дублей) – неизменяемые копии дублей и их
   локальные транскрипты; `edit/vNN-source.json` и `edit/vNN-takes.json` – входы `automontage

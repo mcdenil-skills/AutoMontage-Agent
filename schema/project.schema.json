@@ -106,6 +106,32 @@
         {"type": "null"}
       ]
     },
+    "roughCut": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["editPath", "filePath", "sourceRevision", "sourceDuration", "editSha256", "sha256", "duration", "width", "height", "fps", "createdAt", "status"],
+          "properties": {
+            "editPath": {"$ref": "#/definitions/projectPath"},
+            "filePath": {"$ref": "#/definitions/projectPath"},
+            "sourceRevision": {"type": "integer", "minimum": 1},
+            "sourceDuration": {"type": "number", "exclusiveMinimum": 0},
+            "editSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "duration": {"type": "number", "exclusiveMinimum": 0},
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1},
+            "fps": {"type": "number", "exclusiveMinimum": 0},
+            "createdAt": {"type": "string", "minLength": 1},
+            "status": {"enum": ["review", "confirmed"]},
+            "confirmedAt": {"type": "string", "minLength": 1},
+            "confirmedBy": {"enum": ["pult", "chat"]}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
     "renders": {
       "type": "array",
       "items": {
