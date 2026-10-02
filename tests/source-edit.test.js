@@ -56,6 +56,59 @@ function makeProject(t) {
   return { root, original, workspace, editPath };
 }
 
+for (const takes of [false, true]) {
+  test(`master ${takes ? 'takes' : 'cuts'} acquires the heavy slot before the project lease and releases on encode failure`, (t) => {
+    const fixture = makeProject(t);
+    if (takes) {
+      const second = path.join(fixture.root, 'second.mp4');
+      fs.writeFileSync(second, 'SECOND-TAKE');
+      require('../scripts/project/takes').addTakes({ projectDir: fixture.workspace.dir, files: [second] }, {
+        probeVideoImpl: () => ({ duration: 8, fps: 25, width: 1920, height: 1080 }),
+        probeMediaPathImpl: () => ({ mediaKind: 'video', width: 1920, height: 1080, rotation: 0,
+          hasAudio: true, audioSampleRate: 48000, audioChannels: 2, videoDurationSec: 8, audioDurationSec: 8 }),
+        transcribeImpl: () => [{ start: 0, end: 8, text: 'слово', words: [{ w: 'слово', s: 0.5, e: 1 }] }],
+      });
+      fs.writeFileSync(fixture.editPath, JSON.stringify({ version: 1, kind: 'takes', sourceRevision: 1,
+        ranges: [{ take: 'take-01', start: 0, end: 2, beat: 'HOOK', reason: 'хук' }] }));
+    }
+    const events = [];
+    let held = false;
+    const fileSystem = { ...fs, linkSync(source, filename) {
+      if (path.basename(filename) === '.project-mutation.lock') {
+        events.push('project lease');
+        assert.equal(held, true);
+      }
+      return fs.linkSync(source, filename);
+    } };
+    const failEncode = () => {
+      assert.equal(held, true);
+      events.push('encode');
+      throw new Error('encode failed');
+    };
+    assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+      fileSystem,
+      acquireSlotSync({ label }) {
+        assert.equal(label, `master ${path.basename(fixture.workspace.dir)}`);
+        assert.equal(fs.existsSync(path.join(fixture.workspace.dir, '.project-mutation.lock')), false);
+        events.push('slot');
+        held = true;
+        return { release() {
+          assert.equal(fs.existsSync(path.join(fixture.workspace.dir, '.project-mutation.lock')), false);
+          events.push('release'); held = false;
+        } };
+      },
+      runTrimImpl: failEncode,
+      runSegmentsTrimImpl: failEncode,
+      readTakeLevelsImpl: () => null,
+      probeVideoImpl: () => ({ duration: 8, fps: 25, width: 1920, height: 1080 }),
+      probeMediaPathImpl: () => ({ mediaKind: 'video', width: 1920, height: 1080, rotation: 0,
+        hasAudio: true, audioSampleRate: 48000, audioChannels: 2, videoDurationSec: 8, audioDurationSec: 8 }),
+    }), /encode failed/);
+    assert.equal(held, false);
+    assert.deepEqual(events, ['slot', 'project lease', 'encode', 'release']);
+  });
+}
+
 test('source edit accepts only ordered frame-aligned ranges for the active revision', () => {
   assert.deepEqual(validateSourceEdit(validEdit(), {
     sourceRevision: 1,

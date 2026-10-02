@@ -149,6 +149,7 @@ function createPreviewJobs({
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...childEnv,
+          AUTOMONTAGE_HEAVY_WAIT_MS: '0',
           AUTOMONTAGE_PREVIEW_MANIFEST_HASH: current.manifestHash,
           AUTOMONTAGE_PREVIEW_BRIEF_HASH: current.baseHash,
         },

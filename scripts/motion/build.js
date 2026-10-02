@@ -14,6 +14,7 @@ const { prepareMotionRender } = require('./workflow');
 const { validateStoredBrief } = require('../project/brief-contract');
 const { readProjectManifest, resolveProjectPath, publishBriefRevision, nextRenderPaths, runRenderLifecycle, formatProjectId, writeFilesNoReplace } = require('../project/workspace');
 const { verifyApprovalPreview } = require('../project/preview-workspace');
+const { acquireHeavySlotSync, heavyQueueConfig } = require('../heavy-queue');
 
 function parseMotionOptions(argv) {
   const options = {};
@@ -161,34 +162,40 @@ function runMotion(options, dependencies = {}) {
       throw new Error('motion narration duration does not match the approved brief');
     }
     const prepared = prepareMotionRender({ workspace, brief });
-    const render = nextRenderPaths(workspace, options.versionLabel || 'motion');
-    render.briefPath = path.join(projectDir, requested);
-    const finalPath = runRenderLifecycle(workspace, render, () => {
-      const bundle = dependencies.withRenderMediaBundleImpl || withRenderMediaBundle;
-      bundle({ root, workspace, props: prepared.props, approvedBrief: brief,
-        sourcePath, sourceAlias: prepared.sourceAlias, namespace: `${manifest.slug}-motion`,
-      }, lease => {
-        publicationGuard.assertCurrent();
-        fs.writeFileSync(render.propsPath, `${JSON.stringify(lease.props, null, 2)}\n`, { flag: 'wx' });
-        const command = remotionRenderCommand((dependencies.resolveRemotionCommandImpl || resolveRemotionCommand)(root), {
-          entry: 'src/index.js', composition: prepared.composition, output: render.rawPath, props: render.propsPath,
-          publicDir: lease.publicDirectory, concurrency: '50%',
+    const slot = (dependencies.acquireSlotSync || acquireHeavySlotSync)({
+      label: `motion final ${path.basename(projectDir)}`, config: heavyQueueConfig(),
+      log: dependencies.log || console.log,
+    });
+    try {
+      const render = nextRenderPaths(workspace, options.versionLabel || 'motion');
+      render.briefPath = path.join(projectDir, requested);
+      const finalPath = runRenderLifecycle(workspace, render, () => {
+        const bundle = dependencies.withRenderMediaBundleImpl || withRenderMediaBundle;
+        bundle({ root, workspace, props: prepared.props, approvedBrief: brief,
+          sourcePath, sourceAlias: prepared.sourceAlias, namespace: `${manifest.slug}-motion`,
+        }, lease => {
+          publicationGuard.assertCurrent();
+          fs.writeFileSync(render.propsPath, `${JSON.stringify(lease.props, null, 2)}\n`, { flag: 'wx' });
+          const command = remotionRenderCommand((dependencies.resolveRemotionCommandImpl || resolveRemotionCommand)(root), {
+            entry: 'src/index.js', composition: prepared.composition, output: render.rawPath, props: render.propsPath,
+            publicDir: lease.publicDirectory, concurrency: '50%',
+          });
+          runToolImpl(command.command, command.args, { cwd: root, stage: 'motion Remotion' });
+          const finishedPath = prepared.music ? path.join(render.dir, 'finished.mp4') : render.finalPath;
+          runNodeToolImpl(path.join(root, 'scripts/finish.js'), [render.rawPath, finishedPath, '--hdrfix', 'auto', '--audio-advance-ms', String(REMOTION_AUDIO_ADVANCE_MS)], { cwd: root, stage: 'motion finish' });
+          if (prepared.music) runNodeToolImpl(path.join(root, 'scripts/mix-music.js'), [finishedPath, lease.musicPath, render.finalPath, ...prepared.music.mixArgs], { cwd: root, stage: 'motion music mix' });
         });
-        runToolImpl(command.command, command.args, { cwd: root, stage: 'motion Remotion' });
-        const finishedPath = prepared.music ? path.join(render.dir, 'finished.mp4') : render.finalPath;
-        runNodeToolImpl(path.join(root, 'scripts/finish.js'), [render.rawPath, finishedPath, '--hdrfix', 'auto', '--audio-advance-ms', String(REMOTION_AUDIO_ADVANCE_MS)], { cwd: root, stage: 'motion finish' });
-        if (prepared.music) runNodeToolImpl(path.join(root, 'scripts/mix-music.js'), [finishedPath, lease.musicPath, render.finalPath, ...prepared.music.mixArgs], { cwd: root, stage: 'motion music mix' });
-      });
-      runToolImpl('ffmpeg', ['-v', 'error', '-i', render.finalPath, '-f', 'null', '-'], { cwd: root, stage: 'motion QA decode' });
-      const probe = (dependencies.probeVideoImpl || probeVideo)(render.finalPath, { stage: 'motion QA probe' });
-      if (probe.width !== brief.output.width || probe.height !== brief.output.height || Math.abs(probe.fps - brief.output.fps) > 1e-6
-        || Math.abs(probe.duration - brief.output.durationInFrames / brief.output.fps) > Math.max(0.08, 1 / brief.output.fps)) {
-        throw new Error('motion QA metadata does not match the approved output');
-      }
-      publicationGuard.assertCurrent();
-      return render.finalPath;
-    }, { publicationGuard });
-    return { action: 'render', projectDir, finalPath, renderDir: render.dir };
+        runToolImpl('ffmpeg', ['-v', 'error', '-i', render.finalPath, '-f', 'null', '-'], { cwd: root, stage: 'motion QA decode' });
+        const probe = (dependencies.probeVideoImpl || probeVideo)(render.finalPath, { stage: 'motion QA probe' });
+        if (probe.width !== brief.output.width || probe.height !== brief.output.height || Math.abs(probe.fps - brief.output.fps) > 1e-6
+          || Math.abs(probe.duration - brief.output.durationInFrames / brief.output.fps) > Math.max(0.08, 1 / brief.output.fps)) {
+          throw new Error('motion QA metadata does not match the approved output');
+        }
+        publicationGuard.assertCurrent();
+        return render.finalPath;
+      }, { publicationGuard });
+      return { action: 'render', projectDir, finalPath, renderDir: render.dir };
+    } finally { slot.release(); }
   } finally { snapshot.close(); approval?.close(); }
 }
 
