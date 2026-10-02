@@ -6,6 +6,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const { applyCleanup, main, planCleanup, planProjectCleanup } = require('../scripts/project/clean');
+const {
+  addDraftProject, bumpSourceRevision, makePultRoot, republishRoughCut,
+} = require('./helpers/pult-projects');
 
 const NOW = new Date('2026-10-10T12:00:00Z');
 const OLD = new Date('2026-10-01T12:00:00Z');
@@ -196,6 +199,46 @@ test('a project with pending pult edits or an unreadable edits file is skipped',
   assert.equal(planProjectCleanup(accepted.dir, { now: NOW }).status, 'eligible');
   const broken = finishedProject(t, { files: { 'pult/comments.json': '{broken' } });
   assert.equal(planProjectCleanup(broken.dir, { now: NOW }).reason, 'pult/comments.json не читается');
+});
+
+// Готовый ролик, к которому агент собрал новую черновую нарезку: идёт новый монтаж, и копия
+// нарезки – то, что автор сейчас смотрит. Первый master делает её историей – прежняя чистка.
+test('a finished project with an active rough cut is not finished for clean until master', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addDraftProject(projectsDir, { folder: 'recut', approve: true, final: true });
+  assert.equal(planProjectCleanup(projectDir, { minAgeDays: 0 }).status, 'eligible');
+  republishRoughCut(projectDir, { version: 1 });
+  const copy = path.join(projectDir, 'previews', 'roughcut-v01.mp4');
+
+  const plan = planProjectCleanup(projectDir, { minAgeDays: 0 });
+  assert.equal(plan.status, 'skipped');
+  assert.equal(plan.reason, 'черновая нарезка ждёт автора');
+  assert.deepEqual(plan.files, []);
+  const result = applyCleanup(planCleanup(projectsDir, { minAgeDays: 0 }), { minAgeDays: 0 });
+  assert.equal(result.removedFiles, 0);
+  assert.ok(fs.existsSync(copy));
+
+  bumpSourceRevision(projectDir);
+  const after = planProjectCleanup(projectDir, { minAgeDays: 0 });
+  assert.equal(after.status, 'eligible');
+  assert.ok(after.files.some((file) => file.path === 'previews/roughcut-v01.mp4'));
+});
+
+test('a confirmed rough cut waiting for master also keeps the project out of clean', (t) => {
+  const { dir } = finishedProject(t, {
+    manifest: {
+      roughCut: {
+        editPath: 'edit/roughcut-v01.json',
+        filePath: 'previews/roughcut-v01.mp4',
+        sourceRevision: 3,
+        status: 'confirmed',
+      },
+    },
+    files: { 'previews/roughcut-v01.mp4': 'rough' },
+  });
+  const plan = planProjectCleanup(dir, { now: NOW });
+  assert.equal(plan.status, 'skipped');
+  assert.equal(plan.reason, 'нарезка подтверждена – агент собирает слой');
 });
 
 test('projects that are not finished, locked, fresh or unreadable are skipped with a reason', (t) => {

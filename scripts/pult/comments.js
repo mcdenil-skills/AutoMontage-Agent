@@ -6,7 +6,7 @@ const { resolveProjectPath } = require('../project/workspace');
 const { ensureDirectory, readJsonIfExists, writeJsonAtomic } = require('./files');
 
 const COMMENT_ID = /^c-[A-Za-z0-9-]{1,40}$/;
-const VIDEO_KINDS = new Set(['preview', 'stale-preview', 'final']);
+const VIDEO_KINDS = new Set(['preview', 'stale-preview', 'final', 'roughcut']);
 const MAX_TEXT = 1000;
 const MAX_TIME_SEC = 24 * 60 * 60;
 

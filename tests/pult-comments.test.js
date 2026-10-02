@@ -77,6 +77,26 @@ test('invalid comments are rejected without writing anything', (t) => {
   assert.deepEqual(readComments(dir), []);
 });
 
+// Правки к черновой нарезке пишутся с видом roughcut: автор отмечает оговорки по секунде нарезки.
+test('comments on a rough cut are stored and read back with the roughcut video kind', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const dir = addLegacyFolder(projectsDir, 'cut', { files: { 'previews/roughcut-v01.mp4': 'rough' } });
+  const video = { kind: 'roughcut', path: 'previews/roughcut-v01.mp4', sha256: 'c'.repeat(64) };
+  const comment = addComment(dir, { timeSec: 2.5, text: 'Оговорка', video }, { captureFrame: () => false });
+  assert.deepEqual(comment.video, video);
+  assert.deepEqual(readComments(dir), [comment]);
+  assert.throws(
+    () => addComment(dir, { timeSec: 1, text: 'x', video: { ...video, kind: 'rough' } }, { captureFrame: () => false }),
+    /правк/,
+  );
+  // Файл с правкой неизвестного вида по-прежнему не читается целиком.
+  fs.writeFileSync(path.join(dir, 'pult', 'comments.json'), JSON.stringify({
+    version: 1,
+    comments: [{ ...comment, video: { ...video, kind: 'rough' } }],
+  }));
+  assert.throws(() => readComments(dir), /comments\.json/);
+});
+
 test('only new comments can be deleted; accepted ones stay as history', (t) => {
   const dir = project(t);
   const options = { captureFrame: () => false };
