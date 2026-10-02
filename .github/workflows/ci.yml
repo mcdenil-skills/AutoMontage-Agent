@@ -98,7 +98,7 @@ jobs:
 
       - name: Проверить portable media lifecycle
         shell: pwsh
-        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/heavy-queue.test.js tests/filesystem-capabilities.test.js tests/media-probe.test.js tests/opened-media-probe.test.js tests/render-media-bundle-windows.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/heavy-queue.test.js tests/heavy-execution-timeout.test.js tests/filesystem-capabilities.test.js tests/media-probe.test.js tests/opened-media-probe.test.js tests/render-media-bundle-windows.test.js
 
       - name: Проверить motion audio source
         shell: pwsh
