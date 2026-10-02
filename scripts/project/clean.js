@@ -95,4 +95,116 @@ function planProjectCleanup(projectDir, { level = 'renders', minAgeDays = 3, now
   };
 }
 
-module.exports = { CLEAN_LEVELS, planProjectCleanup };
+function planCleanup(projectsDir, options = {}) {
+  const fileSystem = options.fileSystem || fs;
+  const projects = fileSystem.readdirSync(projectsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => entry.name)
+    .sort()
+    .map((name) => planProjectCleanup(path.join(projectsDir, name), options));
+  return { projects, bytes: projects.reduce((sum, item) => sum + item.bytes, 0) };
+}
+
+function insideProject(projectDir, file, fileSystem) {
+  const root = fileSystem.realpathSync(projectDir);
+  const parent = fileSystem.realpathSync(path.dirname(file));
+  return parent === root || parent.startsWith(`${root}${path.sep}`);
+}
+
+// Пустые папки убираются только глубже первого уровня: tmp/, previews/, renders/ и motion-vNN/
+// остаются – движок ждёт их на месте, а motion-vNN хранит исходники сцен.
+function pruneEmptyParents(projectDir, relative, fileSystem) {
+  const parts = relative.split('/').slice(0, -1);
+  while (parts.length >= 2) {
+    const dir = path.join(projectDir, ...parts);
+    try {
+      if (fileSystem.readdirSync(dir).length > 0) return;
+      fileSystem.rmdirSync(dir);
+    } catch {
+      return;
+    }
+    parts.pop();
+  }
+}
+
+// Перед удалением проект проверяется заново: за время между отчётом и --yes в нём могла начаться
+// работа. Удаляются только файлы, которые есть в обоих планах, только обычные и только внутри проекта.
+function applyCleanup(plan, options = {}) {
+  const fileSystem = options.fileSystem || fs;
+  const result = { removedFiles: 0, freedBytes: 0, skipped: [] };
+  for (const project of plan.projects.filter((item) => item.status === 'eligible')) {
+    const fresh = planProjectCleanup(project.projectDir, options);
+    if (fresh.status !== 'eligible') {
+      result.skipped.push({ projectDir: project.projectDir, reason: fresh.reason });
+      continue;
+    }
+    const planned = new Set(project.files.map((file) => file.path));
+    for (const file of fresh.files.filter((item) => planned.has(item.path))) {
+      const absolute = path.join(project.projectDir, ...file.path.split('/'));
+      const stat = fileSystem.lstatSync(absolute, { throwIfNoEntry: false });
+      if (!stat?.isFile() || !insideProject(project.projectDir, absolute, fileSystem)) continue;
+      fileSystem.unlinkSync(absolute);
+      result.removedFiles += 1;
+      result.freedBytes += stat.size;
+      pruneEmptyParents(project.projectDir, file.path, fileSystem);
+    }
+  }
+  return result;
+}
+
+function formatSize(bytes) {
+  const gb = bytes / 1024 ** 3;
+  return gb >= 1 ? `${gb.toFixed(1)} ГБ` : `${(bytes / 1024 ** 2).toFixed(1)} МБ`;
+}
+
+function parseCleanOptions(argv) {
+  const options = { projectsDir: path.join(__dirname, '..', '..', 'projects'), level: 'renders', minAgeDays: 3, yes: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const key = argv[index];
+    if (key === '--yes') {
+      options.yes = true;
+      continue;
+    }
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${key} требует значение`);
+    index += 1;
+    if (key === '--projects-dir') options.projectsDir = path.resolve(value);
+    else if (key === '--level') options.level = value;
+    else if (key === '--min-age-days') {
+      options.minAgeDays = Number(value);
+      if (!Number.isInteger(options.minAgeDays) || options.minAgeDays < 0) throw new Error('--min-age-days – целое число дней ≥ 0');
+    } else throw new Error(`неизвестная опция clean: ${key}`);
+  }
+  if (!CLEAN_LEVELS.includes(options.level)) throw new Error(`неизвестный уровень "${options.level}": используй renders или archive`);
+  return options;
+}
+
+function main(argv = process.argv.slice(2), { now = new Date(), log = console.log, error = console.error } = {}) {
+  try {
+    const options = parseCleanOptions(argv);
+    const plan = planCleanup(options.projectsDir, { level: options.level, minAgeDays: options.minAgeDays, now });
+    log(`Чистка готовых роликов (уровень ${options.level}) – ${options.projectsDir}`);
+    for (const project of plan.projects) {
+      const name = path.basename(project.projectDir);
+      log(project.status === 'eligible'
+        ? `  ${name}: ${formatSize(project.bytes)} (${project.files.length} файл.)`
+        : `  ${name}: пропущен – ${project.reason}`);
+    }
+    log(`Можно освободить: ${formatSize(plan.bytes)}`);
+    if (!options.yes) {
+      log('Чтобы удалить, повторите с --yes. Финалы, ТЗ, транскрипты и оригинал исходника не удаляются.');
+      return 0;
+    }
+    const result = applyCleanup(plan, { level: options.level, minAgeDays: options.minAgeDays, now });
+    for (const item of result.skipped) log(`  ${path.basename(item.projectDir)}: пропущен при удалении – ${item.reason}`);
+    log(`Удалено ${result.removedFiles} файлов, освобождено ${formatSize(result.freedBytes)}`);
+    return 0;
+  } catch (failure) {
+    error(`❌ clean: ${failure.message}`);
+    return 1;
+  }
+}
+
+if (require.main === module) process.exitCode = main();
+
+module.exports = { CLEAN_LEVELS, applyCleanup, main, planCleanup, planProjectCleanup };

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { planProjectCleanup } = require('../scripts/project/clean');
+const { applyCleanup, main, planCleanup, planProjectCleanup } = require('../scripts/project/clean');
 
 const NOW = new Date('2026-10-10T12:00:00Z');
 const OLD = new Date('2026-10-01T12:00:00Z');
@@ -151,4 +151,80 @@ test('bytes is the sum of listed file sizes', (t) => {
 test('unknown level is rejected', (t) => {
   const { dir } = finishedProject(t);
   assert.throws(() => planProjectCleanup(dir, { now: NOW, level: 'zip' }), /неизвестный уровень/);
+});
+
+function projectsWithTwoFinished(t) {
+  const first = finishedProject(t);
+  const second = finishedProject(t);
+  const projects = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-projects-'));
+  t.after(() => fs.rmSync(projects, { recursive: true, force: true }));
+  fs.renameSync(first.dir, path.join(projects, 'a'));
+  fs.renameSync(second.dir, path.join(projects, 'b'));
+  fs.mkdirSync(path.join(projects, '.archive'));
+  put(path.join(projects, '.archive'), 'old.mp4', 'old');
+  return projects;
+}
+
+function capture() {
+  const lines = [];
+  return { lines, log: (line) => lines.push(String(line)), text: () => lines.join('\n') };
+}
+
+test('planCleanup covers project folders and ignores dot folders', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const plan = planCleanup(projects, { now: NOW });
+  assert.deepEqual(plan.projects.map((item) => path.basename(item.projectDir)).sort(), ['a', 'b']);
+  assert.equal(plan.bytes, plan.projects.reduce((sum, item) => sum + item.bytes, 0));
+});
+
+test('clean without --yes only reports', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const out = capture();
+  const code = main(['--projects-dir', projects], { now: NOW, log: out.log, error: out.log });
+  assert.equal(code, 0);
+  assert.ok(fs.existsSync(path.join(projects, 'a', 'tmp', 'a.wav')));
+  assert.match(out.text(), /Можно освободить:/);
+  assert.match(out.text(), /Чтобы удалить, повторите с --yes/);
+});
+
+test('applyCleanup removes planned files, keeps deliverables and prunes emptied folders', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const plan = planCleanup(projects, { now: NOW });
+  const result = applyCleanup(plan, { now: NOW });
+  const a = path.join(projects, 'a');
+  assert.equal(result.removedFiles, 10);
+  assert.ok(result.freedBytes > 0);
+  assert.deepEqual(result.skipped, []);
+  assert.ok(!fs.existsSync(path.join(a, 'tmp', 'a.wav')));
+  assert.ok(fs.existsSync(path.join(a, 'final', 'demo.mp4')));
+  assert.ok(fs.existsSync(path.join(a, 'brief', 'v02-approved.lesson.json')));
+  assert.ok(fs.existsSync(path.join(a, 'renders', 'v01-x', 'props.json')));
+  assert.ok(!fs.existsSync(path.join(a, 'motion-v01', 'renders')));
+  assert.ok(fs.existsSync(path.join(a, 'motion-v01', 'src', 'Root.jsx')));
+  assert.ok(fs.existsSync(path.join(projects, '.archive', 'old.mp4')));
+});
+
+test('a project locked after planning is skipped at apply time', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const plan = planCleanup(projects, { now: NOW });
+  put(path.join(projects, 'b'), '.project-mutation.lock', '{}');
+  const result = applyCleanup(plan, { now: NOW });
+  assert.deepEqual(result.skipped.map((item) => [path.basename(item.projectDir), item.reason]), [['b', 'идёт работа (lock)']]);
+  assert.ok(fs.existsSync(path.join(projects, 'b', 'tmp', 'a.wav')));
+  assert.ok(!fs.existsSync(path.join(projects, 'a', 'tmp', 'a.wav')));
+});
+
+test('clean --yes deletes and reports the freed size', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const out = capture();
+  assert.equal(main(['--projects-dir', projects, '--yes'], { now: NOW, log: out.log, error: out.log }), 0);
+  assert.ok(!fs.existsSync(path.join(projects, 'a', 'tmp', 'a.wav')));
+  assert.match(out.text(), /Удалено 10 файлов, освобождено/);
+});
+
+test('clean with an unknown level exits with code 1', (t) => {
+  const projects = projectsWithTwoFinished(t);
+  const out = capture();
+  assert.equal(main(['--projects-dir', projects, '--level', 'zip'], { now: NOW, log: out.log, error: out.log }), 1);
+  assert.match(out.text(), /неизвестный уровень/);
 });

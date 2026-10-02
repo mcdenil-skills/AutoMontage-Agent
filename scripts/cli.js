@@ -53,6 +53,8 @@ function help() {
                                       собрать новую source-ревизию без повторного Whisper
   automontage master --project-dir . --edit edit/v02-takes.json
                                       собрать ролик из лучших кусков разных дублей
+  automontage clean [--level renders|archive] [--yes]
+                                      отчёт, что можно удалить у готовых роликов; --yes удаляет
   automontage --help                  эта справка
 
 Частые опции:
@@ -196,6 +198,16 @@ function main(argv = process.argv.slice(2)) {
   if (argv[0] === 'master') {
     try {
       execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'build-master.js'), ...argv.slice(1)], {
+        stdio: 'inherit', cwd: process.cwd(), shell: false,
+      });
+    } catch (e) { process.exit(e.status || 1); }
+    process.exit(0);
+  }
+
+  // чистка готовых роликов: по умолчанию только отчёт, удаление – с --yes
+  if (argv[0] === 'clean') {
+    try {
+      execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'clean.js'), ...argv.slice(1)], {
         stdio: 'inherit', cwd: process.cwd(), shell: false,
       });
     } catch (e) { process.exit(e.status || 1); }
