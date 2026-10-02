@@ -35,7 +35,10 @@ function runMediaProcess({
         stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       };
       invocation = spawnImpl === spawn
-        ? require('../heavy-execution').managedInvocation(command, args, spawnOptions)
+        ? require('../heavy-execution').managedInvocation(command, args, spawnOptions, {
+          controlChannel: true, terminationGraceMs: Number.isFinite(terminationGraceMs) && terminationGraceMs >= 0
+            ? terminationGraceMs : DEFAULT_TERMINATION_GRACE_MS,
+        })
         : { command, args, options: spawnOptions };
       child = spawnImpl(invocation.command, invocation.args, invocation.options);
     } catch (error) {
@@ -50,16 +53,36 @@ function runMediaProcess({
     let pendingError = null;
     let terminationSent = false;
     let escalationTimer = null;
+    let pipeDeadline = null;
+    let settled = false;
+    const sendTermination = (signal) => {
+      try {
+        if (invocation.terminate) invocation.terminate(child, signal);
+        else child.kill(signal);
+      } catch (_) {
+        // Signal failures never clear execution tickets or cancel the pipe bound.
+      }
+    };
 
     const terminate = (error) => {
       if (!pendingError) pendingError = error;
       if (!terminationSent) {
         terminationSent = true;
-        child.kill('SIGTERM');
+        sendTermination('SIGTERM');
         const grace = Number.isFinite(terminationGraceMs) && terminationGraceMs >= 0
           ? terminationGraceMs
           : DEFAULT_TERMINATION_GRACE_MS;
-        escalationTimer = setTimeout(() => child.kill('SIGKILL'), grace);
+        escalationTimer = setTimeout(() => sendTermination('SIGKILL'), grace);
+        if (invocation.terminate) {
+          pipeDeadline = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            child.stdin?.destroy();
+            if (child.connected) child.disconnect();
+            child.unref();
+            finish(null, null);
+          }, grace + 250);
+        }
         escalationTimer.unref?.();
       }
     };
@@ -98,7 +121,9 @@ function runMediaProcess({
         pendingError = processError('MEDIA_PROCESS_SPAWN', `cannot start ${command}`, { cause: error });
       }
     });
-    child.once('close', (code, closeSignal) => {
+    const finish = (code, closeSignal) => {
+      if (settled) return;
+      settled = true;
       const launchError = invocation.launchError?.();
       if (!pendingError && launchError) {
         pendingError = processError('MEDIA_PROCESS_SPAWN', `cannot start ${command}`, { cause: launchError });
@@ -108,6 +133,7 @@ function runMediaProcess({
       }
       if (timer) clearTimeout(timer);
       if (escalationTimer) clearTimeout(escalationTimer);
+      if (pipeDeadline) clearTimeout(pipeDeadline);
       signal?.removeEventListener('abort', onAbort);
       const stdoutBuffer = Buffer.concat(stdoutChunks);
       const stdout = stdoutEncoding === null ? stdoutBuffer : stdoutBuffer.toString('utf8');
@@ -128,7 +154,8 @@ function runMediaProcess({
         return;
       }
       resolve({ stdout, stderr, code, signal: closeSignal });
-    });
+    };
+    child.once('close', finish);
   });
 }
 

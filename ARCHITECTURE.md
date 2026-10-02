@@ -842,8 +842,19 @@ flowchart TD
   Lease берётся до lease проекта. `finally` прекращает регистрацию новых запусков; если работа
   ещё жива, token-scoped `released` разрешает reclaim лишь после её окончания, даже когда
   оркестратор остался жив. Без потомков обычный dead-owner recovery сохраняется.
-  Supervisor пересылает SIGTERM/SIGINT/SIGHUP своей группе и ждёт close ребёнка;
-  surviving descendants и аварийное завершение supervisor всё равно защищены tickets.
+  Supervisor пересылает SIGTERM/SIGINT/SIGHUP своей группе; после grace период заканчивается
+  принудительным завершением этой группы. Async launcher посылает escalation группе конкретного
+  живого supervisor, а на Windows управляет реальным direct child через отдельный IPC-канал.
+  Записи других запусков с тем же token не обходятся для отправки сигналов. Captured stdout/stderr
+  проходят через supervisor с backpressure и без изменения binary bytes; sync deadline/maxBuffer
+  проверяются внутри него, пока он ещё может завершить реальную работу. Native spawnSync сохраняет
+  hard-kill fallback на timeout + 1000 мс для зависшего supervisor; ETIMEDOUT/ENOBUFS сохраняют
+  stage исходного инструмента. После async timeout/abort/output overflow parent закрывает свои
+  pipes и завершает ошибку не позднее grace + 250 мс (при работающем event loop), даже если
+  отделённый потомок держит унаследованный дескриптор. Это ошибка, не доказательство завершения:
+  отдельные detached-группы не убиваются по историческим PGID и продолжают удерживать слот
+  через tickets до доказанного окончания. Соседний invocation остаётся жив.
+  Surviving descendants и аварийное завершение supervisor всё равно защищены tickets.
   На Windows успешный запуск может убрать свои tickets только в живом исходном оркестраторе;
   ошибка или его смерть оставляет fail-closed блокировку до ручной проверки. Job Objects нет:
   намеренно отделённый потомок после формально успешной Windows-команды не покрывается.

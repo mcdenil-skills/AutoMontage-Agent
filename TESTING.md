@@ -38,6 +38,13 @@ launchers. Проверяются pending intent, старый token, binary pip
 `build-security.test.js` и `lesson-build.test.js` подменяют managedInvocation вместе с
 своим spawnSync: их заглушки не запускают процессы и не должны создавать pending tickets.
 Реальный lifetime проверяется только отдельными cross-process regressions выше.
+`heavy-execution-timeout.test.js` запускает собственные Node-процессы, игнорирующие SIGTERM:
+реальные async timeout/abort/stdout/stderr limits и sync timeout/maxBuffer обязаны завершить
+настоящую работу задолго до её естественного выхода через 3 секунды. Проверяются capture и
+runTool, сохранение соседнего invocation в том же слоте и bounded rejection при отдельном
+потомке с открытым pipe: очередь остаётся занята до окончания этого потомка. Native Windows
+termination этим macOS-прогоном не сертифицируется; бинарные каналы остаются под проверкой
+`heavy-queue.test.js`. Тайминги этих дешёвых суррогатов не являются медиабенчмарком.
 Также используются `process-security.test.js`, `review-media-process.test.js`,
 `layer-render.test.js` (повторная проверка после ожидания, `--no-wait`, освобождение при ошибке,
 копирование видео и fallback), `remotion-ffmpeg-override.test.js` (изолированный limited-range

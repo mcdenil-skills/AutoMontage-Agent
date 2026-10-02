@@ -75,16 +75,40 @@ function recordGroup(files, pgid) {
   }
 }
 
-function managedInvocation(command, args, options = {}) {
+function managedInvocation(command, args, options = {}, { controlChannel = false, terminationGraceMs = 100 } = {}) {
   if (!active.size) return { command, args, options };
   const contexts = [...active].map(({ slotDir, owner }) => ({
     dir: executionDir(slotDir, owner), token: owner.token, id: randomUUID(), pid: owner.pid,
   }));
   const tickets = createTickets(contexts);
+  const capture = Array.isArray(options.stdio) && options.stdio[1] === 'pipe';
+  const execution = {
+    tickets, contexts, capture, terminationGraceMs,
+    deadline: options.timeout === undefined ? null : Date.now() + options.timeout,
+    maxBuffer: options.maxBuffer || null,
+  };
+  const spawnOptions = { ...options, detached: process.platform !== 'win32' };
+  if (controlChannel) spawnOptions.stdio = [...options.stdio, 'ipc'];
+  // The supervisor owns the tool's sync deadline/output cap. Keep an outer
+  // fallback as well, in case Node startup or the supervisor itself stalls.
+  if (options.timeout !== undefined) spawnOptions.timeout = options.timeout + 1000;
+  if (options.timeout !== undefined || options.maxBuffer !== undefined) spawnOptions.killSignal = 'SIGKILL';
   return {
     command: process.execPath,
-    args: [require.resolve('./heavy-worker'), JSON.stringify({ tickets, contexts }), command, ...args],
-    options: { ...options, detached: process.platform !== 'win32' },
+    args: [require.resolve('./heavy-worker'), JSON.stringify(execution), command, ...args],
+    options: spawnOptions,
+    terminate(child, signal) {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      if (process.platform === 'win32') {
+        // Windows kill() would terminate the supervisor without reaching its tool.
+        if (child.connected) child.send({ type: 'terminate-owned-tool', signal }, () => {});
+        else child.kill(signal); // Unknown work stays protected by its ticket.
+      } else if (signal === 'SIGKILL') {
+        try { process.kill(-child.pid, signal); } catch (error) {
+          if (error.code !== 'ESRCH') throw error;
+        }
+      } else child.kill(signal);
+    },
     launchError() {
       try {
         const error = readJson(tickets[0]).launchError;
