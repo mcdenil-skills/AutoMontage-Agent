@@ -826,26 +826,51 @@ flowchart TD
   `out/manifest.json` и прогоняет `runTimelineGates` (`scripts/qa/timeline-gates.js`: G1–G5,
   G9–G11, исключения через `applyWaivers`), дополнительно меряя ffprobe клипы stock-вставок для
   G10. Любой отказ сборки или формы манифеста – отчёт с `error`, код 2.
-- **`layer render`** (`scripts/layer/render.js`): сначала тот же `layer check`; затем ожидание
-  свободной машины (`scripts/layer/busy.js`: только настоящие процессы `node` и их командная
-  строка, без предков самой команды; опрос раз в 30 с, до 3 ч; на Windows не проверяется), после
-  ожидания – повторный `layer check`. Манифест читается в память сразу после проверки. Номер
+- **Машинная очередь** (`scripts/heavy-queue.js`, D-044) общая для `layer render`,
+  `layer import`, `preview`, final render (lesson и Dynamic) и `master`. Атомарные
+  project mutation leases папок `slot-0` … `slot-(N-1)` исключают одновременное занятие слота,
+  умерший локальный PID восстанавливается по тому же протоколу. Слот берётся до lease проекта
+  и освобождается в `finally`; ожидание не держит проект заблокированным.
+  `AUTOMONTAGE_HEAVY_DIR` задаёт общий каталог (по умолчанию `os.tmpdir()/automontage-heavy`),
+  `AUTOMONTAGE_HEAVY_SLOTS` – целое 1–8 (по умолчанию 1), `AUTOMONTAGE_HEAVY_WAIT_MS` –
+  целое ≥ 0 (по умолчанию 10800000 мс, 3 ч); проверка слота каждые 5000 мс.
+  `acquireHeavySlot` и `acquireHeavySlotSync` обслуживают async/sync команды,
+  `tryAcquireHeavySlot` пробует занять слот, `listHeavySlots` читает состояние для
+  `automontage queue`: label, PID, время начала и каталог. Label содержит только
+  `<задача> <имя папки проекта>[/<слой>]` (basename), без личного пути. Таймаут или нулевое
+  ожидание при занятости дают `HEAVY_QUEUE_BUSY` с текстом «машина занята: …».
+  Это ограничение параллельности, а не обещание FIFO; команды вне этого протокола не учитываются.
+- **`layer render`** (`scripts/layer/render.js`): сначала тот же `layer check`; затем слот
+  общей машинной очереди (`scripts/heavy-queue.js`), после ожидания – повторный `layer check`.
+  `--no-wait` отказывает при занятой очереди, а не обходит её. Слот берётся до project mutation
+  lease и освобождается в `finally`. Манифест читается в память сразу после проверки. Номер
   рендера занимает заявка `renders/layer-NN.raw.mp4`, созданная с `wx`; в неё же Remotion пишет
   сырой рендер. Номер с готовым файлом или отчётом не переиспользуется. Remotion запускается
   командой `remotionLayerRenderCommand` (`scripts/build-commands.js`) поверх
   `resolveRemotionCommand` (`scripts/env.js`): пустой защищённый `--env-file`, `--public-dir`
-  слоя, без `--props`, `cwd` – корень движка. ffmpeg приводит видео к ограниченному `yuv420p`,
-  звук – к AAC 48 кГц ровно на длину кадров слоя. `scripts/qa/media-gates.js`: G6 сравнивает
+  слоя, без `--props`, `cwd` – корень движка. Только `layer render` передаёт
+  `AUTOMONTAGE_LAYER_LIMITED_RANGE=1` вместе с остальным окружением: override
+  `scripts/remotion-ffmpeg-override.js` добавляет limited range/yuv420p в кодирование libx264
+  самого Remotion. Затем ffprobe проверяет `pix_fmt=yuv420p` и `color_range=tv`: ffmpeg копирует
+  соответствующее видео и нормализует только звук в AAC 48 кГц ровно на длину кадров слоя.
+  Если Remotion отдал другой формат/range, остаётся fallback с перекодированием видео.
+  `scripts/qa/media-gates.js`: G6 сравнивает
   длину **видеопотока**, размер и FPS с исходником, G7 – звук слоя с голосом исходника по окнам
   `cues.kept` манифеста. Заявка снимается только после записи отчёта.
 - **`layer import`** (`scripts/layer/import.js`) принимает только сам рендер: файл внутри
   проекта, чей путь и sha256 стоят во входе `role: 'layer'` самого свежего отчёта `layer render`
   (`findRenderReport`, `renderReportProblem` в `scripts/layer/registry.js`: целый отчёт с G6 и G7,
   итог совпадает с гейтами, не «стоп»), а `assertReportSource` сверяет вход `source` отчёта с
-  текущим исходником. Файл перекодируется тем же `importReviewMedia`, что импорт Review, в
-  `assets/broll/video/<id>/media.mp4`, и в реестр `qa/layer-imports.json` пишется связь
+  текущим исходником. `importReviewMedia` получает внутреннюю стратегию
+  `masterStrategy: remux-if-conforming`: соответствующий H.264/yuv420p слой переупаковывается
+  без повторного кодирования master в `assets/broll/video/<id>/media.mp4`, иначе применяется
+  прежнее кодирование. WebM-прокси кодируется в четыре потока (`cpu-used=4`). HTTP-импорт Review
+  сохраняет стратегию `encode` и прежние параметры. Ограниченное по времени и выводу полное
+  декодирование master и прокси, квоты, lease и атомарная публикация остаются обязательными.
+  В реестр `qa/layer-imports.json` пишется связь
   `renderSha256` → `canonicalSha256` целого ассета вместе с профилем, слоем и путём отчёта.
-  Реестр – единственный признак слоя kit: sha256 рендера и ассета различаются из-за перекодирования.
+  Реестр – единственный признак слоя kit: sha256 рендера и целого ассета проверяются отдельно,
+  даже когда видеопоток master скопирован без перекодирования.
 - **`layer stock`** (`scripts/layer/stock.js`) ищет клип клиентом Pexels из B-roll discovery,
   режет его без звука под размер, FPS и длину вставки (`--sec`, иначе длина `--insert` из
   `buildLayerManifest`, иначе 2,5 с) в `public/stock/` и дописывает в `public/SOURCE.md` строку из
@@ -980,7 +1005,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Release gates | `scripts/check-release.js`, `scripts/smoke-release.js` |
 | Motion-kit (детали слоя) | `src/motion-kit/*` (чистые `core.js` и React `index.js`), `templates/motion-layer/` (стартовые файлы слоя), `scripts/remotion-webpack.js` (alias `@automontage/motion-kit`) |
 | Kit в Node | `scripts/motion-kit-node.js`: `loadKitCore`, `buildLayerManifest`, граница `plan.js` `findPlanViolation` (esbuild `buildSync` + metafile) |
-| Команды слоя | `scripts/layer/cli.js` и `new`, `words`, `check`, `render`, `import`, `brief`, `stock`, `sheet`; общие части `common.js`, `busy.js`, `registry.js`, `sfx-library.js`; `remotionLayerRenderCommand` в `scripts/build-commands.js` |
+| Команды слоя | `scripts/layer/cli.js` и `new`, `words`, `check`, `render`, `import`, `brief`, `stock`, `sheet`; общие части `common.js`, `registry.js`, `sfx-library.js`; машинная очередь `scripts/heavy-queue.js`; `remotionLayerRenderCommand` в `scripts/build-commands.js` |
 | QA-гейты | `scripts/qa/profiles.js`, `report.js`, `safe-rect.js`, `timeline-gates.js` (G1–G5, G9–G11), `audio.js`, `media-gates.js` (G6, G7), `mix-gates.js` (G8), `preview-gates.js` (барьер L + G8), `empty-frame-gate.js` (G12) |
 
 Длинный рендер хранит части в `out/.chunks/<job-sha256>/`. Cache descriptor v2 включает

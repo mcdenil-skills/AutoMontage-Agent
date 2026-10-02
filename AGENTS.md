@@ -228,6 +228,7 @@ npm run review -- --project-dir <путь>  # локальная проверк�
 node scripts/cli.js --help     # актуальные пользовательские флаги
 automontage pult                        # «Пульт роликов» со всеми роликами
 automontage inbox                       # правки и утверждения из пульта для агента
+automontage queue                       # состояние очереди тяжёлых задач
 automontage clean                       # отчёт, что можно удалить у готовых роликов; --yes удаляет
 ```
 

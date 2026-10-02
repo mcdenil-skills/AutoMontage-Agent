@@ -148,8 +148,10 @@ Remotion передаёт браузеру значения из `.env` движ
 
 ## Что дальше делает оркестратор
 
-`automontage layer render` (ждёт свободную машину; `--no-wait`, если ожидание называет не рендер)
-→ `layer import` → `layer brief` → `automontage preview` → `automontage layer sheet`. Коридор G8
+`automontage layer render` → `layer import` → `layer brief` → `automontage preview`
+→ `automontage layer sheet`. `layer render` ждёт слот машинной очереди; `--no-wait`
+сразу отказывает при занятости. Тяжёлые команды запускай в фоне; при ожидании смотри
+`automontage queue`. Коридор G8
 профиля `avatar` откалиброван по утверждённому эталонному preview: цель 38 LU, предупреждение вне
 35–41 LU, стоп ниже 3 LU или выше 46 LU. `layer brief --music <трек>` по умолчанию собирает
 утверждённый рецепт (`gainDb −16`, ducking −40 dB, ratio 4), и он проходит G8. Если владелец
