@@ -32,7 +32,7 @@ function fakeMedia(calls = []) {
       fs.copyFileSync(args[0], options.stage.includes('music') ? args[2] : args[1]);
     },
     resolveRemotionCommandImpl() { return { command: 'remotion', argsPrefix: [] }; },
-    probeVideoImpl() { return { width: 160, height: 284, fps: 30, duration: 2 }; },
+    probeVideoImpl() { return { width: 320, height: 568, fps: 30, duration: 2 }; },
   };
 }
 module.exports = { fixture, sha, fakeMedia };

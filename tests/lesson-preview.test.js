@@ -158,7 +158,7 @@ function fakePreviewTools({ calls, failStage = null }) {
         fs.writeFileSync(args[2], 'mixed-preview');
       }
     },
-    probeVideoImpl: () => ({ width: 160, height: 90, fps: 25, duration: 4 }),
+    probeVideoImpl: () => ({ width: 320, height: 180, fps: 25, duration: 4 }),
     openMediaFileImpl: () => { throw new Error('must not open with open=false'); },
     now: () => new Date('2026-08-23T17:05:00.000Z'),
     temporaryId: idSequence(),
@@ -299,3 +299,27 @@ test('runPreview binds the exact bytes parsed before preparation, not a later sa
   assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), beforeManifest);
   assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'previews/current-preview.mp4')), false);
 });
+
+for (const [width, height, scale] of [[2160, 3840, 0.5], [1080, 1920, 1]]) {
+  test(`preview ${width}x${height} renders 1080x1920 with scale ${scale}`, (t) => {
+    const fixture = makeProject(t);
+    const { prepareLessonPreview } = require('../scripts/lesson/preview');
+    let renderArgs;
+    const tools = fakePreviewTools({ calls: [] });
+    const result = runPreview({ projectDir: fixture.workspace.dir, briefPath: fixture.published.jsonPath, open: false }, {
+      ...tools,
+      prepareLessonPreviewImpl(options) {
+        const prepared = prepareLessonPreview(options);
+        prepared.props.width = width; prepared.props.height = height;
+        return prepared;
+      },
+      runToolImpl(command, args, options) {
+        if (options.stage === 'preview Remotion') renderArgs = args;
+        tools.runToolImpl(command, args, options);
+      },
+      probeVideoImpl: () => ({ width: 1080, height: 1920, fps: 25, duration: 4 }),
+    });
+    assert.ok(renderArgs.includes(`--scale=${scale}`), renderArgs.join(' '));
+    assert.deepEqual([result.metadata.width, result.metadata.height], [1080, 1920]);
+  });
+}

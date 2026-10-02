@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
+const { previewScale } = require('./working-quality');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
@@ -174,6 +175,7 @@ function runPreview(options, dependencies = {}) {
   const prepared = kind === 'motion-reel'
     ? prepareMotionPreview({ workspace, ...prepareOptions })
     : prepareLessonPreviewImpl(prepareOptions);
+  const scale = previewScale(prepared.props);
   const planned = planPreview(workspace, {
     briefPath,
     briefSha256,
@@ -211,7 +213,7 @@ function runPreview(options, dependencies = {}) {
         output: planned.rawPath,
         props: planned.propsPath,
         publicDir: lease.publicDirectory,
-        scale: 0.5,
+        scale,
         crf: 28,
         frameRange: prepared.range.kind === 'excerpt' ? prepared.range : null,
         concurrency: '50%',
@@ -261,8 +263,8 @@ function runPreview(options, dependencies = {}) {
       '-v', 'error', '-i', stagedOutput, '-f', 'null', '-',
     ], { cwd: ROOT, stage: 'preview decode' });
     const probe = probeVideoImpl(stagedOutput, { cwd: ROOT, stage: 'preview ffprobe' });
-    const expectedWidth = Math.round(prepared.props.width * 0.5);
-    const expectedHeight = Math.round(prepared.props.height * 0.5);
+    const expectedWidth = Math.round(prepared.props.width * scale);
+    const expectedHeight = Math.round(prepared.props.height * scale);
     const expectedDuration = prepared.range.toSec - prepared.range.fromSec;
     if (probe.width !== expectedWidth || probe.height !== expectedHeight
       || Math.abs(probe.fps - prepared.props.fps) > 1e-6

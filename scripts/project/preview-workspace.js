@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { previewScale } = require('../working-quality');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 
@@ -242,10 +243,11 @@ function verifyApprovalPreview(workspace, draft, draftBytes, { fileSystem = fs, 
   const preview = workspace.manifest.currentPreview;
   const draftSha256 = createHash('sha256').update(draftBytes).digest('hex');
   const output = draft.output;
+  const scale = previewScale(output);
   if (confirmPreviewViewed !== true || !preview || preview.kind !== 'full'
     || preview.briefPath !== workspace.manifest.currentBrief || preview.briefSha256 !== draftSha256
     || preview.fromSec !== 0 || preview.toSec !== output.durationInFrames / output.fps
-    || preview.width !== Math.round(output.width / 2) || preview.height !== Math.round(output.height / 2)
+    || preview.width !== Math.round(output.width * scale) || preview.height !== Math.round(output.height * scale)
     || preview.fps !== output.fps || !preview.sourceSha256
     || (expectedPreviewSha256 !== undefined && expectedPreviewSha256 !== preview.sha256)) {
     throw new Error('full current preview and explicit preview viewing confirmation required');

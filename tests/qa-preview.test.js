@@ -137,12 +137,12 @@ test('motion QA measures narration without music and rejects stale narration/bri
   const f = fixture(t);
   runPreview({ projectDir: f.workspace.dir, briefPath: f.published.relativePath, open: false }, fakeMedia());
   const result = runPreviewQa({ projectDir: f.workspace.dir }, {
-    runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }),
+    runToolImpl() {}, probeVideoImpl: () => ({ width: 320, height: 568, fps: 30, duration: 2 }),
     measureAudioImpl({ role, sourcePath }) { assert.equal(role, 'voice'); assert.equal(sourcePath, f.workspace.sourcePath); return -18; },
   });
   assert.equal(result.audio.voiceDb, -18);
   fs.appendFileSync(f.workspace.sourcePath, 'changed');
-  assert.throws(() => runPreviewQa({ projectDir: f.workspace.dir }, { runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }) }), /source|narration|stale/i);
+  assert.throws(() => runPreviewQa({ projectDir: f.workspace.dir }, { runToolImpl() {}, probeVideoImpl: () => ({ width: 320, height: 568, fps: 30, duration: 2 }) }), /source|narration|stale/i);
 });
 
 test('motion QA dispatches from stored kind and refuses a preview of an older draft', (t) => {
@@ -151,7 +151,7 @@ test('motion QA dispatches from stored kind and refuses a preview of an older dr
   const { publishBriefRevision, readProjectManifest } = require('../scripts/project/workspace');
   const f = fixture(t);
   runPreview({ projectDir: f.workspace.dir, briefPath: f.published.relativePath, open: false }, fakeMedia());
-  const deps = { runToolImpl() {}, probeVideoImpl: () => ({ width: 160, height: 284, fps: 30, duration: 2 }), measureAudioImpl: () => -18 };
+  const deps = { runToolImpl() {}, probeVideoImpl: () => ({ width: 320, height: 568, fps: 30, duration: 2 }), measureAudioImpl: () => -18 };
   const original = fs.readFileSync(f.published.jsonPath);
   const tampered = { ...f.brief }; delete tampered.kind;
   fs.writeFileSync(f.published.jsonPath, JSON.stringify(tampered));
