@@ -203,6 +203,7 @@ test('preview jobs use fixed argv, reject stale/busy input and bound failed outp
   assert.throws(() => jobs.start({ ...input, baseHash: 'wrong' }), /STALE/);
   const job = jobs.start(input);
   assert.equal(launched.options.shell, false);
+  assert.equal(launched.options.env.AUTOMONTAGE_HEAVY_WAIT_MS, '0');
   for (const name of [
     'PEXELS_API_KEY',
     'PIXABAY_API_KEY',
@@ -268,6 +269,9 @@ test('a preview blocked by the QA barrier surfaces its Russian reason without pa
     + "(не удалось записать в qa/: qa/ должна быть папкой проекта, а не ссылкой или файлом – уберите её и верните настоящую папку qa/)\n");
   assert.equal(unwritten.error, 'PREVIEW_BLOCKED');
   assert.match(unwritten.reason, /^отчёт проверок не записан \(не удалось записать в qa\/: qa\/ должна быть папкой проекта/u);
+  const busy = await run('preview не опубликован: машина занята: layer render demo\n');
+  assert.equal(busy.error, 'PREVIEW_BLOCKED');
+  assert.equal(busy.reason, 'машина занята: layer render demo');
   // Любой другой сбой – прежний код без текста: сырой stderr в браузер не уходит.
   const other = await run('❌ preview отменён: ENOENT /engine/root/node_modules/.bin/remotion\n');
   assert.equal(other.error, 'PREVIEW_FAILED');

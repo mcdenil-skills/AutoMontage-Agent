@@ -29,6 +29,7 @@ const {
   resolveProjectPath,
 } = require('./project/workspace');
 const { withPreviewMediaBundle } = require('./render-media-bundle');
+const { acquireHeavySlotSync, heavyQueueConfig, HEAVY_QUEUE_BUSY } = require('./heavy-queue');
 
 function parsePreviewOptions(argv) {
   const options = {
@@ -188,6 +189,9 @@ function runPreview(options, dependencies = {}) {
   const stages = [planned.propsPath, planned.rawPath, planned.finishedPath, planned.mixedPath];
   let stagedOutput = planned.finishedPath;
   let gateResult = null;
+  const slot = (dependencies.acquireSlotSync || acquireHeavySlotSync)({
+    label: `preview ${path.basename(projectDir)}`, config: heavyQueueConfig(), log,
+  });
   try {
     withPreviewMediaBundleImpl({
       root: ROOT,
@@ -280,7 +284,7 @@ function runPreview(options, dependencies = {}) {
     if (options.open !== false) openMediaFileImpl(published.currentPath);
     return published;
   } finally {
-    cleanupPreviewStages(stages, fileSystem);
+    try { cleanupPreviewStages(stages, fileSystem); } finally { slot.release(); }
   }
 }
 
@@ -294,7 +298,9 @@ function main(argv = process.argv.slice(2)) {
     console.log(`✅ СМОНТИРОВАННЫЙ ПРЕДПРОСМОТР: ${result.currentPath}`);
     console.log(`   ${label}`);
   } catch (error) {
-    console.error(`❌ preview отменён: ${error.message}`);
+    console.error(error.code === HEAVY_QUEUE_BUSY
+      ? `❌ preview не опубликован: ${error.message}`
+      : `❌ preview отменён: ${error.message}`);
     process.exitCode = 1;
   }
 }

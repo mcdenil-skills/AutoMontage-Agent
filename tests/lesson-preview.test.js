@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { runPreview } = require('../scripts/preview');
+const { acquireHeavySlotSync, heavyQueueConfig, HEAVY_QUEUE_BUSY } = require('../scripts/heavy-queue');
 const {
   planPreview,
   publishCurrentPreview,
@@ -164,6 +165,59 @@ function fakePreviewTools({ calls, failStage = null }) {
     temporaryId: idSequence(),
     log: () => {},
   };
+}
+
+test('a busy heavy slot blocks preview without touching the current preview', (t) => {
+  const fixture = makeProject(t);
+  const current = path.join(fixture.workspace.dir, 'previews', 'current-preview.mp4');
+  fs.writeFileSync(current, 'previous-preview');
+  const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+  const config = { ...heavyQueueConfig(), waitMs: 0 };
+  const slot = acquireHeavySlotSync({ label: 'layer render demo', config });
+  t.after(() => slot.release());
+  const calls = [];
+  assert.throws(() => runPreview({ projectDir: fixture.workspace.dir,
+    briefPath: fixture.published.relativePath, open: false }, {
+    ...fakePreviewTools({ calls }),
+    acquireSlotSync: (options) => acquireHeavySlotSync({ ...options, config }),
+  }), { code: HEAVY_QUEUE_BUSY });
+  assert.deepEqual(calls, []);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+  assert.equal(fs.readFileSync(current, 'utf8'), 'previous-preview');
+});
+
+test('preview CLI reports the heavy queue barrier in stderr and exits with code 1', (t) => {
+  const fixture = makeProject(t);
+  const slot = acquireHeavySlotSync({ label: 'layer render demo', config: { ...heavyQueueConfig(), waitMs: 0 } });
+  t.after(() => slot.release());
+  const cli = require('node:child_process').spawnSync(process.execPath, [
+    path.join(__dirname, '..', 'scripts', 'preview.js'), '--project-dir', fixture.workspace.dir,
+    '--brief', fixture.published.relativePath, '--no-open',
+  ], { encoding: 'utf8', timeout: 10000, env: { ...process.env, AUTOMONTAGE_HEAVY_WAIT_MS: '0' } });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /preview не опубликован: машина занята: layer render demo/u);
+});
+
+for (const failStage of [null, 'decode']) {
+  test(`preview holds its heavy slot through decode and releases after ${failStage || 'publication'}`, (t) => {
+    const fixture = makeProject(t);
+    let held = false;
+    const tools = fakePreviewTools({ calls: [], failStage });
+    const runToolImpl = tools.runToolImpl;
+    const options = { projectDir: fixture.workspace.dir, briefPath: fixture.published.relativePath, open: false };
+    const dependencies = { ...tools,
+      acquireSlotSync({ label }) {
+        assert.equal(label, `preview ${path.basename(fixture.workspace.dir)}`);
+        held = true;
+        return { release() { held = false; } };
+      },
+      runToolImpl(...args) { assert.equal(held, true); return runToolImpl(...args); },
+      publishCurrentPreviewImpl(...args) { assert.equal(held, true); return publishCurrentPreview(...args); },
+    };
+    if (failStage) assert.throws(() => runPreview(options, dependencies), /decode failed/);
+    else runPreview(options, dependencies);
+    assert.equal(held, false);
+  });
 }
 
 test('preview command runs the real composition stages in order without final history', (t) => {

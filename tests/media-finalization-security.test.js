@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 const ROOT = path.join(__dirname, '..');
 const {
   finishEncodeCommand,
+  loudnessCommand,
   parseFinishOptions,
   parseLoudnessSummary,
 } = require('../scripts/finish');
@@ -118,6 +119,14 @@ test('pack requires valid video and audio streams and rejects drift at 80 ms', (
     { codec_type: 'video', start_time: '0', duration: '10' },
   ] })), /audio stream/);
   assert.throws(() => parsePackProbe(probe(0, 'N/A', 0, 10)), /duration/);
+});
+
+test('loudness check disables video before the audio filter', () => {
+  const command = loudnessCommand('x.mp4');
+  assert.equal(command.command, 'ffmpeg');
+  assert.ok(command.args.includes('-vn'));
+  assert.ok(command.args.indexOf('-vn') < command.args.indexOf('-af'));
+  assert.equal(command.args[command.args.indexOf('-i') + 1], path.resolve('x.mp4'));
 });
 
 test('loudness summary is parsed in JavaScript without a shell pipeline', () => {

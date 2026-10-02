@@ -1,5 +1,5 @@
 // automontage layer render – рендер слоя kit и гейты по готовому файлу: layer check (план, секунды) →
-// ожидание свободной машины → Remotion защищённой командой → нормализация ffmpeg → G6 (длина и размер
+// слот очереди тяжёлых задач → Remotion защищённой командой → нормализация ffmpeg → G6 (длина и размер
 // к исходнику) и G7 (голос в звуке слоя) → qa/layer-<слой>-render-NN.{json,txt}.
 // Код: 0 – пройдено или только предупреждения, 1 – стоп (в том числе стоп layer check), 2 – оценить нельзя.
 //
@@ -17,13 +17,14 @@ const { ROOT, resolveRemotionCommand } = require('../env');
 const { remotionLayerRenderCommand } = require('../build-commands');
 const { probeMediaPath, probeVideo } = require('../media-probe');
 const { hashBytes } = require('../pult/files');
-const { runTool } = require('../process');
+const { runTool, captureTool } = require('../process');
+const { LIMITED_RANGE_ENV } = require('../remotion-ffmpeg-override');
+const { acquireHeavySlot, heavyQueueConfig } = require('../heavy-queue');
 const { decodeAudio, envelopeDb } = require('../qa/audio');
 const { gateLayerDuration, gateVoiceLeak } = require('../qa/media-gates');
 const { getProfile } = require('../qa/profiles');
 const { buildReport, exitCodeFor, formatReport, writeReport } = require('../qa/report');
 const check = require('./check');
-const { busyRenders, waitUntilFree } = require('./busy');
 const { readLayerJson, relative, resolveLayer, sha256File } = require('./common');
 
 const FLAGS = { 'project-dir': 'value', layer: 'value', profile: 'value', 'no-wait': 'bool' };
@@ -83,9 +84,9 @@ function readCheckedManifest(projectDir, layerDir) {
 
 const AUDIO_RATE = 48000;
 
-// Remotion пишет полный диапазон (yuvj420p, color_range pc); мастер и Review ждут обычный ограниченный
-// yuv420p. Диапазон входа ffmpeg берёт из его метки: на полнодиапазонном рендере Remotion это побитно то
-// же, что in_range=full, и верно, если вход когда-нибудь окажется ограниченным. Звук эффектов сохраняется
+// Remotion слоя сразу пишет ограниченный yuv420p; у такого файла видео копируется. Для старого или
+// неожиданного диапазона оставлена полная нормализация: диапазон входа ffmpeg берёт из его метки.
+// Звук эффектов сохраняется
 // (audioMode mix), но только на длину кадров: Remotion дописывает хвост AAC на 43–64 мс, правило владельца –
 // резать его до длительности кадров. aresample async/first_pts кладёт звук на таймкод с 0 (поздний старт –
 // тишина), apad + atrim дополняют и режут ровно до durationInFrames/fps. Режется только звук: -t или
@@ -95,11 +96,17 @@ function normalizeArgs(raw, out, samples) {
   return ['-hide_banner', '-loglevel', 'error', '-y', '-i', raw,
     '-vf', 'scale=out_range=tv,format=yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '14',
     '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,apad,atrim=end_sample=${samples}`,
-    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), out];
+    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), '-ac', '2', out];
+}
+
+function normalizeAudioArgs(raw, out, samples) {
+  return ['-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-c:v', 'copy',
+    '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,apad,atrim=end_sample=${samples}`,
+    '-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_RATE), '-ac', '2', out];
 }
 
 // deps: log/warn – вывод; runToolImpl – запуск Remotion и ffmpeg (подмена рендера в тестах); checkImpl –
-// layer check; busyImpl/sleep – опрос занятости и пауза ожидания.
+// layer check; acquireSlot – занятие слота общей очереди (контракт acquireHeavySlot).
 async function run(options, deps = {}) {
   const log = deps.log || console.log;
   const warn = deps.warn || console.error;
@@ -115,61 +122,64 @@ async function run(options, deps = {}) {
   };
   let code = await runCheck();
   if (code !== 0) return code;
-  if (!options['no-wait']) {
-    // Ожидание длится до 3 ч. Если оно было, план за это время могли поправить – проверяем его заново,
-    // чтобы рендер и G7 шли по одному и тому же плану. Машина свободна сразу – вторая проверка не нужна.
-    let waited = false;
-    const busyImpl = deps.busyImpl || busyRenders;
-    await waitUntilFree({
-      busyImpl: () => {
-        const busy = busyImpl();
-        if (busy.length) waited = true;
-        return busy;
-      },
-      log,
-      ...(deps.sleep ? { sleep: deps.sleep } : {}),
-    });
-    if (waited) {
-      log('Машина освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить');
+  const config = heavyQueueConfig();
+  if (options['no-wait']) config.waitMs = 0;
+  const slot = await (deps.acquireSlot || acquireHeavySlot)({
+    label: `layer render ${path.basename(projectDir)}/${layerName}`, config, log,
+  });
+  // Слот держится и во время нормализации/QA, до записи отчёта или отказа подготовки рендера.
+  try {
+    if (slot.waited) {
+      log('Очередь освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить');
       code = await runCheck();
       if (code !== 0) return code;
     }
-  }
-  const held = readCheckedManifest(projectDir, layerDir);
+    const held = readCheckedManifest(projectDir, layerDir);
 
-  const layer = readLayerJson(layerDir);
-  const profileName = options.profile || layer.profile || 'avatar';
-  const profile = getProfile(profileName);
-  const samples = Math.round(layer.durationInFrames * AUDIO_RATE / layer.fps);
-  if (!(Number.isSafeInteger(samples) && samples > 0)) throw new Error('layer.json: durationInFrames и fps должны быть числами больше 0');
-  const remotion = resolveRemotionCommand(ROOT);
-  const rendersDir = path.join(layerDir, 'renders');
-  fs.mkdirSync(rendersDir, { recursive: true });
-  if (!fs.lstatSync(rendersDir).isDirectory()) throw new Error(`${relative(projectDir, rendersDir)} должна быть папкой, а не ссылкой`);
-  const reportName = (n) => `layer-${layerName}-render-${pad(n)}`;
-  const claim = claimRender(rendersDir, fs, { reportFile: (n) => path.join(projectDir, 'qa', `${reportName(n)}.json`) });
-  // Заявка снимается только после записи отчёта: иначе после сбоя без готового слоя второй рендер успел
-  // бы занять этот номер до записи отчёта и потом перезаписать его.
-  try {
-    return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
-      reportName: reportName(claim.n), command: remotionLayerRenderCommand(remotion, {
-        entry: path.join(layerDir, 'src', 'index.jsx'), composition: layer.composition, output: claim.raw, publicDir: path.join(layerDir, 'public'),
-      }), runToolImpl, log });
+    const layer = readLayerJson(layerDir);
+    const profileName = options.profile || layer.profile || 'avatar';
+    const profile = getProfile(profileName);
+    const samples = Math.round(layer.durationInFrames * AUDIO_RATE / layer.fps);
+    if (!(Number.isSafeInteger(samples) && samples > 0)) throw new Error('layer.json: durationInFrames и fps должны быть числами больше 0');
+    const remotion = resolveRemotionCommand(ROOT);
+    const rendersDir = path.join(layerDir, 'renders');
+    fs.mkdirSync(rendersDir, { recursive: true });
+    if (!fs.lstatSync(rendersDir).isDirectory()) throw new Error(`${relative(projectDir, rendersDir)} должна быть папкой, а не ссылкой`);
+    const reportName = (n) => `layer-${layerName}-render-${pad(n)}`;
+    const claim = claimRender(rendersDir, fs, { reportFile: (n) => path.join(projectDir, 'qa', `${reportName(n)}.json`) });
+    // Заявка снимается только после записи отчёта: иначе после сбоя без готового слоя второй рендер успел
+    // бы занять этот номер до записи отчёта и потом перезаписать его.
+    try {
+      return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
+        reportName: reportName(claim.n), command: remotionLayerRenderCommand(remotion, {
+          entry: path.join(layerDir, 'src', 'index.jsx'), composition: layer.composition, output: claim.raw, publicDir: path.join(layerDir, 'public'),
+        }), runToolImpl, log, warn });
+    } finally {
+      claim.release();
+    }
   } finally {
-    claim.release();
+    slot.release();
   }
 }
 
 // Рендер под уже занятым номером: Remotion → нормализация → G6 и G7 → отчёт. Код выхода по отчёту.
-function renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples, reportName, command, runToolImpl, log }) {
+function renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples, reportName, command, runToolImpl, log, warn }) {
   // С запуска Remotion любой отказ (сам рендер, нормализация, probe, декодирование, гейт, испорченный
   // манифест) – отчёт с error и код 2, а не «layer render отменён» без отчёта.
   let gates = [];
   let error = null;
   try {
-    runToolImpl(command.command, command.args, { cwd: ROOT, stage: 'layer Remotion render' });
+    runToolImpl(command.command, command.args, { cwd: ROOT, stage: 'layer Remotion render',
+      env: { ...process.env, [LIMITED_RANGE_ENV]: '1' } });
+    const rawProbe = JSON.parse(captureTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=pix_fmt,color_range', '-of', 'json', claim.raw],
+    { cwd: ROOT, stage: 'layer raw probe', maxBuffer: 64 * 1024 }));
+    const video = rawProbe.streams?.[0];
+    const conforming = video?.pix_fmt === 'yuv420p' && video?.color_range === 'tv';
+    if (!conforming) warn('Remotion отдал full range – перекодирую видео');
     try {
-      runToolImpl('ffmpeg', normalizeArgs(claim.raw, claim.out, samples), { cwd: ROOT, stage: 'layer normalize' });
+      const args = (conforming ? normalizeAudioArgs : normalizeArgs)(claim.raw, claim.out, samples);
+      runToolImpl('ffmpeg', args, { cwd: ROOT, stage: 'layer normalize' });
     } catch (caught) {
       fs.rmSync(claim.out, { force: true }); // недописанный слой этого номера – наш, после отказа он не нужен
       throw caught;

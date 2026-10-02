@@ -387,7 +387,10 @@ node scripts/build.js <project-dir>/input/source.mp4 --template lesson \
 2. `automontage layer check --project-dir projects/<папка> --layer motion-vNN` – после каждой
    правки плана, за секунды: ритм, safe-zone, спикер в хуке, звуки, сток, чужое видео. Сток под
    вставку – `automontage layer stock` (без `PEXELS_API_KEY` клип кладут вручную).
-3. `automontage layer render` – ждёт свободную машину, проверяет длину слоя и голос в его звуке.
+3. `automontage layer render` – ждёт слот машинной очереди, проверяет длину слоя и голос в его звуке.
+   Тяжёлые команды (`layer render`, `layer import`, preview, final и master) запускай в фоне;
+   при ожидании смотри `automontage queue`. `layer render --no-wait` сразу отказывает, если
+   очередь занята; это не обход ограничения.
 4. `automontage layer import` → `automontage layer brief` → `automontage preview`. Preview
    проверяет баланс голоса и музыки; при стопе он не публикуется, в пульте остаётся прошлый.
 5. `automontage layer sheet --project-dir projects/<папка>` – контакт-лист текущего preview и

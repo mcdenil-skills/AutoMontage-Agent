@@ -15,6 +15,48 @@ npm test
 Тесты запускайте без личного `LEAD_MAGNET_BRAND`: CLI-фикстура пока наследует его
 (известный баг #76); на macOS/Linux: `env -u LEAD_MAGNET_BRAND npm test`.
 Настройки рабочего пульта и бренд-пак не меняются.
+
+`npm test` и `npm run test:video-edit` загружают `tests/helpers/heavy-queue-isolation.cjs`:
+каждый тестовый файл получает отдельный временный каталог очереди, дочерние CLI наследуют
+его; каталог удаляется при выходе. Playwright использует отдельный root-bootstrap:
+он принудительно создаёт свежую очередь даже при входящем `AUTOMONTAGE_HEAVY_DIR`,
+а workers и их дети наследуют её. Production sentinel проверяется в
+`heavy-queue-isolation.test.js`. Для отдельного теста сохраняйте preload:
+
+```bash
+node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/heavy-queue.test.js
+```
+
+Очередь и оптимизации покрывают `heavy-queue.test.js` (межпроцессное исключение,
+освобождение, мёртвый PID, таймаут, sync/async, CLI `queue` и настройки). Его реальные
+дешёвые child-process regressions завершают только собственный surrogate-owner по SIGTERM:
+child, grandchild и detached-grandchild удерживают очередь до окончания работы для обоих
+launchers. Проверяются pending intent, старый token, binary pipes, argv/env и ожидание shutdown
+при abort. Это проверка изменённого lifecycle без дорогого полного медиа-рендера; прежние
+замеры качества/скорости остаются историческим свидетельством обычного пути. Native Windows
+и полное дерево Job Objects этой проверкой не сертифицируются.
+`build-security.test.js` и `lesson-build.test.js` подменяют managedInvocation вместе с
+своим spawnSync: их заглушки не запускают процессы и не должны создавать pending tickets.
+Реальный lifetime проверяется только отдельными cross-process regressions выше.
+`heavy-execution-timeout.test.js` запускает собственные Node-процессы, игнорирующие SIGTERM:
+реальные async timeout/abort/stdout/stderr limits обязаны завершить настоящую работу задолго до
+её естественного выхода через 3 секунды. Windows CI запускает эти четыре async-сценария вместе
+с portable media lifecycle; их native результат появится только после выполнения hosted job.
+На POSIX локально также проверяются sync timeout/maxBuffer (capture и runTool), сохранение
+соседнего invocation в том же слоте и bounded rejection при отдельном потомке с открытым pipe:
+очередь остаётся занята до окончания этого потомка. Эти POSIX-сценарии явно пропускаются на
+Windows и не сертифицируют там termination или Job Objects. Бинарные каналы остаются под
+проверкой `heavy-queue.test.js`. Тайминги этих дешёвых суррогатов не являются медиабенчмарком.
+Также используются `process-security.test.js`, `review-media-process.test.js`,
+`layer-render.test.js` (повторная проверка после ожидания, `--no-wait`, освобождение при ошибке,
+копирование видео и fallback), `remotion-ffmpeg-override.test.js` (изолированный limited-range
+override и команды mux/copy), `layer-import.test.js` и `review-media-import.test.js`
+(доверенная стратегия remux, fallback, быстрый proxy, сохранение HTTP encode и полного decode).
+`lesson-preview.test.js` проверяет занятую очередь, CLI-ошибку и освобождение слота preview
+после публикации/ошибки; `source-edit.test.js` – слот до project lease и освобождение
+при отказе encode для cuts/takes master. `media-finalization-security.test.js` проверяет
+`-vn` при замере громкости. Тесты этих изменений не заменяют проверки реального видео.
+
 Проверяются, среди прочего:
 
 - draft/approved-гейт и неизменность source/theme/aspect;
@@ -883,7 +925,7 @@ Pexels подменён. `tests/qa-preview.test.js` в той же маске �
   окна речи после конца голоса дают «голос не звучит», а не пропуск G8), G12 по доле контуров, барьер preview (строгий только для слоя из реестра, справочный
   G8 для прочих, отчёт `qa/preview-*`, сбой записи);
 - команды (`layer-*`): `new`, `words`, `check`, `render` (с подменой Remotion), `import`, `brief`,
-  `stock`, `sheet`, ожидание свободной машины `layer-busy.test.js`, шаблон слоя
+  `stock`, `sheet`, очередь и `--no-wait` в `layer-render.test.js`, шаблон слоя
   `layer-template.test.js` и маршрутизация CLI, строгие флаги и коды выхода `layer-cli.test.js`.
 
 Плохие случаи, которые обязаны остановить работу (`BAD CASE` в имени теста):

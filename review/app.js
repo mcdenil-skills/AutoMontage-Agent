@@ -501,7 +501,9 @@ function createEditor(initialState, token) {
     } catch (error) {
       showEditError(
         error?.reason
-          ? `Preview не опубликован: ${error.reason}. Предыдущий файл сохранён; исправьте и повторите.`
+          ? error.reason.startsWith('машина занята')
+            ? `Машина занята другой задачей (${error.reason}). Повторите preview позже.`
+            : `Preview не опубликован: ${error.reason}. Предыдущий файл сохранён; исправьте и повторите.`
           : 'Preview не готов. Предыдущий файл сохранён; обновите состояние и повторите.',
       );
     } finally {

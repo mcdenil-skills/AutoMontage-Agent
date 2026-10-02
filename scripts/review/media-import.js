@@ -915,7 +915,39 @@ function videoMasterInvocation(owned, source, outputFps, signal, quota) {
   };
 }
 
-function videoProxyInvocation(owned, source, outputFps, signal, quota) {
+function remuxConformity(source, outputFps) {
+  if (source.videoCodec !== 'h264') return { ok: false, reason: 'видеокодек должен быть h264' };
+  if (source.pixelFormat !== 'yuv420p') return { ok: false, reason: 'формат пикселей должен быть yuv420p' };
+  if (source.rotation !== 0) return { ok: false, reason: 'видео содержит поворот' };
+  if (source.width % 2 !== 0 || source.height % 2 !== 0) return { ok: false, reason: 'ширина и высота должны быть чётными' };
+  if (!Number.isFinite(source.fps) || !(Math.abs(source.fps - outputFps) <= 1e-6)) {
+    return { ok: false, reason: 'частота кадров не совпадает с исходником' };
+  }
+  if (source.hasAudio) {
+    if (source.audioCodec !== 'aac') return { ok: false, reason: 'аудиокодек должен быть AAC' };
+    if (source.audioSampleRate !== 48000) return { ok: false, reason: 'частота звука должна быть 48 кГц' };
+    if (source.audioChannels !== 2) return { ok: false, reason: 'звук должен быть стерео' };
+  }
+  return { ok: true, reason: null };
+}
+
+function videoRemuxInvocation(owned, source, signal, quota) {
+  const args = [
+    '-hide_banner', '-loglevel', 'error', '-i', owned.uploadPath,
+    '-map', '0:v:0',
+  ];
+  if (source.hasAudio) args.push('-map', '0:a:0');
+  args.push('-map_metadata', '-1', '-c', 'copy', '-t', String(source.durationSec),
+    '-movflags', '+faststart', '-fs', String(quota), '-y', owned.canonicalPath);
+  return {
+    command: 'ffmpeg', args, cwd: owned.quarantinePath, signal,
+    timeoutMs: 2 * 60 * 60_000,
+    maxStdoutBytes: 1024 * 1024,
+    maxStderrBytes: 4 * 1024 * 1024,
+  };
+}
+
+function videoProxyInvocation(owned, source, outputFps, signal, quota, { fast = false } = {}) {
   const proxyFps = Math.min(30, outputFps);
   const args = [
     '-hide_banner', '-loglevel', 'error', '-i', owned.canonicalPath,
@@ -925,7 +957,8 @@ function videoProxyInvocation(owned, source, outputFps, signal, quota) {
   args.push(
     '-map_metadata', '-1',
     '-vf', `scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=${proxyFps},pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0`,
-    '-c:v', 'libvpx', '-threads', '1', '-crf', '32', '-b:v', '0',
+    '-c:v', 'libvpx', '-threads', fast ? '4' : '1',
+    ...(fast ? ['-cpu-used', '4'] : []), '-crf', '32', '-b:v', '0',
   );
   if (source.hasAudio) {
     args.push('-c:a', 'libopus', '-ar', '48000', '-ac', '2', '-b:a', '96k');
@@ -954,7 +987,7 @@ function decodeInvocation(inputPath, signal) {
 }
 
 async function normalizeIntoQuarantine({
-  source, outputFps, owned, signal, fileSystem, run, budgets, checkDisk,
+  source, outputFps, owned, signal, fileSystem, run, budgets, checkDisk, masterStrategy, log,
 }) {
   if (source.mediaKind === 'video'
     && (!Number.isFinite(outputFps) || outputFps <= 0 || outputFps > 120)) {
@@ -973,7 +1006,13 @@ async function normalizeIntoQuarantine({
     appendOwnerRecord(owned, fileSystem);
   } else {
     checkDisk('master');
-    await run(videoMasterInvocation(owned, source, outputFps, signal, budgets.master));
+    const conformity = masterStrategy === 'remux-if-conforming' ? remuxConformity(source, outputFps) : null;
+    if (conformity) {
+      log(conformity.ok ? 'мастер: переупаковка без перекодирования' : `мастер: перекодирование – ${conformity.reason}`);
+    }
+    await run(conformity?.ok
+      ? videoRemuxInvocation(owned, source, signal, budgets.master)
+      : videoMasterInvocation(owned, source, outputFps, signal, budgets.master));
     assertOwnedImport(fileSystem, owned);
     owned.canonicalIdentity = captureOwnedFile(fileSystem, owned.canonicalPath, {
       chmod: true,
@@ -983,7 +1022,7 @@ async function normalizeIntoQuarantine({
     appendOwnerRecord(owned, fileSystem);
     assertOutputIdentities(fileSystem, owned);
     checkDisk('proxy');
-    await run(videoProxyInvocation(owned, source, outputFps, signal, budgets.proxy));
+    await run(videoProxyInvocation(owned, source, outputFps, signal, budgets.proxy, { fast: masterStrategy !== 'encode' }));
     assertOwnedFile(fileSystem, owned.canonicalPath, owned.canonicalIdentity);
     owned.previewIdentity = captureOwnedFile(
       fileSystem,
@@ -1778,7 +1817,12 @@ async function importReviewMedia({
   platform = process.platform,
   provenance = null,
   scanEmbeddedTextImpl = scanEmbeddedText,
+  masterStrategy = 'encode',
+  log = console.log,
 }) {
+  if (!['encode', 'remux-if-conforming'].includes(masterStrategy)) {
+    throw new Error('masterStrategy: допустимы encode и remux-if-conforming');
+  }
   if (!controller?.acquire()) throw mediaImportError(409, 'MEDIA_IMPORT_BUSY');
   let owned;
   let mutationLease;
@@ -1831,7 +1875,7 @@ async function importReviewMedia({
     try {
       await normalizeIntoQuarantine({
         source, outputFps, owned, signal, fileSystem, run: runMediaProcessImpl,
-        budgets, checkDisk,
+        budgets, checkDisk, masterStrategy, log,
       });
       const master = await verifyNormalizedOutputs({
         source, outputFps, owned, signal, fileSystem, run: runMediaProcessImpl,
@@ -1929,4 +1973,5 @@ module.exports = {
   mediaImportError,
   parseImportHeaders,
   requiredFreeBytes,
+  remuxConformity,
 };

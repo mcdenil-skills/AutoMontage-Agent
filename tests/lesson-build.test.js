@@ -36,6 +36,10 @@ function runLessonBuildWithIntercept(t, args, {
     "const childProcess = require('node:child_process');",
     "const fs = require('node:fs');",
     "const path = require('node:path');",
+    // This fixture never starts a process: replace the lifetime boundary as well
+    // as spawnSync, so a fake successful launch cannot leave a pending ticket.
+    "const execution = require(path.join(process.cwd(), 'scripts/heavy-execution'));",
+    'execution.managedInvocation = (command, args, options) => ({ command, args, options });',
     "const calls = process.env.AUTOMONTAGE_LESSON_CAPTURE;",
     `const materializeFinish = ${JSON.stringify(materializeFinish)};`,
     `const materializePlan = ${JSON.stringify(materializePlan)};`,

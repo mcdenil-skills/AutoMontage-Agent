@@ -5,7 +5,7 @@ const USAGE = `usage: automontage layer new|words|check|render|import|brief|stoc
   layer words  --project-dir P --layer motion-v01                             слова и написание заново
   layer check  --project-dir P --layer motion-v01 [--profile avatar|live]     гейты по плану, секунды
   layer render --project-dir P --layer motion-v01 [--profile avatar|live] [--no-wait]
-               рендер слоя + гейты длины и звука
+               рендер слоя + гейты длины и звука; --no-wait: не ждать очередь, занято – сразу ошибка
   layer import --project-dir P --file <motion-v01/renders/layer-01.mp4>       импорт проверенного слоя
   layer brief  --project-dir P --asset <assets/broll/video/…/media.mp4> --title T --head-cream C --head-orange O
                [--audio mix|mute] [--music <файл> --music-gain-db -16 --music-start-sec 0]

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { PassThrough } = require('node:stream');
+const { spawnSync } = require('node:child_process');
 const { toolAvailable, runTool } = require('./helpers/media-fixtures');
 const { makeLayerProject } = require('./helpers/layer-project');
 const { sha256File, writeJson } = require('../scripts/layer/common');
@@ -11,6 +12,7 @@ const { hashBytes } = require('../scripts/pult/files');
 const { buildReport, gate } = require('../scripts/qa/report');
 const { inspectImportedAssetBundle } = require('../scripts/review/imported-assets');
 const { mediaImportError } = require('../scripts/review/media-import');
+const { runMediaProcess } = require('../scripts/review/media-process');
 const {
   appendRegistry, findByCanonical, findByReference, findByRender, findRenderReport, readRegistry, renderPassed,
 } = require('../scripts/layer/registry');
@@ -33,11 +35,12 @@ const canLink = (() => {
 })();
 
 // Нормализованный слой без Remotion: короткий lavfi-ролик на месте motion-v01/renders/layer-NN.mp4.
-function renderedLayer(projectDir, { n = 1, frequency = 900 } = {}) {
+function renderedLayer(projectDir, { n = 1, frequency = 900, fps = 25, channels = 2 } = {}) {
   const file = path.join(projectDir, 'motion-v01', 'renders', `layer-${pad(n)}.mp4`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  runTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=108x192:r=25:d=2',
-    '-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=2`, '-shortest', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-c:a', 'aac', file]);
+  runTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=108x192:r=${fps}:d=2`,
+    '-f', 'lavfi', '-i', `sine=frequency=${frequency}:sample_rate=48000:duration=2`, '-shortest',
+    '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-colorspace', 'bt470bg', '-c:v', 'libx264', '-c:a', 'aac', '-ac', String(channels), file]);
   return file;
 }
 
@@ -61,10 +64,10 @@ function renderReport(projectDir, {
 
 // Проект с отрендеренным слоем motion-v01/renders/layer-01.mp4. report(options) пишет его отчёт layer
 // render для текущего исходника проекта; checked: false – без отчёта. run(file, deps) – layer import.
-function layerProject(t, { checked = true } = {}) {
-  const project = makeLayerProject(t, { seconds: 2 });
+function layerProject(t, { checked = true, fps = 25, channels = 2 } = {}) {
+  const project = makeLayerProject(t, { seconds: 2, fps });
   const sourcePath = path.join(project.projectDir, project.workspace.manifest.source.localPath);
-  const file = renderedLayer(project.projectDir);
+  const file = renderedLayer(project.projectDir, { fps, channels });
   const report = (options = {}) => renderReport(project.projectDir, { layerSha: sha256File(file), sourceSha: sha256File(sourcePath), ...options });
   if (checked) report();
   const run = (target = file, deps = quiet) => layerImport.run({ 'project-dir': project.projectDir, file: target }, deps);
@@ -116,6 +119,100 @@ test('a checked layer is imported through the official path and registered', { s
   assert.deepEqual(videoAssets(projectDir), [entry.assetId]);
   const bundle = bundleOf(projectDir, entry.reference);
   assert.deepEqual([bundle.reference, bundle.canonicalSha256], [entry.reference, entry.canonicalSha256]);
+});
+
+test('trusted conforming layer remuxes the master and uses a fast proxy without changing video packets', { skip: !hasFfmpeg }, async (t) => {
+  const p = layerProject(t, { fps: 30 });
+  const calls = [];
+  const logs = [];
+  await p.run(p.file, {
+    log: (line) => logs.push(String(line)),
+    runMediaProcessImpl: (call) => { calls.push(call); return runMediaProcess(call); },
+  });
+  const [entry] = readRegistry(p.projectDir).imports;
+  const master = calls.find((call) => call.command === 'ffmpeg' && call.args.at(-1).endsWith('media.mp4'));
+  const proxy = calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libvpx'));
+  assert.ok(master, 'the injected processor sees the real master invocation');
+  assert.equal(master.args[master.args.indexOf('-c') + 1], 'copy');
+  assert.ok(!master.args.includes('libx264'));
+  assert.equal(proxy.args[proxy.args.indexOf('-threads') + 1], '4');
+  assert.equal(proxy.args[proxy.args.indexOf('-cpu-used') + 1], '4');
+  const videoMd5 = (file) => {
+    const result = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file,
+      '-map', '0:v:0', '-c:v', 'copy', '-f', 'md5', '-'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  assert.equal(videoMd5(path.join(p.projectDir, entry.reference)), videoMd5(p.file));
+  assert.ok(bundleOf(p.projectDir, entry.reference));
+  assert.ok(logs.some((line) => line.includes('мастер: переупаковка без перекодирования')), logs.join('\n'));
+});
+
+test('trusted mono layer falls back to encoding stereo while keeping the fast proxy', { skip: !hasFfmpeg }, async (t) => {
+  const p = layerProject(t, { fps: 30, channels: 1 });
+  const calls = [];
+  const logs = [];
+  await p.run(p.file, {
+    log: (line) => logs.push(String(line)),
+    runMediaProcessImpl: (call) => { calls.push(call); return runMediaProcess(call); },
+  });
+  const master = calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libx264'));
+  const proxy = calls.find((call) => call.command === 'ffmpeg' && call.args.includes('libvpx'));
+  assert.ok(master);
+  assert.equal(proxy.args[proxy.args.indexOf('-threads') + 1], '4');
+  assert.equal(proxy.args[proxy.args.indexOf('-cpu-used') + 1], '4');
+  const [entry] = readRegistry(p.projectDir).imports;
+  const probeResult = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'a:0',
+    '-show_entries', 'stream=channels', '-of', 'json', path.join(p.projectDir, entry.reference)], { encoding: 'utf8' });
+  assert.equal(probeResult.status, 0, probeResult.stderr);
+  const probe = JSON.parse(probeResult.stdout);
+  assert.equal(probe.streams[0].channels, 2);
+  assert.ok(bundleOf(p.projectDir, entry.reference));
+  assert.ok(logs.some((line) => line.includes('мастер: перекодирование – ')), logs.join('\n'));
+});
+
+test('layer import holds a basename-labelled heavy slot through success and error', { skip: !hasFfmpeg }, async (t) => {
+  const p = layerProject(t);
+  const events = [];
+  const acquireSlot = async ({ label }) => {
+    assert.equal(label, `layer import ${path.basename(p.projectDir)}`);
+    events.push('acquire');
+    return { waited: false, release: () => events.push('release') };
+  };
+  const importImpl = async (options) => { events.push('import'); return require('../scripts/review/media-import').importReviewMedia(options); };
+  await p.run(p.file, { ...quiet, acquireSlot, importImpl });
+  assert.deepEqual(events, ['acquire', 'import', 'release']);
+  // Reuse remains inside the acquired slot as well.
+  events.length = 0;
+  await p.run(p.file, { ...quiet, acquireSlot, importImpl });
+  assert.deepEqual(events, ['acquire', 'release']);
+  const failed = layerProject(t);
+  events.length = 0;
+  await assert.rejects(failed.run(failed.file, { ...quiet, acquireSlot,
+    importImpl: async () => { events.push('import'); throw new Error('injected import failure'); },
+  }), /injected import failure/);
+  assert.deepEqual(events, ['acquire', 'import', 'release']);
+});
+
+test('source manifest switched while waiting rejects the old report before import and releases the slot', { skip: !hasFfmpeg }, async (t) => {
+  const p = layerProject(t);
+  const replacement = path.join(p.projectDir, 'input', 'replacement.mp4');
+  fs.copyFileSync(p.file, replacement);
+  let imported = false;
+  let released = false;
+  await assert.rejects(p.run(p.file, { ...quiet,
+    acquireSlot: async () => {
+      const manifestPath = path.join(p.projectDir, 'project.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      manifest.source.localPath = 'input/replacement.mp4';
+      writeJson(manifestPath, manifest);
+      return { waited: true, release: () => { released = true; } };
+    },
+    importImpl: async () => { imported = true; throw new Error('import must not start'); },
+  }), /слой собран для другого исходника/);
+  assert.equal(imported, false);
+  assert.equal(released, true);
+  nothingImported(p.projectDir);
 });
 
 test('importing the same render twice keeps one asset and one registry entry; warnings are fine', { skip: !hasFfmpeg }, async (t) => {

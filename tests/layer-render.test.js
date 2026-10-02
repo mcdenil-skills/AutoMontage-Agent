@@ -16,25 +16,28 @@ const hasFfmpeg = toolAvailable('ffmpeg') && toolAvailable('ffprobe');
 const STATIC_PLAN = "export default function buildPlan({ face }) { return { camera: { face, shots: [{ at: 0, preset: 'W', drift: 'none' }] }, items: [] }; }\n";
 
 // Подмена Remotion: ролик lavfi нужной длины и fps в полном диапазоне с теми же метками, что у настоящего
-// Remotion 4.0.504 (yuvj420p, color_range pc, colorspace bt470bg).
+// Remotion 4.0.504 (yuvj420p, color_range pc, colorspace bt470bg); limitedRange включает новый диапазон tv.
 // audio – lavfi-строка со своей длиной d, функция, которая строит её уже во время «рендера» (манифест слоя к
 // этому моменту записан), или null – ролик без звуковой дорожки. Без -shortest: звук может быть длиннее
 // видео – настоящий Remotion дописывает хвост AAC на 43–64 мс. after – что сделать после записи файла.
 // Остальная цепочка (нормализация ffmpeg, probe, PCM, гейты, отчёт) – настоящая.
-function fakeRemotion(seconds, audio, { after, fps = 25 } = {}) {
+function fakeRemotion(seconds, audio, { after, fps = 25, limitedRange = false } = {}) {
   const calls = [];
+  const environments = [];
   const runToolImpl = (command, args, options) => {
     if (options.stage !== 'layer Remotion render') return runProcessTool(command, args, options);
     calls.push(args);
+    environments.push(options.env);
     const output = args[args.indexOf('render') + 3];
     const audioInput = typeof audio === 'function' ? audio() : audio;
     runTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=540x960:r=${fps}:d=${seconds}`,
       ...(audioInput ? ['-f', 'lavfi', '-i', audioInput, '-c:a', 'aac'] : []),
-      '-pix_fmt', 'yuvj420p', '-colorspace', 'bt470bg', '-c:v', 'libx264', output]);
-    if (after) after();
+      '-pix_fmt', limitedRange ? 'yuv420p' : 'yuvj420p', ...(limitedRange ? ['-color_range', 'tv'] : []),
+      '-colorspace', 'bt470bg', '-c:v', 'libx264', output]);
+    if (after) after(output);
     return null;
   };
-  return { calls, runToolImpl };
+  return { calls, environments, runToolImpl };
 }
 
 async function scaffold(t, projectOptions) {
@@ -46,7 +49,7 @@ async function scaffold(t, projectOptions) {
   const logs = [];
   const quiet = { log: (line) => logs.push(String(line)), warn: (line) => logs.push(String(line)) };
   const run = (deps = {}, options = {}) => render.run({ 'project-dir': project.projectDir, layer: 'motion-v01', 'no-wait': true, ...options },
-    { ...quiet, ...deps });
+    { ...quiet, acquireSlot: async () => ({ index: 0, waited: false, release() {} }), ...deps });
   const report = (n = '01') => JSON.parse(fs.readFileSync(path.join(project.projectDir, 'qa', `layer-motion-v01-render-${n}.json`), 'utf8'));
   const sourcePath = path.join(project.projectDir, project.workspace.manifest.source.localPath);
   return { ...project, layerDir, logs, quiet, run, report, sourcePath };
@@ -74,7 +77,7 @@ function videoStream(file) {
 }
 // Длины потоков и контейнера готового слоя.
 function streams(file) {
-  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,duration,nb_frames:format=duration',
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,duration,nb_frames,channels:format=duration',
     '-of', 'json', file], { encoding: 'utf8' }));
   const [video, audio] = ['video', 'audio'].map((kind) => probe.streams.find((st) => st.codec_type === kind));
   return { video, audio, container: Number(probe.format.duration) };
@@ -91,6 +94,9 @@ test('a good layer renders, normalises to limited-range yuv420p and passes G6 an
   const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
   assert.equal(await run({ runToolImpl: fake.runToolImpl }), 0);
   assert.equal(fake.calls.length, 1);
+  assert.equal(fake.environments[0]?.AUTOMONTAGE_LAYER_LIMITED_RANGE, '1');
+  assert.equal(fake.environments[0]?.PATH, process.env.PATH);
+  assert.ok(logs.includes('Remotion отдал full range – перекодирую видео'));
   const args = fake.calls[0];
   assert.ok(args.some((a) => String(a).startsWith('--env-file=')));
   assert.equal(args[args.indexOf('--public-dir') + 1], path.join(layerDir, 'public'));
@@ -147,6 +153,30 @@ test('normalisation pads audio shorter than the video with silence to the full l
   assert.equal(await run({ runToolImpl: fakeRemotion(6, 'anullsrc=r=48000:cl=mono:d=5.5').runToolImpl }), 0);
   const { audio } = streams(path.join(layerDir, 'renders', 'layer-01.mp4'));
   assert.equal(Number(audio.duration), 6);
+  assert.equal(audio.channels, 2);
+});
+
+function videoMd5(file) {
+  return execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-map', '0:v', '-c', 'copy', '-f', 'md5', '-'], { encoding: 'utf8' }).trim();
+}
+
+test('limited-range video is copied intact while mono audio is trimmed exactly and becomes stereo at 60 fps', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, layerDir, logs, run, report } = await scaffold(t, { fps: 60 });
+  let rawMd5;
+  const fake = fakeRemotion(6, () => effectsOf(projectDir, 6.06), {
+    fps: 60, limitedRange: true, after: (raw) => { rawMd5 = videoMd5(raw); },
+  });
+  assert.equal(await run({ runToolImpl: fake.runToolImpl }), 0);
+  const out = path.join(layerDir, 'renders', 'layer-01.mp4');
+  assert.equal(videoMd5(out), rawMd5, 'видеопоток сохраняется побитно');
+  assert.deepEqual(videoStream(out), { pix_fmt: 'yuv420p', color_range: 'tv' });
+  const { video, audio, container } = streams(out);
+  assert.equal(Number(video.nb_frames), 360);
+  assert.equal(Number(audio.duration), 6);
+  assert.equal(audio.channels, 2);
+  assert.equal(container, 6);
+  assert.deepEqual(report().gates.map((g) => [g.id, g.status, g.value]), [['G6', 'pass', 0], ['G7', 'pass', 0]]);
+  assert.ok(!logs.includes('Remotion отдал full range – перекодирую видео'));
 });
 
 // Мутант «убрали first_pts=0»: звук исходника начинается на 0,1 с позже видео (буфер энкодера, как у
@@ -368,29 +398,85 @@ test('claimRender re-checks the finished file after claiming and moves on if ano
   assert.equal(fs.readFileSync(path.join(dir, 'layer-01.mp4'), 'utf8'), 'чужой готовый слой');
 });
 
-// Отклонение от плана: после ожидания свободной машины layer check запускается ещё раз. Ожидание длится до
+// После ожидания очереди layer check запускается ещё раз. Ожидание длится до
 // 3 ч; план, поправленный за это время, рендерится уже новым, и G7 должен судить по его манифесту, а не по
 // манифесту проверки трёхчасовой давности. Без ожидания – одна проверка.
-test('a plan edited while waiting for a free machine is checked again before the render', { skip: !hasFfmpeg }, async (t) => {
-  const { layerDir, run } = await scaffold(t);
+test('a plan edited while waiting in the queue is checked again before the render', { skip: !hasFfmpeg }, async (t) => {
+  const { layerDir, run, logs } = await scaffold(t);
   let checks = 0;
   const checkImpl = (options, deps) => { checks += 1; return check.run(options, deps); };
-  let polls = 0;
-  const busyImpl = () => (polls++ === 0 ? [{ pid: 4242, command: 'node node_modules/@remotion/cli/remotion-cli.js render x' }] : []);
-  const sleep = async () => fs.writeFileSync(path.join(layerDir, 'src', 'plan.js'), STATIC_PLAN);
+  let releases = 0;
+  const acquireSlot = async () => {
+    assert.equal(checks, 1, 'первая проверка проходит до занятия слота');
+    fs.writeFileSync(path.join(layerDir, 'src', 'plan.js'), STATIC_PLAN);
+    return { index: 0, waited: true, release() { releases += 1; } };
+  };
   const fake = fakeRemotion(6, 'anullsrc=r=48000:cl=stereo:d=6');
-  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, busyImpl, sleep }, { 'no-wait': false }), 1);
+  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, acquireSlot }, { 'no-wait': false }), 1);
   assert.equal(checks, 2);
   assert.equal(fake.calls.length, 0);
+  assert.equal(releases, 1);
+  assert.ok(logs.includes('Очередь освободилась – проверяю план слоя ещё раз: за время ожидания его могли поправить'));
 });
 
-test('without waiting (the machine is already free) layer check runs once', { skip: !hasFfmpeg }, async (t) => {
+test('a free queue means one layer check', { skip: !hasFfmpeg }, async (t) => {
   const { projectDir, run } = await scaffold(t);
   let checks = 0;
   const checkImpl = (options, deps) => { checks += 1; return check.run(options, deps); };
   const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
-  const sleep = async () => { throw new Error('машина свободна – ждать нечего'); };
-  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, busyImpl: () => [], sleep }, { 'no-wait': false }), 0);
+  let acquired = 0;
+  const acquireSlot = async () => {
+    assert.equal(checks, 1);
+    acquired += 1;
+    return { index: 0, waited: false, release() {} };
+  };
+  assert.equal(await run({ runToolImpl: fake.runToolImpl, checkImpl, acquireSlot }, { 'no-wait': false }), 0);
+  assert.equal(acquired, 1);
   assert.equal(checks, 1);
   assert.equal(fake.calls.length, 1);
+});
+
+test('the slot is held until the report is written, also when Remotion throws', { skip: !hasFfmpeg }, async (t) => {
+  for (const fails of [false, true]) {
+    const { projectDir, run, report } = await scaffold(t);
+    let held = false;
+    let releases = 0;
+    const acquireSlot = async () => {
+      held = true;
+      return { index: 0, waited: false, release() {
+        assert.ok(fs.existsSync(path.join(projectDir, 'qa', 'layer-motion-v01-render-01.json')));
+        held = false;
+        releases += 1;
+      } };
+    };
+    const fake = fakeRemotion(6, () => effectsOf(projectDir, 6));
+    const runToolImpl = (command, args, options) => {
+      assert.ok(held, `${options.stage} должен выполняться внутри слота`);
+      if (fails && options.stage === 'layer Remotion render') throw new Error('Remotion failed');
+      return fake.runToolImpl(command, args, options);
+    };
+    const log = (line) => {
+      if (String(line).startsWith('Отчёт:') && String(line).includes('render-01')) assert.ok(held);
+    };
+    assert.equal(await run({ acquireSlot, runToolImpl, log }), fails ? 2 : 0);
+    assert.equal(held, false);
+    assert.equal(releases, 1);
+    assert.equal(report().error, fails ? 'Remotion failed' : null);
+  }
+});
+
+test('--no-wait does not wait in the queue and the label only contains the project basename', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, run } = await scaffold(t);
+  let acquired = 0;
+  const busy = Object.assign(new Error('машина занята: другая задача'), { code: 'HEAVY_QUEUE_BUSY' });
+  const acquireSlot = async ({ config, label }) => {
+    acquired += 1;
+    assert.equal(config.waitMs, 0);
+    assert.equal(label, `layer render ${path.basename(projectDir)}/motion-v01`);
+    throw busy;
+  };
+  let renders = 0;
+  await assert.rejects(run({ acquireSlot, runToolImpl() { renders += 1; } }), (error) => error === busy);
+  assert.equal(acquired, 1);
+  assert.equal(renders, 0);
 });

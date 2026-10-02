@@ -22,6 +22,7 @@ const { buildTakesMaster } = require('./build-takes-master');
 const { isTakesEdit } = require('./takes-edit');
 const { readTakeLevels } = require('./take-pauses');
 const { readProjectManifest, resolveProjectPath } = require('./workspace');
+const { acquireHeavySlotSync, heavyQueueConfig } = require('../heavy-queue');
 
 const validateSchema = new Ajv({ allErrors: true }).compile(sourceEditSchema);
 
@@ -87,65 +88,71 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
   const edit = JSON.parse(fileSystem.readFileSync(editAbsolute, 'utf8'));
   const editRelative = projectRelative(workspace.dir, editAbsolute);
   const source = normalizeSourceMetadata(manifest.source);
-  if (isTakesEdit(edit)) {
-    return buildTakesMaster({ workspace, edit, editRelative, source, quality }, {
-      ...publishDependencies,
-      probeMediaPathImpl,
-      runSegmentsTrimImpl: dependencies.runSegmentsTrimImpl || runSegmentsTrim,
-      readTakeLevelsImpl: dependencies.readTakeLevelsImpl || readTakeLevels,
-    });
-  }
-  const sourcePath = resolveProjectPath(workspace.dir, source.localPath, {
-    label: 'active source path', fileSystem, mustExist: true, type: 'file',
+  const slot = (dependencies.acquireSlotSync || acquireHeavySlotSync)({
+    label: `master ${path.basename(resolvedProjectDir)}`, config: heavyQueueConfig(),
+    log: dependencies.log || console.log,
   });
-  const sourceProbe = probeVideoImpl(sourcePath, { stage: 'master source probe' });
-  const normalizedEdit = validateSourceEdit(edit, {
-    sourceRevision: source.revision,
-    sourceDuration: sourceProbe.duration,
-  });
-  if (Math.abs(sourceProbe.fps - normalizedEdit.fps) > 1e-6) {
-    throw new Error('source edit FPS does not match the active source');
-  }
-  const transcriptPath = resolveProjectPath(workspace.dir, manifest.transcript.words, {
-    label: 'active transcript path', fileSystem, mustExist: true, type: 'file',
-  });
-  const words = collectWords(JSON.parse(fileSystem.readFileSync(transcriptPath, 'utf8')));
-  const remapped = remapTranscriptWords(words, normalizedEdit.keep, normalizedEdit.fps);
-  const duration = normalizedEdit.keep.reduce((sum, range) => sum + range.end - range.start, 0);
-  // FFmpeg поворачивает кадр до фильтров, поэтому результат хранится в отображаемом размере.
-  const sourceMedia = probeMediaPathImpl(sourcePath, {
-    stage: 'master source media probe',
-    containerDurationFallback: true,
-  });
-  const target = workingSize({ ...displayDimensions(sourceMedia), sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) }, quality);
-  const size = { width: target.width, height: target.height };
-  const result = publishSourceRevision({
-    workspace,
-    source,
-    editRelative,
-    words: remapped,
-    duration,
-    fps: normalizedEdit.fps,
-    expected: size,
-    encode(output) {
-      runTrimImpl({
-        input: sourcePath,
-        output,
-        intervals: normalizedEdit.keep.map(({ start, end }) => [start, end]),
-        scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) } : {}) } : null,
-        audioFadeSec: 0.04,
-        precision: 6,
+  try {
+    if (isTakesEdit(edit)) {
+      return buildTakesMaster({ workspace, edit, editRelative, source, quality }, {
+        ...publishDependencies,
+        probeMediaPathImpl,
+        runSegmentsTrimImpl: dependencies.runSegmentsTrimImpl || runSegmentsTrim,
+        readTakeLevelsImpl: dependencies.readTakeLevelsImpl || readTakeLevels,
       });
-    },
-  }, publishDependencies);
-  return {
-    ...result,
-    kind: 'source',
-    ...size,
-    quality,
-    duration: roundedTime(duration, normalizedEdit.fps),
-    removedDuration: roundedTime(sourceProbe.duration - duration, normalizedEdit.fps),
-  };
+    }
+    const sourcePath = resolveProjectPath(workspace.dir, source.localPath, {
+      label: 'active source path', fileSystem, mustExist: true, type: 'file',
+    });
+    const sourceProbe = probeVideoImpl(sourcePath, { stage: 'master source probe' });
+    const normalizedEdit = validateSourceEdit(edit, {
+      sourceRevision: source.revision,
+      sourceDuration: sourceProbe.duration,
+    });
+    if (Math.abs(sourceProbe.fps - normalizedEdit.fps) > 1e-6) {
+      throw new Error('source edit FPS does not match the active source');
+    }
+    const transcriptPath = resolveProjectPath(workspace.dir, manifest.transcript.words, {
+      label: 'active transcript path', fileSystem, mustExist: true, type: 'file',
+    });
+    const words = collectWords(JSON.parse(fileSystem.readFileSync(transcriptPath, 'utf8')));
+    const remapped = remapTranscriptWords(words, normalizedEdit.keep, normalizedEdit.fps);
+    const duration = normalizedEdit.keep.reduce((sum, range) => sum + range.end - range.start, 0);
+    // FFmpeg поворачивает кадр до фильтров, поэтому результат хранится в отображаемом размере.
+    const sourceMedia = probeMediaPathImpl(sourcePath, {
+      stage: 'master source media probe',
+      containerDurationFallback: true,
+    });
+    const target = workingSize({ ...displayDimensions(sourceMedia), sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) }, quality);
+    const size = { width: target.width, height: target.height };
+    const result = publishSourceRevision({
+      workspace,
+      source,
+      editRelative,
+      words: remapped,
+      duration,
+      fps: normalizedEdit.fps,
+      expected: size,
+      encode(output) {
+        runTrimImpl({
+          input: sourcePath,
+          output,
+          intervals: normalizedEdit.keep.map(({ start, end }) => [start, end]),
+          scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) } : {}) } : null,
+          audioFadeSec: 0.04,
+          precision: 6,
+        });
+      },
+    }, publishDependencies);
+    return {
+      ...result,
+      kind: 'source',
+      ...size,
+      quality,
+      duration: roundedTime(duration, normalizedEdit.fps),
+      removedDuration: roundedTime(sourceProbe.duration - duration, normalizedEdit.fps),
+    };
+  } finally { slot.release(); }
 }
 
 function takesSummaryLines(result) {
