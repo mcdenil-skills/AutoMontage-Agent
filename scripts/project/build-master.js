@@ -19,6 +19,7 @@ const {
   roundedTime,
 } = require('./source-revision');
 const { buildTakesMaster } = require('./build-takes-master');
+const { assertRoughCutSettled } = require('./rough-cut-model');
 const { isTakesEdit } = require('./takes-edit');
 const { readTakeLevels } = require('./take-pauses');
 const { readProjectManifest, resolveProjectPath } = require('./workspace');
@@ -83,6 +84,8 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
   const resolvedProjectDir = path.resolve(projectDir || '');
   if (!projectDir || !editPath) throw new Error('master requires --project-dir and --edit');
   const manifest = readProjectManifest(resolvedProjectDir);
+  // Пока черновая нарезка ждёт автора, master не собирается – ни слота очереди, ни файлов.
+  assertRoughCutSettled(manifest, 'master', { projectDir: resolvedProjectDir });
   const workspace = { dir: resolvedProjectDir, manifest };
   const editAbsolute = resolveRequestedEdit(workspace, editPath, fileSystem);
   const edit = JSON.parse(fileSystem.readFileSync(editAbsolute, 'utf8'));

@@ -178,7 +178,11 @@ Master полностью декодирует результат и атома�
 было цикла require) переводит секунды нарезки в секунды исходника (`roughCutTimeToSource`),
 перечисляет вырезы с причинами из `note` (`removedRanges`), считает размер копии `roughCutSize`
 (короткая сторона 720, без увеличения, чётные стороны) и определяет охрану
-`assertRoughCutSettled` для `master` и `layer new` (ошибка с `code === 'ROUGH_CUT_PENDING'`).
+`assertRoughCutSettled` для `master` и `layer new` (ошибка с `code === 'ROUGH_CUT_PENDING'`; другое
+имя действия – обычная ошибка, чтобы опечатка не снимала охрану). Охрана подключена: `buildMaster`
+вызывает её сразу после чтения паспорта, до слота очереди, а `layer new` – сразу после `projectFrom`,
+до папки слоя. Пока нарезка ждёт автора, отказывают обе команды; после подтверждения master
+разрешён, а `layer new` ждёт, пока master не поднимет ревизию исходника.
 
 `automontage roughcut` (`scripts/project/rough-cut-cli.js` → `buildRoughCut` в
 `scripts/project/rough-cut.js`) собирает копию нарезки, не создавая ревизии исходника. До слота

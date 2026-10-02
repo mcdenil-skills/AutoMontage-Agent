@@ -5,6 +5,8 @@
 const ROUGH_CUT_EDIT = /^edit\/roughcut-v(\d{2,3})\.json$/;
 const ROUGH_CUT_VIDEO = /^previews\/roughcut-v(\d{2,3})\.mp4$/;
 const SHORT_SIDE = 720;
+// Действия, которые охраняет assertRoughCutSettled: опечатка в имени не должна тихо снимать охрану.
+const GUARDED_ACTIONS = ['master', 'layer new'];
 // Вырез не длиннее миллисекунды – погрешность округления, а не решение автора.
 const MIN_REMOVED_SEC = 0.001;
 
@@ -98,6 +100,9 @@ function pendingError(message) {
 // Охрана для master и `layer new`: пока нарезка ждёт автора, слой строить рано; после
 // подтверждения master собирается из нарезки (или списка с правками), а слой – только после него.
 function assertRoughCutSettled(manifest, action, { projectDir }) {
+  if (!GUARDED_ACTIONS.includes(action)) {
+    throw new Error(`assertRoughCutSettled: неизвестное действие ${JSON.stringify(action)} – ожидается master или layer new`);
+  }
   const record = activeRoughCut(manifest);
   if (!record) return;
   if (record.status === 'review') {

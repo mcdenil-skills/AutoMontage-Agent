@@ -291,3 +291,19 @@ test('assertRoughCutSettled lets master run but stops layer new after confirmati
     },
   );
 });
+
+test('assertRoughCutSettled rejects an unknown action so a typo cannot skip the guard', () => {
+  const manifests = [{ source: { revision: 1 } }, settledManifest()];
+  for (const action of ['layer-new', 'Master', 'roughcut', '', undefined]) {
+    for (const manifest of manifests) {
+      assert.throws(
+        () => assertRoughCutSettled(manifest, action, { projectDir: '/p' }),
+        (error) => {
+          assert.equal(error.code, undefined);
+          assert.match(error.message, /неизвестное действие/);
+          return true;
+        },
+      );
+    }
+  }
+});
