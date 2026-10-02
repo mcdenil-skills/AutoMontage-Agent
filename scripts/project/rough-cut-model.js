@@ -41,10 +41,14 @@ function roughCutTimeToSource(keep, timeSec) {
 
 // Что автор не увидит в нарезке: голова до первого куска, стыки между кусками и хвост.
 // `atSec` – место стыка в нарезке, `note` – причина из следующего куска (у хвоста её нет).
-function removedRanges(keep, sourceDuration) {
+// С `fps` вырез короче кадра не считается: контейнер часто длиннее последнего кадра, и список,
+// оставленный до последнего кадра, иначе показал бы хвост «вырезано 0,0 с».
+function removedRanges(keep, sourceDuration, { fps } = {}) {
+  const frameFps = typeof fps === 'number' && Number.isFinite(fps) && fps > 0;
   const ranges = [];
   const add = (atSec, sourceStart, sourceEnd, note) => {
-    if (sourceEnd - sourceStart <= MIN_REMOVED_SEC) return;
+    const length = sourceEnd - sourceStart;
+    if (frameFps ? length < 1 / fps - 1e-6 : length <= MIN_REMOVED_SEC) return;
     ranges.push({
       atSec: rounded(atSec),
       sourceStart: rounded(sourceStart),

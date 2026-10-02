@@ -152,6 +152,16 @@ test('rough cut builds a 720p copy from the active source and records it without
   assert.deepEqual(calls.log, []);
 });
 
+test('a sub-frame tail of the source is not counted as a cut', (t) => {
+  const fixture = makeRoughCutSourceProject(t);
+  const editPath = fixture.writeEdit('roughcut-v01.json');
+  const { deps } = fakes({ source: { duration: 8.007, fps: 25, width: 1080, height: 1920 } });
+  const result = buildRoughCut({ projectDir: fixture.projectDir, editPath }, deps);
+  assert.equal(result.cuts, 1);
+  assert.equal(result.removedSec, 2);
+  assert.match(formatRoughCutSummary(result), /вырезано 2,0 с в 1 месте\./);
+});
+
 test('rough cut of a rotated phone recording is portrait and the copy size is checked', (t) => {
   const fixture = makeRoughCutSourceProject(t);
   const editPath = fixture.writeEdit('roughcut-v01.json');

@@ -111,7 +111,7 @@ function buildRoughCut({ projectDir, editPath }, deps = {}) {
   const { fps } = edit;
   const duration = edit.keep.reduce((sum, range) => sum + range.end - range.start, 0);
   const sourceDuration = roundedTime(sourceProbe.duration, fps);
-  const removed = removedRanges(edit.keep, sourceDuration);
+  const removed = removedRanges(edit.keep, sourceDuration, { fps });
   const removedSec = Number(removed.reduce((sum, range) => sum + range.removedSec, 0).toFixed(3));
 
   // 3. Слот очереди – до блокировки проекта: ожидание не держит проект (D-044).

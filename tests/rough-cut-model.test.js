@@ -114,6 +114,22 @@ test('removedRanges rounds seconds to milliseconds and drops sub-millisecond cut
   assert.deepEqual(tiny, []);
 });
 
+test('removedRanges with fps drops a removed range shorter than one frame', () => {
+  // Контейнер длиннее последнего кадра: список, оставленный до последнего кадра, хвоста не режет.
+  const keep = [{ start: 0, end: 2 }, { start: 4, end: 66.68 }];
+  assert.deepEqual(removedRanges(keep, 66.687, { fps: 50 }), [
+    { atSec: 2, sourceStart: 2, sourceEnd: 4, removedSec: 2, note: null },
+  ]);
+  // Без fps – прежнее правило миллисекунды: хвост 0,007 с остаётся.
+  const withoutFps = removedRanges(keep, 66.687);
+  assert.equal(withoutFps.length, 2);
+  assert.deepEqual(withoutFps[1], { atSec: 64.68, sourceStart: 66.68, sourceEnd: 66.687, removedSec: 0.007, note: null });
+  // Ровно один кадр – настоящий вырез.
+  assert.deepEqual(removedRanges([{ start: 0, end: 1 }, { start: 1.02, end: 2 }], 2, { fps: 50 }), [
+    { atSec: 1, sourceStart: 1, sourceEnd: 1.02, removedSec: 0.02, note: null },
+  ]);
+});
+
 test('roughCutSize keeps the short side at 720, never upscales and keeps sides even', () => {
   assert.deepEqual(roughCutSize({ width: 1080, height: 1920 }), { width: 720, height: 1280 });
   assert.deepEqual(roughCutSize({ width: 1920, height: 1080 }), { width: 1280, height: 720 });
