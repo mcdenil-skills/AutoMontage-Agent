@@ -98,39 +98,39 @@ jobs:
 
       - name: Проверить portable media lifecycle
         shell: pwsh
-        run: node --test tests/filesystem-capabilities.test.js tests/media-probe.test.js tests/opened-media-probe.test.js tests/render-media-bundle-windows.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/heavy-queue.test.js tests/filesystem-capabilities.test.js tests/media-probe.test.js tests/opened-media-probe.test.js tests/render-media-bundle-windows.test.js
 
       - name: Проверить motion audio source
         shell: pwsh
-        run: node --test tests/motion-source.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/motion-source.test.js
 
       - name: Проверить motion workspace
         shell: pwsh
-        run: node --test --test-name-pattern='motion|old video|legacy' tests/project-workspace.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test --test-name-pattern='motion|old video|legacy' tests/project-workspace.test.js
 
       - name: Проверить сборку motion-слоя и границу plan.js
         shell: pwsh
-        run: node --test tests/motion-kit-node.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/motion-kit-node.test.js
 
       - name: Проверить portable import и final publication
         shell: pwsh
-        run: node --test --test-name-pattern='import publishes video when ffprobe average FPS is 0/0|Windows-mode import requires identity and bytes|real tiny images and videos normalize|Windows-mode claim recovery ignores POSIX mode bits|Windows-mode handoff stays exclusive|review save returns a fixed 500|publish final fsyncs through a write-capable handle' tests/review-media-import.test.js tests/review-imported-assets.test.js tests/review-server-security.test.js tests/project-workspace.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test --test-name-pattern='import publishes video when ffprobe average FPS is 0/0|Windows-mode import requires identity and bytes|real tiny images and videos normalize|Windows-mode claim recovery ignores POSIX mode bits|Windows-mode handoff stays exclusive|review save returns a fixed 500|publish final fsyncs through a write-capable handle' tests/review-media-import.test.js tests/review-imported-assets.test.js tests/review-server-security.test.js tests/project-workspace.test.js
 
       - name: Проверить portable duration и geometry
         shell: pwsh
-        run: node --test --test-name-pattern='real still image|real mismatched streams|real odd landscape' tests/media-duration-geometry.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test --test-name-pattern='real still image|real mismatched streams|real odd landscape' tests/media-duration-geometry.test.js
 
       - name: Проверить portable project transactions
         shell: pwsh
-        run: node --test --test-name-pattern='a live process mutation lease blocks|two real processes racing Save|two real processes racing approval|two real processes racing initial brief|approval rejects a stale|approval always runs|direct manifest update rejects|initial brief publication preserves' tests/project-mutation-transaction.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test --test-name-pattern='a live process mutation lease blocks|two real processes racing Save|two real processes racing approval|two real processes racing initial brief|approval rejects a stale|approval always runs|direct manifest update rejects|initial brief publication preserves' tests/project-mutation-transaction.test.js
 
       - name: Проверить portable import ownership setup
         shell: pwsh
-        run: node --test --test-name-pattern='a real import process keeps a second process out|setup failure removes only|clean setup failure removes|setup root|orphan cleanup never treats' tests/review-import-ownership.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test --test-name-pattern='a real import process keeps a second process out|setup failure removes only|clean setup failure removes|setup root|orphan cleanup never treats' tests/review-import-ownership.test.js
 
       - name: Проверить пульт роликов
         shell: pwsh
-        run: node --test (Get-ChildItem tests/pult-*.test.js).FullName
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test (Get-ChildItem tests/pult-*.test.js).FullName
 
       - name: Проверить кодер libx264 для настоящих тестов склейки
         shell: pwsh
@@ -143,7 +143,7 @@ jobs:
 
       - name: Проверить склейку дублей на настоящем FFmpeg 7
         shell: pwsh
-        run: node --test tests/trim-media-real.test.js tests/takes-master-media.test.js tests/take-pauses.test.js tests/project-takes.test.js
+        run: node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/trim-media-real.test.js tests/takes-master-media.test.js tests/take-pauses.test.js tests/project-takes.test.js
 
   review-ui:
     name: Node 20 · Review Chromium tests

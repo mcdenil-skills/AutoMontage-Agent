@@ -24,12 +24,12 @@
     "montage": "node scripts/build.js",
     "preview": "node scripts/preview.js",
     "qa:preview": "node scripts/qa-preview.js",
-    "test:video-edit": "node --test tests/lesson-preview.test.js tests/source-edit.test.js tests/qa-preview.test.js tests/takes-edit.test.js tests/take-pauses.test.js tests/takes-master.test.js tests/project-takes.test.js tests/takes-pack.test.js",
+    "test:video-edit": "node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/lesson-preview.test.js tests/source-edit.test.js tests/qa-preview.test.js tests/takes-edit.test.js tests/take-pauses.test.js tests/takes-master.test.js tests/project-takes.test.js tests/takes-pack.test.js",
     "review": "node scripts/review/cli.js",
     "check:privacy": "node scripts/check-public-privacy.js --tracked",
     "check:release": "node scripts/check-release.js",
     "smoke:release": "node scripts/smoke-release.js",
-    "test": "node --test tests/*.test.js",
+    "test": "node --require ./tests/helpers/heavy-queue-isolation.cjs --test tests/*.test.js",
     "test:review-ui": "playwright test tests/review-ui.spec.js tests/broll-review-ui.spec.js tests/pult-ui.spec.js tests/pult-lead-magnet-ui.spec.js --project=chromium"
   },
   "dependencies": {

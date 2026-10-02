@@ -1,3 +1,5 @@
+require('./tests/helpers/heavy-queue-isolation.cjs');
+
 module.exports = {
   testDir: './tests',
   testMatch: ['review-ui.spec.js', 'broll-review-ui.spec.js', 'pult-ui.spec.js', 'pult-lead-magnet-ui.spec.js'],
