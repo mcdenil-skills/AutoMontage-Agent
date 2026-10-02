@@ -49,7 +49,8 @@ function help() {
   automontage layer brief --project-dir <p> --asset <ref> …
                                       draft brief со слоем на весь ролик
   automontage layer --help            все команды layer (new/words/check/render/import/brief/stock/sheet)
-  automontage master --project-dir . --edit edit/v02-source.json
+  automontage master --project-dir . --edit edit/v02-source.json [--quality 1080p|source]
+    1080p по умолчанию; source (4k/native) сохраняет родной размер
                                       собрать новую source-ревизию без повторного Whisper
   automontage master --project-dir . --edit edit/v02-takes.json
                                       собрать ролик из лучших кусков разных дублей

@@ -48,8 +48,8 @@ test('real motion MP4 keeps clip trim, narration mix/replace, watermark, approva
   cli(['preview', '--project-dir', workspace.dir, '--brief', draft.relativePath, '--no-open']);
   const preview = path.join(workspace.dir, 'previews/current-preview.mp4');
   const previewQa = runPreviewQa({ projectDir: workspace.dir });
-  assert.equal(previewQa.video.width, 540);
-  assert.equal(previewQa.video.height, 960);
+  assert.equal(previewQa.video.width, 1080);
+  assert.equal(previewQa.video.height, 1920);
   assert.ok(Number.isFinite(previewQa.audio.voiceDb));
   execFileSync(process.execPath, [path.join(root, 'scripts/project/approve-brief.js'), workspace.dir, draft.relativePath, '--confirm-preview-viewed']);
   const manifest = readProjectManifest(workspace.dir);
