@@ -109,7 +109,7 @@ flowchart LR
   A --> M["Опциональный source-edit или takes-edit"]
   B --> M
   T["Дубли: input/takes + transcript/takes"] --> M
-  M --> N["Versioned master + remapped transcript"]
+  M --> N["1080p working master + remapped transcript"]
   N --> C["Словарь + LLM-проруф"]
   B --> C
   C --> D["Markdown + JSON status=draft"]
@@ -154,7 +154,11 @@ Brief замораживает исходник, тему, аспект, раз�
 
 Сокращение исходника - отдельная data-boundary до draft. `scripts/project/build-master.js`
 валидирует `edit/vNN-source.json` относительно активной source revision и FPS, собирает диапазоны
-через существующий trim pipeline, полностью декодирует результат и атомарно публикует новую пару
+через существующий trim pipeline: `scripts/working-quality.js` выбирает размер от
+отображаемого кадра (с учётом поворота), а `scale=W:H:flags=lanczos,setsar=1` после concat
+уменьшает короткую сторону до 1080 внутри того же кодирования. `--quality source` сохраняет
+родной размер; маленькие кадры не увеличиваются, нечётные стороны округляются вниз.
+Master полностью декодирует результат и атомарно публикует новую пару
 `input/source-vNN.mp4` + `transcript/words-vNN.json`. Слова вне оставленных диапазонов удаляются,
 пересекающие разрез клипуются, а последующие таймкоды сдвигаются без повторного Whisper.
 Оригинал и история immutable; manifest переключается последним и очищает только устаревший
@@ -198,10 +202,11 @@ Draft имеет отдельную непередаваемую в final воз
 текущий зарегистрированный draft, выбирает `ReelScenes` или `MotionReel` по `briefs[].kind`
 через `scripts/project/brief-contract.js` и готовит props через закрытую preview-boundary,
 материализует медиа в том же изолированном bundle и выполняет Remotion → `finish.js` →
-`mix-music.js`. Отличия только технические: `--scale=0.5`, CRF 28 и детерминированная отметка
+`mix-music.js`. Отличия только технические: `--scale=min(1,1920/max(width,height))`, CRF 28 и детерминированная отметка
 «ЧЕРНОВИК». После полного decode immutable revision и `previews/current-preview.mp4` публикуются
 атомарно, а manifest обновляет только `currentPreview`; `renders`, `latestRender` и `final`
-недоступны этой границе. Approved builder по-прежнему отклоняет draft.
+недоступны этой границе. Approved builder по-прежнему отклоняет draft. Проверка просмотра перед approval использует
+тот же масштаб через `previewScale`, а хеши и подтверждение просмотра остаются обязательными.
 Перед decode и публикацией lesson-preview проходит барьер `scripts/qa/preview-gates.js`
 (гейт L и G8, раздел 3.5): стоп строг только для слоя kit из реестра `qa/layer-imports.json`.
 
@@ -1205,3 +1210,5 @@ QA и `automontage demo` работают без provider API-ключей.
 - Новая официальная lesson-сцена: это изменение продуктового контракта. Нужны компонент,
   адаптив обеих ориентаций, safe-zone, brief-схема, нормализация в `gen-brief`, тесты,
   обновление `docs/TEMPLATES.md` и отдельное решение в `DECISIONS.md`.
+
+Рабочий размер master учитывает SAR после поворота: в режиме 1080p сжимает одну ось до квадратных пикселей без увеличения кадра; source сохраняет SAR. `previewSize` повторяет чётное округление H.264 в Remotion и используется при публикации и approval.

@@ -375,6 +375,13 @@ node scripts/build.js <project-dir>/input/source.mp4 --template lesson \
 Слой с аватаром или живым спикером в кадре собирай из motion-kit. Пути – от корня движка;
 весь путь, команды и гейты – `docs/MOTION-KIT.md`.
 
+Перед `layer new` всегда соберите master из нарезки (по умолчанию рабочий 1080p).
+Если нарезки нет – source-edit с одним keep на всю запись, по кадровым границам.
+4K/родной размер – только по явной просьбе пользователя через `master --quality source`.
+Далее берите активные `source.localPath` и `transcript.words` из `project.json`;
+при смене размера старый слой пересоберите, иначе G6 его остановит.
+Для ролика только из озвучки этот шаг не нужен: `master` и kit требуют видео.
+
 1. `automontage layer new --project-dir projects/<папка>` создаёт `motion-vNN/`. Субагенту слоя
    отдай одно задание: `skills/reel-turnkey/references/motion-layer-brief.md` с этой папкой.
 2. `automontage layer check --project-dir projects/<папка> --layer motion-vNN` – после каждой

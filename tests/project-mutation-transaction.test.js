@@ -383,7 +383,7 @@ test('approval dispatches from the stored motion brief kind even with a lesson f
     briefPath: workspace.manifest.currentBrief, open: false }, {
     ...require('./helpers/motion-workflow-fixture.cjs').fakeMedia(),
     probeOpenedAudioImpl: () => ({ mediaKind: 'audio', durationSec: 3 }),
-    probeVideoImpl: () => ({ width: 540, height: 960, fps: 30, duration: 3 }),
+    probeVideoImpl: () => ({ width: 1080, height: 1920, fps: 30, duration: 3 }),
   });
   workspace.manifest = readProjectManifest(workspace.dir);
   const approved = approveBrief(workspace, draft.jsonPath, { confirmPreviewViewed: true });

@@ -97,7 +97,7 @@ for (const entry of [
 ]) test(`motion ${entry.name} permits preview`, t => {
   const f = mediaFixture(t, entry); const calls = [];
   const deps = fakeMedia(calls);
-  if (entry.fps) deps.probeVideoImpl = () => ({ width: 160, height: 284, fps: entry.fps, duration: 2 });
+  if (entry.fps) deps.probeVideoImpl = () => ({ width: 320, height: 568, fps: entry.fps, duration: 2 });
   runPreview({ projectDir: f.workspace.dir, briefPath: f.published.relativePath, open: false }, deps);
   const render = calls.find(call => call.stage.includes('Remotion'));
   assert.ok(render.props.audioSrc);

@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { workingSize, parseQuality } = require('../working-quality');
 
 const { frameRateFromFps } = require('../review/media-time');
 const { collectWords } = require('../tighten');
@@ -14,7 +15,8 @@ const {
 } = require('./takes-edit');
 const { resolveProjectPath } = require('./workspace');
 
-function buildTakesMaster({ workspace, edit, editRelative, source }, dependencies) {
+function buildTakesMaster({ workspace, edit, editRelative, source, quality = '1080p' }, dependencies) {
+  quality = parseQuality(quality);
   const {
     fileSystem = fs,
     probeVideoImpl,
@@ -81,6 +83,8 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
   const duration = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
   const rate = frameRateFromFps(first.fps);
   const { inputs, segments } = takesTrimPlan(ranges, takes);
+  const target = workingSize(first, quality);
+  const size = { width: target.width, height: target.height };
   const result = publishSourceRevision({
     workspace,
     source,
@@ -88,12 +92,13 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
     words,
     duration,
     fps: first.fps,
-    expected: { width: first.width, height: first.height },
+    expected: size,
     encode(output) {
       runSegmentsTrimImpl({
         inputs,
         output,
         segments,
+        scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: first.sampleAspectRatio } : {}) } : null,
         audioFadeSec: 0.04,
         precision: 6,
         fps: `${rate.numerator}/${rate.denominator}`,
@@ -109,6 +114,8 @@ function buildTakesMaster({ workspace, edit, editRelative, source }, dependencie
   return {
     ...result,
     kind: 'takes',
+    ...size,
+    quality,
     duration: roundedTime(duration, first.fps),
     takes: used.map((take) => take.id),
     ranges: ranges.map(({ take, start, end, beat }) => ({
