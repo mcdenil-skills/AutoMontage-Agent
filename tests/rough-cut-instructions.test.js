@@ -11,7 +11,7 @@ const section = (text, heading) => text.split(heading)[1]?.split('\n## ')[0];
 
 const ROUGH_CUT = 'skills/reel-turnkey/references/rough-cut.md';
 const THREE_POINTS = 'Обязательные пользовательские точки – три: один выбор маршрута в начале, '
-  + 'подтверждение черновой нарезки (для записи с речью; «режь сам» его снимает) и явное '
+  + 'подтверждение черновой нарезки (для своей съёмки с речью; у аватара и после «режь сам» его нет) и явное '
   + 'утверждение просмотренного preview перед final.';
 const MASTER_FROM_ROUGH_CUT = 'Перед `layer new` всегда соберите master из подтверждённой черновой нарезки';
 const NO_TIMINGS = 'Таймингов ещё нет – слой не создаём';
@@ -115,6 +115,14 @@ test('rough-cut.md describes the stage, the search order, commands and the stop 
   // Нарезка режет активную ревизию исходника, а она равна оригиналу только в ревизии 1.
   const applicability = section(guide, '## Когда этап нужен');
   assert.ok(applicability, 'rough-cut.md: нет раздела «Когда этап нужен»');
+  // Аватар (видео из текста) этап пропускает: оговорок там нет, решение владельца.
+  assert.match(applicability, words('- **Нужен** для записи с речью: своя съёмка автора'));
+  assert.match(applicability, words(
+    '- **Не нужен** для аватара (HeyGen и похожие): видео генерируется из текста без оговорок. '
+    + 'Агент сам убирает лишние паузы, если они есть, собирает master из своего списка '
+    + '`edit/v02-source.json` и идёт прежним путём, не дожидаясь автора.',
+  ));
+  assert.doesNotMatch(guide, words('своя съёмка или аватар'));
   assert.match(applicability, words(
     'Нарезка строится до первого master, пока ревизия исходника – 1. Если master уже собран '
     + '(ревизия 2 и выше), черновую нарезку не делай: ролик идёт прежним путём, а оговорки '
@@ -216,4 +224,67 @@ test('user documents show the rough cut command and the confirm button', () => {
     'Перед первым `automontage roughcut` обновите движок во всех рабочих копиях: старый движок не '
     + 'читает `project.json` с полем `roughCut` и `pult/comments.json` с правкой к черновой нарезке.',
   ));
+});
+
+test('avatar videos skip the rough cut stage everywhere the stage is described', () => {
+  // Решение владельца 03.10: видео из текста без оговорок, нарезка нужна только для своей съёмки.
+  const avatarSkipsKit = '«режь сам» до показа и аватар (нарезки нет) – свой список';
+  for (const file of ['skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md', 'skills/motion-reel/SKILL.md']) {
+    assert.match(section(read(file), '## Motion-слой из kit'), words(avatarSkipsKit), file);
+  }
+  for (const prefix of ['.agents', '.codex']) {
+    assert.match(read(`${prefix}/skills/motion-reel/SKILL.md`), words(avatarSkipsKit), prefix);
+  }
+  assert.match(
+    section(read('skills/reel-turnkey/references/creative-motion.md'), '## Project-local motion pack'),
+    words('У аватара нарезки нет: master – из своего списка `edit/v02-source.json`.'),
+  );
+
+  const turnkey = read('skills/reel-turnkey/SKILL.md');
+  assert.match(section(turnkey, '## Шаг 2.'), words(
+    'У аватара (HeyGen и похожие) этап пропускается: оговорок в видео из текста нет. Пункты 4–5 '
+    + 'пропусти так же: убери лишние паузы сам, собери master из своего списка `edit/v02-source.json` '
+    + 'и переходи к шагу 3, не дожидаясь автора.',
+  ));
+  assert.match(turnkey, words('brief каждого ролика – после подтверждения его нарезки (у аватара – после master)'));
+
+  const donor = read('skills/reel-from-donor/SKILL.md');
+  assert.match(section(donor, '## Подготовка до съёмки'), words(
+    'Если видео генерируется из текста (аватар), черновой нарезки нет: убери лишние паузы сам, '
+    + 'собери master из своего списка `edit/v02-source.json` и переходи к шагу 4.',
+  ));
+
+  assert.match(section(read(ROUGH_CUT), '## Ночной режим'), words(
+    'Ролик с аватаром нарезку не проходит: веди его прежним путём до preview, не дожидаясь автора.',
+  ));
+  assert.match(read('AGENTS.md'), words('У аватара нарезки нет: master из своего списка `edit/v02-source.json`.'));
+  assert.match(read('skills/reel-turnkey/references/qa-checklist.md'), words(
+    'У аватара нарезки нет: слой создан после master из своего списка.',
+  ));
+  assert.match(read('skills/reel-turnkey/references/motion-layer-brief.md'), words(
+    'У аватара нарезки нет: слой создаётся после master из своего списка.',
+  ));
+
+  // Общие правила про «запись с речью» теперь говорят про свою съёмку.
+  for (const file of [
+    'AGENTS.md', 'README.md', 'docs/MONTAGE-GUIDE.md', 'docs/TEMPLATES.md', 'docs/BATCH-REELS-WORKFLOW.md',
+    'skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md',
+    'skills/reel-turnkey/references/creative-motion.md', 'skills/reel-turnkey/references/qa-checklist.md',
+  ]) {
+    assert.doesNotMatch(read(file), /[Дд]ля записи с речью|в записи с речью/u, file);
+  }
+
+  // Курс «Ролики с нуля»: у аватара нет шага с нарезкой, в пакете из аватаров тоже.
+  assert.match(read('docs/reels-guide/05-pult.md'), words('Этот шаг - для своей съёмки. У аватара черновой нарезки нет'));
+  assert.match(read('docs/reels-guide/04-montage.md'), words('Если у вас аватар, этого шага нет'));
+  assert.match(read('docs/reels-guide/README.md'), words('У аватара черновой нарезки нет'));
+  const batch = read('docs/reels-guide/08-batch.md');
+  assert.doesNotMatch(batch, /R\["✋ Черновые нарезки: пульт"\]/u);
+  assert.match(batch, words('черновой нарезки у аватара нет'));
+
+  const decisions = read('DECISIONS.md');
+  const d046 = decisions.split('## D-046')[1].split('\n## D-')[0];
+  assert.match(d046, words('Аватар (видео из текста) этап пропускает – решение владельца 03.10: оговорок там нет.'));
+  const unreleased = read('CHANGELOG.md').split('## [Unreleased]')[1].split('\n## [')[0];
+  assert.match(unreleased, words('Аватар (видео из текста) этап пропускает: оговорок там нет.'));
 });

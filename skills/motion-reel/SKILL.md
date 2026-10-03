@@ -187,7 +187,8 @@ kit media-сценой motion brief: preview motion-reel барьер гейто
 Master – один раз из оригинала: `--edit edit/roughcut-vNN.json` или копия `edit/vNN-source.json`
 с правками автора; порядок и поздняя оговорка после master (новый master и новый слой, полный
 круг) – `skills/reel-turnkey/references/rough-cut.md`. Вырезать нечего – в нарезке один кусок на
-всю запись по кадровым границам; «режь сам» до показа – свой список.
+всю запись по кадровым границам; «режь сам» до показа и аватар (нарезки нет) – свой список
+`edit/v02-source.json`.
 4K/родной размер – только по явной просьбе пользователя через `master --quality source`.
 Далее берите активные `source.localPath` и `transcript.words` из `project.json`;
 при смене размера старый слой пересоберите, иначе G6 его остановит.
