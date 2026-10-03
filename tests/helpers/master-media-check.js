@@ -54,7 +54,8 @@ function checkMasterMedia(t, { rotation, takes = false, retainedMatrix = false }
   const drift = Math.abs(media.audioDurationSec - media.videoDurationSec);
   if (drift > 0.03) {
     const packets = JSON.parse(captureTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
-      '-show_packets', '-show_entries', 'packet=pts_time,duration_time', '-of', 'json', result.sourcePath])).packets;
+      '-show_packets', '-show_entries', 'packet=pts_time,duration_time', '-of', 'json', result.sourcePath],
+    { maxBuffer: 1024 * 1024, stage: 'master test packet timing' })).packets;
     t.diagnostic(JSON.stringify({ audioDurationSec: media.audioDurationSec,
       videoDurationSec: media.videoDurationSec, drift, packetCount: packets.length,
       missingPacketDurations: packets.filter((packet) => !packet.duration_time).length,

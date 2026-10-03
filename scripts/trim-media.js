@@ -123,12 +123,13 @@ function buildSegmentsConcatFilter(segments, {
 function buildConcatFilter(intervals, {
   audioFadeSec = 0,
   precision = null,
+  fps = null,
   scale = null,
 } = {}) {
   const keep = validateIntervals(intervals);
   return buildSegmentsConcatFilter(
     keep.map(([start, end]) => ({ input: 0, start, end })),
-    { inputCount: 1, audioFadeSec, precision, scale },
+    { inputCount: 1, audioFadeSec, precision, fps, scale },
   );
 }
 
@@ -212,10 +213,11 @@ function runTrim({
   scale = null,
   audioFadeSec = 0,
   precision = null,
+  fps = null,
   encoder = 'master',
   filterPath = defaultFilterPath(),
 }, dependencies = {}) {
-  const filter = buildConcatFilter(intervals, { audioFadeSec, precision, scale });
+  const filter = buildConcatFilter(intervals, { audioFadeSec, precision, fps, scale });
   return runFilterScript({
     inputs: [input], output, filter, filterPath, stage: 'trim encode', encoder,
   }, dependencies);
