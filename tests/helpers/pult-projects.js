@@ -198,7 +198,7 @@ const ROUGH_CUT_AT = '2026-10-03T08:00:00.000Z';
 // Черновая нарезка без ffmpeg: список кусков edit/roughcut-vNN.json, копия previews/roughcut-vNN.mp4
 // (байты videoBytes или текстовая заглушка) и project.json.roughCut с настоящими SHA-256 этих байт –
 // как после `automontage roughcut`. Паспорт пишется той же записью с expectedManifest, что и у движка.
-function writeRoughCut(projectDir, { version, keep, videoBytes, status, sourceDuration }) {
+function writeRoughCut(projectDir, { version, keep, videoBytes, status, sourceDuration, confirmedAt = ROUGH_CUT_AT }) {
   const current = readProjectManifest(projectDir);
   const label = String(version).padStart(2, '0');
   const editPath = `edit/roughcut-v${label}.json`;
@@ -229,14 +229,15 @@ function writeRoughCut(projectDir, { version, keep, videoBytes, status, sourceDu
     fps: ROUGH_CUT_FPS,
     createdAt: ROUGH_CUT_AT,
     status,
-    ...(status === 'confirmed' ? { confirmedAt: ROUGH_CUT_AT, confirmedBy: 'chat' } : {}),
+    ...(status === 'confirmed' ? { confirmedAt, confirmedBy: 'chat' } : {}),
   };
   next.updatedAt = ROUGH_CUT_AT;
   writeProjectManifest(projectDir, next, { expectedManifest: current });
 }
 
 // Ролик на этапе черновой нарезки: паспорт без brief, нарезка v01 (fps 25, ревизия исходника 1).
-// status 'confirmed' – нарезку уже подтвердили словами в чате, master ещё не собран.
+// status 'confirmed' – нарезку уже подтвердили словами в чате, master ещё не собран;
+// confirmedAt – ISO-время этого подтверждения (по умолчанию то же, что у createdAt).
 function addRoughCutProject(projectsDir, {
   folder,
   name = folder,
@@ -244,6 +245,7 @@ function addRoughCutProject(projectsDir, {
   videoBytes = null,
   keep = ROUGH_CUT_KEEP,
   sourceDuration = 6,
+  confirmedAt = ROUGH_CUT_AT,
 } = {}) {
   const sourcePath = path.join(path.dirname(projectsDir), `${folder}-source.mp4`);
   fs.writeFileSync(sourcePath, `source ${folder}`);
@@ -253,7 +255,7 @@ function addRoughCutProject(projectsDir, {
     sourcePath,
     now: new Date('2026-10-03T07:00:00.000Z'),
   });
-  writeRoughCut(workspace.dir, { version: 1, keep, videoBytes, status, sourceDuration });
+  writeRoughCut(workspace.dir, { version: 1, keep, videoBytes, status, sourceDuration, confirmedAt });
   return { projectDir: workspace.dir };
 }
 

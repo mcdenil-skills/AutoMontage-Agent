@@ -358,7 +358,12 @@ test('an active rough cut waits for the author with its cuts and is never approv
   assert.deepEqual(entry.video, { kind: 'roughcut', path: 'previews/roughcut-v01.mp4', sha256: videoSha });
   assert.equal(entry.approvable, false);
   assert.equal(entry.roughCutConfirmable, true);
-  assert.deepEqual(entry.roughCut, { editPath: 'edit/roughcut-v01.json', sha256: videoSha, status: 'review' });
+  assert.deepEqual(entry.roughCut, {
+    editPath: 'edit/roughcut-v01.json',
+    sha256: videoSha,
+    status: 'review',
+    confirmedAt: null,
+  });
   assert.deepEqual(entry.roughCutCuts, [
     { atSec: 2, removedSec: 1, note: 'вырезан повтор «Первое»' },
     { atSec: 4, removedSec: 1, note: null },
@@ -369,6 +374,15 @@ test('an active rough cut waits for the author with its cuts and is never approv
   assert.equal(record.editSha256, sha256(fs.readFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'))));
   assert.equal(record.fps, 25);
   assert.equal(record.sourceRevision, 1);
+});
+
+test('a confirmed rough cut keeps its confirmation time for the pult mark', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'confirmed-cut', status: 'confirmed', confirmedAt: '2026-10-03T07:11:00.000Z' });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.roughCutConfirmable, false);
+  assert.equal(entry.roughCut.status, 'confirmed');
+  assert.equal(entry.roughCut.confirmedAt, '2026-10-03T07:11:00.000Z');
 });
 
 test('rough cut notes are cut to 500 characters', (t) => {

@@ -266,6 +266,8 @@ async function startPultServer({
       // Черновая нарезка: «Нарезка готова» – только для копии, которую страница может показать.
       roughCutConfirmable: Boolean(entry.roughCutConfirmable) && playable,
       roughCutTicket: playable ? roughCutTicket(entry) : null,
+      // Время подтверждения нарезки (ISO) – для отметки «Нарезка подтверждена в …» вместо кнопки.
+      roughCutConfirmedAt: entry.roughCut?.status === 'confirmed' ? entry.roughCut.confirmedAt || null : null,
       // Вырезы нарезки: время в нарезке, сколько убрано и причина – без путей и секунд исходника.
       roughCutCuts: entry.roughCutCuts || [],
       // Утверждённый brief ещё без финала: на экране – тот самый утверждённый preview.

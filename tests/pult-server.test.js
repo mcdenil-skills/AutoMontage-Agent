@@ -621,7 +621,12 @@ function manifestBytes(projectDir) {
 test('a rough cut on screen gets its own confirmation ticket and never an approval', async (t) => {
   const projectsDir = await standardRoot(t);
   addRoughCutProject(projectsDir, { folder: 'cut-clip', name: 'Нарезка' });
-  addRoughCutProject(projectsDir, { folder: 'confirmed-cut', name: 'Подтверждена', status: 'confirmed' });
+  addRoughCutProject(projectsDir, {
+    folder: 'confirmed-cut',
+    name: 'Подтверждена',
+    status: 'confirmed',
+    confirmedAt: '2026-10-03T07:11:00.000Z',
+  });
   const { session } = await startTest(t, projectsDir);
   const response = await get(session, '/api/cards');
   const variants = [...response.json.waiting, ...response.json.working, ...response.json.ready]
@@ -631,6 +636,7 @@ test('a rough cut on screen gets its own confirmation ticket and never an approv
   assert.equal(cut.status, 'waiting');
   assert.equal(cut.video.kind, 'roughcut');
   assert.equal(cut.roughCutConfirmable, true);
+  assert.equal(cut.roughCutConfirmedAt, null);
   assert.match(cut.roughCutTicket, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(cut.approvable, false);
   assert.equal(cut.approvalTicket, null);
@@ -643,11 +649,14 @@ test('a rough cut on screen gets its own confirmation ticket and never an approv
   assert.equal(confirmed.video.kind, 'roughcut');
   assert.equal(confirmed.roughCutConfirmable, false);
   assert.equal(confirmed.roughCutTicket, null);
+  // Но отметка «Нарезка подтверждена в …» остаётся: время идёт ISO-строкой, без путей и хешей.
+  assert.equal(confirmed.roughCutConfirmedAt, '2026-10-03T07:11:00.000Z');
   // Обычный preview – прежние «Утверждаю» и билет утверждения, без билета нарезки.
   const preview = variants.find((variant) => variant.key === 'waiting-clip');
   assert.equal(typeof preview.approvalTicket, 'string');
   assert.equal(preview.roughCutConfirmable, false);
   assert.equal(preview.roughCutTicket, null);
+  assert.equal(preview.roughCutConfirmedAt, null);
   assert.deepEqual(preview.roughCutCuts, []);
 
   const text = response.body.toString('utf8');
@@ -682,6 +691,8 @@ test('the author confirms the rough cut on screen once, through the engine', asy
   assert.equal(after.nextStep, 'Нарезка подтверждена – агент собирает слой');
   assert.equal(after.roughCutConfirmable, false);
   assert.equal(after.roughCutTicket, null);
+  // Нажатие в пульте оставляет отметку: время – то самое, что движок записал в паспорт.
+  assert.equal(after.roughCutConfirmedAt, record.confirmedAt);
 
   // Повтор тем же билетом: нарезка уже не ждёт автора, движок не вызывается.
   const manifestAfter = manifestBytes(projectDir);

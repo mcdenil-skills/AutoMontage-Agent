@@ -122,6 +122,24 @@ function formatClockFloor(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// Отметка в блоке нарезки после подтверждения: время – по местным часам браузера, как в самом
+// пульте. Сегодняшнее подтверждение – «в 10:11», раньше – «3 октября в 10:11» (месяц в родительном
+// падеже). Время пишем руками из getHours/getMinutes: у hour12:false в Intl бывает «24:05».
+// Нет времени или оно битое – просто «Нарезка подтверждена»: отметка важнее часов. now – для тестов.
+function formatConfirmedAt(iso, now = new Date()) {
+  const base = '✅ Нарезка подтверждена';
+  const date = typeof iso === 'string' && iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return base;
+  const two = (value) => String(value).padStart(2, '0');
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  const today = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (today) return `${base} в ${time}`;
+  const day = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return `${base} ${day} в ${time}`;
+}
+
 function formatAspect(meta) {
   if (!meta) return '';
   const ratio = meta.width / meta.height;
@@ -469,9 +487,22 @@ function approveBlock(variant) {
 function roughCutBlock(variant) {
   const box = el('div', 'roughcut');
   box.dataset.ticket = variant.roughCutTicket || '';
+  // Вторая половина «отпечатка» блока для фонового обновления (см. syncDetail): подтверждение
+  // вне пульта меняет и билет, и время, а блок после подтверждения должен остаться на экране.
+  box.dataset.confirmedAt = variant.roughCutConfirmedAt || '';
   if (!variant.roughCutConfirmable) {
-    box.hidden = true;
     box.setHistoryMode = () => {};
+    if (!variant.roughCutConfirmedAt) {
+      box.hidden = true;
+      return box;
+    }
+    // Нарезку уже подтвердили (в пульте или в чате), агент собирает слой. Кнопка пропала –
+    // отметка остаётся, чтобы автор видел, что решение принято, и не гадал, нажимал ли он.
+    box.classList.add('roughcut--confirmed');
+    box.append(
+      el('h3', '', 'Черновая нарезка'),
+      el('p', 'confirmed', formatConfirmedAt(variant.roughCutConfirmedAt)),
+    );
     return box;
   }
   box.append(el('h3', '', 'Черновая нарезка'));
@@ -964,7 +995,10 @@ function syncDetail(card) {
   // – это новый файл, её уже показала полная перерисовка выше; свежий блок всегда приходит
   // с пустым флажком, так что подтвердить неувиденное нельзя.
   const roughCutBox = document.querySelector('[data-view="detail"] .roughcut');
-  if (roughCutBox && (variant.roughCutTicket || '') !== (roughCutBox.dataset.ticket || '')) {
+  if (roughCutBox && (
+    (variant.roughCutTicket || '') !== (roughCutBox.dataset.ticket || '')
+    || (variant.roughCutConfirmedAt || '') !== (roughCutBox.dataset.confirmedAt || '')
+  )) {
     replaceDecisionBlock(roughCutBox, roughCutBlock(variant));
   }
   // Видео то же, но билет утверждения мог измениться: новая правка убирает возможность

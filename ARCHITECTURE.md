@@ -760,9 +760,12 @@ flowchart LR
   `review` – «Ждёт меня», «Черновая нарезка – посмотрите и отметьте оговорки»; `confirmed` –
   «В работе», «Нарезка подтверждена – агент собирает слой». На экране – копия нарезки, и
   `approvable` ложно: утвердить можно только preview, билета утверждения у нарезки нет. Вариант
-  получает `roughCutConfirmable` (нарезка в `review` и видео играет), `roughCutCuts` (время
-  выреза в нарезке, сколько секунд убрано, причина из `note` не длиннее 500 знаков) и
-  `roughCutTicket` – HMAC того же секрета сессии от `key\0roughcut\0editPath\0sha256`: новая
+  получает `roughCutConfirmable` (нарезка в `review` и видео играет), `roughCutConfirmedAt`
+  (ISO-время подтверждения из `roughCut.confirmedAt`, пока нарезка `confirmed`, иначе `null`;
+  по нему `roughCutBlock` в `pult/app.js` вместо кнопки рисует отметку «✅ Нарезка подтверждена
+  в HH:MM» по местному времени браузера, а фоновое обновление заменяет блок при смене билета или
+  этого времени), `roughCutCuts` (время выреза в нарезке, сколько секунд убрано, причина из
+  `note` не длиннее 500 знаков) и `roughCutTicket` – HMAC того же секрета сессии от `key\0roughcut\0editPath\0sha256`: новая
   нарезка делает старый билет недействительным, а слово `roughcut` не даёт выдать билет нарезки
   за билет утверждения и наоборот. `POST /api/roughcut/confirm` принимает ровно
   `{key, ticket, confirmViewed}` (`confirmViewed` не `true` – `400 CONFIRMATION_REQUIRED`) и

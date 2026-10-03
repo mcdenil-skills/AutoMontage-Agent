@@ -186,7 +186,13 @@ test('an active rough cut in review waits for the author and is never approvable
   assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
   assert.equal(result.approvable, false);
   assert.equal(result.roughCutConfirmable, true);
-  assert.deepEqual(result.roughCut, { editPath: 'edit/roughcut-v01.json', sha256: 'e'.repeat(64), status: 'review' });
+  // Время подтверждения у нарезки в review ещё не существует – null, а не отсутствующее поле.
+  assert.deepEqual(result.roughCut, {
+    editPath: 'edit/roughcut-v01.json',
+    sha256: 'e'.repeat(64),
+    status: 'review',
+    confirmedAt: null,
+  });
   assert.equal(result.needsFinal, false);
 });
 
@@ -211,6 +217,8 @@ test('a confirmed rough cut stays on screen while the agent builds the layer', (
   assert.equal(result.approvable, false);
   assert.equal(result.roughCutConfirmable, false);
   assert.equal(result.roughCut.status, 'confirmed');
+  // Время подтверждения идёт к странице как есть: по нему блок рисует «Нарезка подтверждена в …».
+  assert.equal(result.roughCut.confirmedAt, '2026-10-03T09:00:00.000Z');
 });
 
 test('a rough cut of an older source revision or without its file is history for the pult', () => {

@@ -133,6 +133,10 @@ button, input, textarea { font: inherit; color: inherit; }
 .agent-handoff .hint, .roughcut .hint { margin: 0; }
 /* Нарезка ждёт решения автора – рамка того же янтаря, что у карточки «Ждёт меня». */
 .roughcut { border-color: hsl(var(--amber) / 0.7); }
+/* Подтверждённая нарезка уже ничего не ждёт от автора: рамка обычная, отметка – того же бирюзового
+   «принято», что у .copy-status и бейджа «Готов». */
+.roughcut--confirmed { border-color: hsl(var(--border)); }
+.roughcut .confirmed { margin: 0; font-size: 0.95rem; color: hsl(var(--teal)); }
 .cut-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .cut { width: 100%; padding: 0.45rem 0.6rem; text-align: left; cursor: pointer; background: hsl(var(--card-raised)); border: 1px solid transparent; border-radius: 0.5rem; }
 .cut:hover { border-color: hsl(var(--border)); }

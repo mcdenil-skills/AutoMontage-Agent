@@ -98,7 +98,14 @@ function deriveVariantStatus({
     needsFinal,
     briefPath: manifest.currentBrief,
     previewSha256: preview ? preview.sha256 || null : null,
-    roughCut: roughCut ? { editPath: roughCut.editPath, sha256: roughCut.sha256, status: roughCut.status } : null,
+    // confirmedAt – ISO-время подтверждения (только у confirmed): по нему блок нарезки рисует
+    // отметку «Нарезка подтверждена в …», пока агент не собрал master.
+    roughCut: roughCut ? {
+      editPath: roughCut.editPath,
+      sha256: roughCut.sha256,
+      status: roughCut.status,
+      confirmedAt: roughCut.status === 'confirmed' ? roughCut.confirmedAt || null : null,
+    } : null,
     // Подтвердить нарезку можно, пока она ждёт автора, даже если к ней уже есть новые правки.
     roughCutConfirmable: Boolean(roughCut && roughCut.status === 'review'),
   };

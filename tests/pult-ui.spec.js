@@ -737,6 +737,8 @@ function addPlayableRoughCut(dir) {
 
 const roughCutViewed = (page) => page.getByLabel('Я посмотрел нарезку целиком');
 const roughCutReady = (page) => page.locator('button', { hasText: 'Нарезка готова' });
+const roughCutMark = (page) => page.locator('.roughcut .confirmed');
+const MARK_TODAY = /^✅ Нарезка подтверждена в \d{2}:\d{2}$/;
 
 test('a rough cut waits for the author with its cut list and no approval', async ({ page }) => {
   addPlayableRoughCut(projectsDir);
@@ -820,7 +822,7 @@ test('watching a past render locks «Нарезка готова» like «Утв
   await expect(roughCutReady(page)).toBeEnabled();
 });
 
-test('a rough cut confirmed in chat hides the confirm block on the next refresh, keeping the player', async ({ page }) => {
+test('a rough cut confirmed in chat turns the confirm block into the mark on the next refresh, keeping the player', async ({ page }) => {
   const { projectDir } = addPlayableRoughCut(projectsDir);
   await openCard(page, ROUGH_TITLE);
   await expect(page.locator('.roughcut')).toBeVisible();
@@ -830,11 +832,103 @@ test('a rough cut confirmed in chat hides the confirm block on the next refresh,
   const manifest = readProjectManifest(projectDir);
   confirmRoughCut({ dir: projectDir, manifest }, { expectedSha256: manifest.roughCut.sha256, by: 'chat' });
   await backgroundRefresh(page);
-  await expect(page.locator('.roughcut')).toBeHidden();
+  // Блок не исчезает: на месте кнопки – отметка, что подтверждение уже принято.
+  await expect(page.locator('.roughcut')).toBeVisible();
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+  await expect(roughCutReady(page)).toHaveCount(0);
+  await expect(roughCutViewed(page)).toHaveCount(0);
   await expect(page.locator('[data-variant-next]')).toHaveText('Нарезка подтверждена – агент собирает слой');
   await expect(page.locator('[data-roughcut-cuts] h3')).toHaveText('Что вырезал агент (2 места, 2,0 с)');
   await expect(player).toHaveCount(1);
   expect(await player.evaluate((video) => video.pultMarker)).toBe('kept');
+});
+
+test('after «Нарезка готова» the block keeps a visible confirmation mark, also after a reload', async ({ page }) => {
+  addPlayableRoughCut(projectsDir);
+  await openCard(page, ROUGH_TITLE);
+  await roughCutViewed(page).check();
+  await roughCutReady(page).click();
+  const block = page.locator('.roughcut');
+  await expect(block).toBeVisible();
+  await expect(block.locator('h3')).toHaveText('Черновая нарезка');
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+  // Ни кнопки, ни флажка, ни подсказки: только отметка, чтобы автор видел, что уже нажал.
+  await expect(roughCutReady(page)).toHaveCount(0);
+  await expect(roughCutViewed(page)).toHaveCount(0);
+  await expect(block.locator('.hint')).toHaveCount(0);
+  await page.reload();
+  await page.locator('.card', { hasText: ROUGH_TITLE }).click();
+  await expect(page.locator('[data-view="detail"]')).toBeVisible();
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+  await expect(roughCutReady(page)).toHaveCount(0);
+});
+
+// Московское время фиксирует и часовой пояс браузера, и «сегодня» (page.clock.setFixedTime):
+// ожидаемые строки – буквальные, а не пересчитанные тем же кодом, что в пульте.
+async function openMarkedCard(browser, { confirmedAt, now }) {
+  addRoughCutProject(projectsDir, {
+    folder: 'rough-marked',
+    name: ROUGH_TITLE,
+    videoBytes: playableVideoBytes,
+    status: 'confirmed',
+    confirmedAt,
+  });
+  const context = await browser.newContext({ timezoneId: 'Europe/Moscow', locale: 'ru-RU' });
+  const page = await context.newPage();
+  await page.clock.setFixedTime(new Date(now));
+  await openCard(page, ROUGH_TITLE);
+  return { context, page };
+}
+
+test('the mark shows only the time for a confirmation made today (browser local time)', async ({ browser }) => {
+  const { context, page } = await openMarkedCard(browser, {
+    confirmedAt: '2026-10-03T07:11:00.000Z',
+    now: '2026-10-03T12:00:00.000Z',
+  });
+  try {
+    await expect(roughCutMark(page)).toHaveText('✅ Нарезка подтверждена в 10:11');
+  } finally {
+    await context.close();
+  }
+});
+
+test('the mark names the day when the rough cut was confirmed earlier', async ({ browser }) => {
+  // 21:05 UTC – уже 00:05 следующих суток по Москве: день и час считаются по местному времени.
+  const { context, page } = await openMarkedCard(browser, {
+    confirmedAt: '2026-10-02T21:05:00.000Z',
+    now: '2026-10-04T12:00:00.000Z',
+  });
+  try {
+    await expect(roughCutMark(page)).toHaveText('✅ Нарезка подтверждена 3 октября в 00:05');
+  } finally {
+    await context.close();
+  }
+});
+
+test('the confirmation mark stays while a past render is on screen', async ({ page }) => {
+  await restartWith((dir) => {
+    const built = addDraftProject(dir, { folder: 'rough-history', name: ROUGH_TITLE, approve: true, final: true });
+    republishRoughCut(built.projectDir, { version: 1, videoBytes: playableVideoBytes });
+    const manifest = readProjectManifest(built.projectDir);
+    confirmRoughCut({ dir: built.projectDir, manifest }, { expectedSha256: manifest.roughCut.sha256, by: 'chat' });
+  });
+  await openCard(page, ROUGH_TITLE);
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+  await page.locator('button', { hasText: 'История' }).click();
+  await page.locator('.history button').first().click();
+  await expect(page.locator('.history-bar')).toBeVisible();
+  // Отметка ничего не блокирует и не пропадает: «прошлая версия» – про видео, не про решение автора.
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+  await page.locator('button', { hasText: 'Вернуться к текущей' }).click();
+  await expect(page.locator('.history-bar')).toBeHidden();
+  await expect(roughCutMark(page)).toHaveText(MARK_TODAY);
+});
+
+test('the mark falls back to a bare confirmation when the time is missing or broken', async ({ page }) => {
+  await page.goto(session.url);
+  const marks = await page.evaluate(() => [undefined, null, '', 'вчера', '2026-13-45T99:99:99Z']
+    .map((iso) => formatConfirmedAt(iso, new Date('2026-10-03T12:00:00.000Z'))));
+  expect(marks).toEqual(Array(5).fill('✅ Нарезка подтверждена'));
 });
 
 test('a new rough cut while the card is open reloads the player and says so', async ({ page }) => {
