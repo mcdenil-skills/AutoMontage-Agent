@@ -147,6 +147,26 @@ test('rough-cut.md describes the stage, the search order, commands and the stop 
   assert.match(guide, words('план слоя – только на якорях слов, без `near`'));
   assert.match(guide, words('«Готовый стиль» до подтверждения нарезки preview не собирай'));
   assert.match(guide, /^## Ночной режим/mu);
+
+  // Запрет – только master вместо нарезки; поздняя оговорка после master режется прежним путём.
+  assert.match(guide, words('Не собирай master вместо черновой нарезки'));
+  assert.doesNotMatch(guide, /Не перерезай уже собранный master/u);
+  const late = section(guide, '## Оговорка после master');
+  assert.ok(late, 'нет раздела про позднюю оговорку');
+  assert.match(late, /`sourceRevision`/u);
+  assert.match(late, /automontage master --project-dir [^\n]*--edit edit\/vNN-source\.json/u);
+  assert.match(late, /`automontage layer new`/u);
+  assert.match(late, words('полный круг'));
+});
+
+test('agent rules do not forbid a second master for a late оговорка', () => {
+  for (const file of ['AGENTS.md', 'skills/reel-turnkey/references/qa-checklist.md']) {
+    assert.doesNotMatch(read(file), /один master из оригинала|master собран один раз/u, file);
+  }
+  for (const file of ['skills/reel-turnkey/SKILL.md', 'skills/reel-from-donor/SKILL.md', 'skills/motion-reel/SKILL.md']) {
+    const block = section(read(file), '## Motion-слой из kit');
+    assert.match(block, words('поздняя оговорка после master'), file);
+  }
 });
 
 test('rough-cut pointers, donor preparation and the pause advice', () => {
