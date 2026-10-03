@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-const { probeVideo } = require('../media-probe');
+const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
 const { runTool } = require('../process');
 const { resolveProjectPath, withProjectMutation } = require('./workspace');
 
@@ -108,6 +108,13 @@ function writeExclusiveStage(fileSystem, target, bytes) {
   }
 }
 
+function syncOwnedStage(fileSystem, target, identity) {
+  if (!sameIdentity(statRegular(fileSystem, target), identity)
+    || !sameIdentity(fsyncFile(fileSystem, target), identity)) {
+    throw new Error('master stage was replaced during processing');
+  }
+}
+
 function normalizeSourceMetadata(source) {
   return {
     ...source,
@@ -130,6 +137,7 @@ function publishSourceRevision({
   fileSystem = fs,
   runToolImpl = runTool,
   probeVideoImpl = probeVideo,
+  probeMediaPathImpl = probeMediaPath,
   now = () => new Date(),
   temporaryId = randomUUID,
 } = {}) {
@@ -161,6 +169,10 @@ function publishSourceRevision({
     `transcript/.words-${suffix}-${token}.tmp.json`,
     { label: 'master transcript stage', fileSystem, mustExist: false, type: 'file' },
   );
+  const uprightStage = resolveProjectPath(workspace.dir, `input/.source-${suffix}-${token}.upright.tmp.mp4`, {
+    label: 'master upright stage', fileSystem, mustExist: false, type: 'file',
+  });
+  let uprightIdentity = null;
   let sourceStageIdentity = null;
   let transcriptStageIdentity = null;
   let sourceCommittedIdentity = null;
@@ -175,17 +187,35 @@ function publishSourceRevision({
       }
       encode(sourceStage);
       sourceStageIdentity = fsyncFile(fileSystem, sourceStage);
-      runToolImpl('ffmpeg', ['-v', 'error', '-i', sourceStage, '-f', 'null', '-'], {
+      let finalStage = sourceStage;
+      const probeStage = (file) => probeMediaPathImpl(file, {
+        stage: 'master output media probe', containerDurationFallback: true,
+      });
+      let media = probeStage(sourceStage);
+      if (media.rotation !== 0) {
+        uprightIdentity = writeExclusiveStage(fileSystem, uprightStage, Buffer.alloc(0));
+        runToolImpl('ffmpeg', [
+          '-v', 'error', '-y', '-display_rotation', '0', '-i', sourceStage,
+          '-map', '0', '-c', 'copy', '-movflags', '+faststart', uprightStage,
+        ], { stage: 'master remux' });
+        syncOwnedStage(fileSystem, uprightStage, uprightIdentity);
+        removeOwned(fileSystem, sourceStage, sourceStageIdentity);
+        finalStage = uprightStage;
+        media = probeStage(finalStage);
+      }
+      runToolImpl('ffmpeg', ['-v', 'error', '-i', finalStage, '-f', 'null', '-'], {
         stage: 'master decode',
       });
-      const outputProbe = probeVideoImpl(sourceStage, { stage: 'master output probe' });
+      const outputProbe = probeVideoImpl(finalStage, { stage: 'master output probe' });
+      const shown = displayDimensions(media);
       if (Math.abs(outputProbe.duration - duration) > Math.max(0.08, 1 / fps)
         || Math.abs(outputProbe.fps - fps) > 1e-6
-        || outputProbe.width !== expected.width || outputProbe.height !== expected.height) {
+        || outputProbe.width !== expected.width || outputProbe.height !== expected.height
+        || media.rotation !== 0 || shown.width !== expected.width || shown.height !== expected.height) {
         throw new Error('master output does not match the source edit');
       }
       transcriptStageIdentity = writeExclusiveStage(fileSystem, transcriptStage, transcriptBytes);
-      fileSystem.linkSync(sourceStage, destination);
+      fileSystem.linkSync(finalStage, destination);
       sourceCommittedIdentity = statRegular(fileSystem, destination);
       fileSystem.linkSync(transcriptStage, transcriptDestination);
       transcriptCommittedIdentity = statRegular(fileSystem, transcriptDestination);
@@ -222,6 +252,14 @@ function publishSourceRevision({
     }
     throw error;
   } finally {
+    // Обе стадии принадлежат этому вызову; уборка не откатывает manifest commit.
+    if (uprightIdentity) {
+      try {
+        removeOwned(fileSystem, uprightStage, uprightIdentity);
+      } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT' && caughtError) caughtError.cleanupError = cleanupError;
+      }
+    }
     if (manifestCommitted) {
       // The manifest commit point is already durable: neither stage cleanup may skip the other.
       try {

@@ -307,3 +307,16 @@ test('assertRoughCutSettled rejects an unknown action so a typo cannot skip the 
     }
   }
 });
+
+test('source seconds map only to retained rough-cut phrases with unambiguous joints', () => {
+  const { sourceTimeToRoughCut, sourceRangeToRoughCut } = require('../scripts/project/rough-cut-model');
+  const keep = [{ start: 0, end: 2 }, { start: 5, end: 12 }];
+  for (const [time, expected] of [[8, 5], [3, null], [2, null], [5, 2], [12, 9], [-1, null], [NaN, null], [13, null]]) {
+    assert.equal(sourceTimeToRoughCut(keep, time), expected);
+  }
+  assert.equal(sourceTimeToRoughCut([], 0), null);
+  assert.deepEqual(sourceRangeToRoughCut(keep, 8, 9), { startSec: 5, endSec: 6 });
+  assert.equal(sourceRangeToRoughCut(keep, 1, 6), null);
+  assert.equal(sourceRangeToRoughCut(keep, 1, 2.1), null);
+  assert.deepEqual(sourceRangeToRoughCut([{ start: 0, end: 2 }, { start: 2, end: 4 }], 1, 3), { startSec: 1, endSec: 3 });
+});

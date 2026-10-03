@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { playbackForOffer } = require('./offer-playback');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash, createHmac, randomBytes } = require('node:crypto');
@@ -107,7 +108,7 @@ function injectReview(html, pultOrigin) {
 }
 
 function createLeadMagnetRoutes({
-  projectsDir, getOrigin, findEntry, projectDirOf, mediaOptions = {}, revealImpl, logger, errorName, env = process.env,
+  projectsDir, getOrigin, findEntry, projectDirOf, videoViewFor = () => null, mediaOptions = {}, revealImpl, logger, errorName, env = process.env,
 }) {
   const approvalSecret = randomBytes(32);
   const pageSecret = randomBytes(32);
@@ -204,7 +205,10 @@ function createLeadMagnetRoutes({
 
   function stateFor(entry) {
     const index = buildLeadMagnetIndex(projectsDir);
-    const view = folderLeadMagnet(projectsDir, entry.folder, index);
+    const video = videoViewFor(entry);
+    const view = folderLeadMagnet(projectsDir, entry.folder, index, {
+      playbackFor: (offer) => playbackForOffer({ projectDir: projectDirOf(entry), entry, offer, video }),
+    });
     const passports = new Map(index.entries.map((passport) => [passport.id, passport]));
     const lastCall = index.entries.find((item) => item.params.cta?.mode === 'link')?.params.cta;
     return {

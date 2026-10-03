@@ -8,6 +8,7 @@ const { python } = require('../env');
 const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
 const { hostPath, runTool } = require('../process');
 const { collectWords } = require('../tighten');
+const { normalizeWordTimings } = require('../transcript-words');
 const { removeOwned } = require('./source-revision');
 const {
   copyProjectFileNoReplace,
@@ -78,29 +79,6 @@ function assertCompatibleTakes(takes) {
         + `${first.id} pixel aspect ratio ${first.sampleAspectRatio}`);
     }
   }
-}
-
-// transcribe.py округляет время слов до 0.01 с, и faster-whisper отдаёт слова нулевой длины.
-// Слово не теряем: даём ему 0.01 с. Растянутое слово может на 10 мс наехать на следующее –
-// это безвредно для потребителей (текст и субтитры не завязаны на точный стык слов).
-function normalizeWordTimings(segments) {
-  if (!Array.isArray(segments)) return segments;
-  return segments.map((segment) => {
-    if (!segment || typeof segment !== 'object') return segment;
-    if (!Array.isArray(segment.words)) return { ...segment };
-    return {
-      ...segment,
-      words: segment.words.map((word) => {
-        if (!word || typeof word !== 'object') return word;
-        const start = Number(word.s);
-        const end = Number(word.e);
-        if (Number.isFinite(start) && start >= 0 && end === start) {
-          return { ...word, e: Math.round((start + 0.01) * 100) / 100 };
-        }
-        return { ...word };
-      }),
-    };
-  });
 }
 
 function probeTake(id, filePath, { probeVideoImpl, probeMediaPathImpl }) {

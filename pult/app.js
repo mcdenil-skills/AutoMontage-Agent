@@ -596,6 +596,7 @@ function applyHistoryMode(active) {
     '[data-view="detail"] .approve',
     '[data-view="detail"] .roughcut',
     '[data-view="detail"] .comments',
+    '[data-lm-playback]',
   ].join(', ')).forEach((box) => {
     if (typeof box.setHistoryMode === 'function') box.setHistoryMode(active);
   });
@@ -761,6 +762,8 @@ function detailTabs(variant) {
 function renderDetail() {
   const view = document.querySelector('[data-view="detail"]');
   view.replaceChildren();
+  // Открытый мастер лид-магнита сохраняет введённый текст, но его старый плеер уже удалён.
+  applyHistoryMode(false);
   const card = currentCard();
   if (!card) {
     closeCard();
