@@ -134,7 +134,7 @@ function buildRoughCut({ projectDir, editPath }, deps = {}) {
       fps,
       duration: roundedTime(duration, fps),
       sourceDuration,
-    }, { fileSystem, runTrimImpl, runToolImpl, probeVideoImpl, now, temporaryId });
+    }, { fileSystem, runTrimImpl, runToolImpl, probeVideoImpl, probeMediaPathImpl, now, temporaryId });
     return {
       editPath: record.editPath,
       filePath: record.filePath,
@@ -155,19 +155,27 @@ function buildRoughCut({ projectDir, editPath }, deps = {}) {
 function publishRoughCut({
   workspace, source, sourcePath, editRelative, editAbsolute, editSha256, filePath, destination,
   version, intervals, size, fps, duration, sourceDuration,
-}, { fileSystem, runTrimImpl, runToolImpl, probeVideoImpl, now, temporaryId }) {
+}, { fileSystem, runTrimImpl, runToolImpl, probeVideoImpl, probeMediaPathImpl, now, temporaryId }) {
   const token = safeToken(temporaryId);
-  const stage = resolveProjectPath(
+  const stagePath = (suffix) => resolveProjectPath(
     workspace.dir,
-    `previews/.roughcut-v${versionLabel(version)}-${token}.tmp.mp4`,
+    `previews/.roughcut-v${versionLabel(version)}-${token}${suffix}.tmp.mp4`,
     { label: 'rough cut stage', fileSystem, mustExist: false, type: 'file' },
   );
+  const stage = stagePath('');
+  const uprightStage = stagePath('.upright');
+  const probeStage = (file) => probeMediaPathImpl(file, {
+    stage: 'roughcut output media probe',
+    containerDurationFallback: true,
+  });
   const assertEditUnchanged = () => {
     if (sha256(fileSystem.readFileSync(editAbsolute)) !== editSha256) {
       throw new Error(`черновая нарезка: список кусков ${editRelative} изменился во время сборки`);
     }
   };
   let stageIdentity = null;
+  let uprightStarted = false;
+  let uprightIdentity = null;
   let committedIdentity = null;
   let manifestCommitted = false;
   let caughtError = null;
@@ -188,16 +196,34 @@ function publishRoughCut({
         encoder: 'proxy',
       });
       stageIdentity = fsyncFile(fileSystem, stage);
-      runToolImpl('ffmpeg', ['-v', 'error', '-i', stage, '-f', 'null', '-'], { stage: 'roughcut decode' });
-      const output = probeVideoImpl(stage, { stage: 'roughcut output probe' });
+      // FFmpeg 7.1.0/7.1.1 поворачивает кадры телефонной записи, но оставляет копии флаг
+      // поворота исходника – плеер повернул бы её ещё раз. Флаг снимает одна перепаковка
+      // без перекодирования; moov остаётся перед mdat.
+      let finalStage = stage;
+      let media = probeStage(stage);
+      if (media.rotation !== 0) {
+        uprightStarted = true;
+        runToolImpl('ffmpeg', [
+          '-v', 'error', '-y', '-display_rotation', '0', '-i', stage,
+          '-map', '0', '-c', 'copy', '-movflags', '+faststart', uprightStage,
+        ], { stage: 'roughcut remux' });
+        uprightIdentity = fsyncFile(fileSystem, uprightStage);
+        removeStage(fileSystem, stage, stageIdentity);
+        finalStage = uprightStage;
+        media = probeStage(uprightStage);
+      }
+      runToolImpl('ffmpeg', ['-v', 'error', '-i', finalStage, '-f', 'null', '-'], { stage: 'roughcut decode' });
+      const output = probeVideoImpl(finalStage, { stage: 'roughcut output probe' });
+      const shown = displayDimensions(media);
       if (Math.abs(output.duration - duration) > Math.max(0.08, 1 / fps)
         || Math.abs(output.fps - fps) > 1e-6
-        || output.width !== size.width || output.height !== size.height) {
+        || output.width !== size.width || output.height !== size.height
+        || media.rotation !== 0 || shown.width !== size.width || shown.height !== size.height) {
         throw new Error(COPY_MISMATCH);
       }
-      const copySha256 = hashFile(stage);
+      const copySha256 = hashFile(finalStage);
       assertEditUnchanged();
-      fileSystem.linkSync(stage, destination);
+      fileSystem.linkSync(finalStage, destination);
       committedIdentity = statRegular(fileSystem, destination);
 
       const createdAt = now().toISOString();
@@ -226,11 +252,15 @@ function publishRoughCut({
     if (!manifestCommitted && committedIdentity) removeOwned(fileSystem, destination, committedIdentity);
     throw error;
   } finally {
-    try {
-      removeStage(fileSystem, stage, stageIdentity);
-    } catch (cleanupError) {
-      // Ошибка сборки важнее уборки; после записи паспорта уборка стадии уже ничего не решает.
-      if (caughtError) caughtError.cleanupError = cleanupError;
+    const stages = [[stage, stageIdentity]];
+    if (uprightStarted) stages.push([uprightStage, uprightIdentity]);
+    for (const [file, identity] of stages) {
+      try {
+        removeStage(fileSystem, file, identity);
+      } catch (cleanupError) {
+        // Ошибка сборки важнее уборки; после записи паспорта уборка стадии уже ничего не решает.
+        if (caughtError && !caughtError.cleanupError) caughtError.cleanupError = cleanupError;
+      }
     }
   }
 }

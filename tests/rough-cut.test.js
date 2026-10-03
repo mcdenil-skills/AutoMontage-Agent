@@ -16,6 +16,8 @@ const {
 const { readProjectManifest } = require('../scripts/project/workspace');
 
 const COPY_BYTES = 'ROUGH-CUT-COPY';
+const REMUX_BYTES = 'ROUGH-CUT-REMUX';
+const COPY_MISMATCH = 'черновая нарезка: размер, длительность или FPS копии не совпадают со списком кусков';
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -23,12 +25,16 @@ function sha256(bytes) {
 
 // Вывод команд собирается через deps, а не в консоль теста: строка в stdout процесса теста
 // ломает канал раннера Node 20 (см. tests/layer-new.test.js).
+// copyMedia – ответы probeMediaPath по стадиям копии по очереди (последний повторяется);
+// по умолчанию копия без флага поворота с размером из copy.
 function fakes({
   source = { duration: 8, fps: 25, width: 1080, height: 1920 },
   copy = { duration: 6, fps: 25, width: 720, height: 1280 },
   sourceMedia = { width: 1080, height: 1920, rotation: 0 },
+  copyMedia = { width: copy.width, height: copy.height, rotation: 0 },
 } = {}) {
-  const calls = { trim: [], tool: [], slots: 0, log: [] };
+  const calls = { trim: [], tool: [], media: [], slots: 0, log: [] };
+  const stageMedia = [].concat(copyMedia);
   const deps = {
     runTrimImpl(options) {
       calls.trim.push(options);
@@ -36,12 +42,16 @@ function fakes({
     },
     runToolImpl(command, args, options) {
       calls.tool.push({ command, args, stage: options.stage });
+      // Перепаковка без перекодирования пишет новый файл последним аргументом.
+      if (args.includes('copy')) fs.writeFileSync(args[args.length - 1], REMUX_BYTES);
     },
     probeVideoImpl(filename) {
       return path.basename(filename).startsWith('.roughcut-') ? copy : source;
     },
-    probeMediaPathImpl() {
-      return sourceMedia;
+    probeMediaPathImpl(filename, options = {}) {
+      if (!path.basename(filename).startsWith('.roughcut-')) return sourceMedia;
+      calls.media.push({ file: filename, stage: options.stage });
+      return stageMedia.length > 1 ? stageMedia.shift() : stageMedia[0];
     },
     acquireSlotSync() {
       calls.slots += 1;
@@ -127,6 +137,9 @@ test('rough cut builds a 720p copy from the active source and records it without
   assert.match(path.basename(trim.output), /^\.roughcut-v01-rough-test\.tmp\.mp4$/);
   const decode = calls.tool.find(({ stage }) => stage === 'roughcut decode');
   assert.deepEqual(decode && decode.args, ['-v', 'error', '-i', trim.output, '-f', 'null', '-']);
+  // Копия без флага поворота: размер показа проверен по самой стадии, перепаковки нет.
+  assert.deepEqual(calls.tool.map(({ stage }) => stage), ['roughcut decode']);
+  assert.deepEqual(calls.media.map(({ file }) => file), [trim.output]);
 
   assert.equal(fs.readFileSync(path.join(fixture.projectDir, 'previews', 'roughcut-v01.mp4'), 'utf8'), COPY_BYTES);
   assert.deepEqual(previewEntries(fixture.projectDir), ['roughcut-v01.mp4']);
@@ -177,6 +190,93 @@ test('rough cut of a rotated phone recording is portrait and the copy size is ch
     /размер/,
   );
   assert.deepEqual(calls.trim[0].scale, { width: 720, height: 1280 });
+  assert.deepEqual(manifestBytes(fixture.projectDir), before);
+  assert.deepEqual(previewEntries(fixture.projectDir), []);
+});
+
+// FFmpeg 7.1.1 поворачивает кадры, но оставляет копии флаг поворота 90° – плеер повернёт её ещё раз.
+function rotatedPhoneFakes(copyMedia) {
+  return fakes({
+    source: { duration: 8, fps: 25, width: 1920, height: 1080 },
+    sourceMedia: { width: 1920, height: 1080, rotation: 90 },
+    copyMedia,
+  });
+}
+
+test('a copy that old FFmpeg leaves with a rotation flag is remuxed upright without re-encoding', (t) => {
+  const fixture = makeRoughCutSourceProject(t);
+  const editPath = fixture.writeEdit('roughcut-v01.json');
+  const { calls, deps } = rotatedPhoneFakes([
+    { width: 720, height: 1280, rotation: 90 },
+    { width: 720, height: 1280, rotation: 0 },
+  ]);
+  const firstStageAtDecode = [];
+  const runToolImpl = deps.runToolImpl;
+  deps.runToolImpl = (command, args, options) => {
+    if (options.stage === 'roughcut decode') firstStageAtDecode.push(fs.existsSync(calls.trim[0].output));
+    return runToolImpl(command, args, options);
+  };
+
+  const result = buildRoughCut({ projectDir: fixture.projectDir, editPath }, deps);
+
+  assert.deepEqual({ width: result.width, height: result.height }, { width: 720, height: 1280 });
+  const first = calls.trim[0].output;
+  const remux = calls.tool.filter(({ args }) => args.includes('-display_rotation'));
+  assert.equal(remux.length, 1);
+  const second = remux[0].args[remux[0].args.length - 1];
+  assert.equal(path.dirname(second), path.dirname(first));
+  assert.notEqual(second, first);
+  assert.match(path.basename(second), /^\.roughcut-v01-rough-test\.[a-z]+\.tmp\.mp4$/);
+  assert.equal(remux[0].command, 'ffmpeg');
+  assert.deepEqual(remux[0].args, [
+    '-v', 'error', '-y', '-display_rotation', '0', '-i', first,
+    '-map', '0', '-c', 'copy', '-movflags', '+faststart', second,
+  ]);
+  // Перепаковка один раз, затем проверка уже второй стадии; первая убрана до декодирования.
+  assert.deepEqual(calls.tool.map(({ args }) => args), [
+    remux[0].args,
+    ['-v', 'error', '-i', second, '-f', 'null', '-'],
+  ]);
+  assert.deepEqual(firstStageAtDecode, [false]);
+  assert.deepEqual(calls.media.map(({ file }) => file), [first, second]);
+
+  assert.equal(fs.readFileSync(path.join(fixture.projectDir, 'previews', 'roughcut-v01.mp4'), 'utf8'), REMUX_BYTES);
+  assert.deepEqual(previewEntries(fixture.projectDir), ['roughcut-v01.mp4']);
+  const record = readProjectManifest(fixture.projectDir).roughCut;
+  assert.equal(record.width, 720);
+  assert.equal(record.height, 1280);
+  assert.equal(record.sha256, sha256(REMUX_BYTES));
+  assert.equal(record.status, 'review');
+});
+
+test('a copy that keeps its rotation flag after the remux is refused and every stage is removed', (t) => {
+  const fixture = makeRoughCutSourceProject(t);
+  const editPath = fixture.writeEdit('roughcut-v01.json');
+  const before = manifestBytes(fixture.projectDir);
+  const { calls, deps } = rotatedPhoneFakes({ width: 720, height: 1280, rotation: 90 });
+
+  assert.throws(
+    () => buildRoughCut({ projectDir: fixture.projectDir, editPath }, deps),
+    { message: COPY_MISMATCH },
+  );
+  assert.equal(calls.tool.filter(({ args }) => args.includes('-display_rotation')).length, 1);
+  assert.deepEqual(manifestBytes(fixture.projectDir), before);
+  assert.deepEqual(previewEntries(fixture.projectDir), []);
+});
+
+test('a failed remux removes both stage files and leaves the passport untouched', (t) => {
+  const fixture = makeRoughCutSourceProject(t);
+  const editPath = fixture.writeEdit('roughcut-v01.json');
+  const before = manifestBytes(fixture.projectDir);
+  const { deps } = rotatedPhoneFakes({ width: 720, height: 1280, rotation: 90 });
+  deps.runToolImpl = (command, args) => {
+    if (args.includes('copy')) {
+      fs.writeFileSync(args[args.length - 1], 'PARTIAL');
+      throw new Error('remux failed');
+    }
+  };
+
+  assert.throws(() => buildRoughCut({ projectDir: fixture.projectDir, editPath }, deps), /remux failed/);
   assert.deepEqual(manifestBytes(fixture.projectDir), before);
   assert.deepEqual(previewEntries(fixture.projectDir), []);
 });

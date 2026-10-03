@@ -196,10 +196,14 @@ mutation lease, отпускается в `finally`) и под lease, по об�
 `buildConcatFilter` (`audioFadeSec: 0.04`, `precision: 6`, `scale`) в
 `previews/.roughcut-vNN-<token>.tmp.mp4`, но с `encoder: 'proxy'` (`-preset ultrafast -crf 26
 -pix_fmt yuv420p`, `aac -b:a 128k`, `-movflags +faststart`; по умолчанию `encoder: 'master'` с
-прежними аргументами), полное декодирование `ffmpeg -f null`, сверка длительности
-(`max(0.08, 1/fps)`), FPS и размера копии, повторная сверка байтов списка, `linkSync` в итоговое имя
+прежними аргументами); если у стадии остался флаг поворота (FFmpeg 7.1.0/7.1.1 поворачивает кадры,
+но оставляет флаг), одна перепаковка без перекодирования `-display_rotation 0 -i <стадия> -map 0
+-c copy -movflags +faststart` во вторую стадию `.roughcut-vNN-<token>.upright.tmp.mp4` и удаление
+первой; затем полное декодирование `ffmpeg -f null`, сверка длительности
+(`max(0.08, 1/fps)`), FPS, размера копии и размера показа (`displayDimensions` при повороте 0),
+повторная сверка байтов списка, `linkSync` в итоговое имя
 и последней – запись `roughCut` со `status: review` (`purpose: 'rough-cut-manifest'`). Ошибка на любом
-шаге убирает стадию и не меняет паспорт. `confirmRoughCut(workspace, { expectedSha256, by })` под
+шаге убирает обе стадии и не меняет паспорт. `confirmRoughCut(workspace, { expectedSha256, by })` под
 lease ставит `confirmed` с `confirmedAt`/`confirmedBy` только для активной записи в `review`
 (иначе `code: 'ROUGH_CUT_MISSING'`) и только если байты копии равны `sha256`, байты списка –
 `editSha256`, а заданный `expectedSha256` – `sha256` (иначе `code: 'ROUGH_CUT_CHANGED'`).

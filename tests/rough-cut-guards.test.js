@@ -51,7 +51,9 @@ function roughCutFakes() {
     probeVideoImpl: (filename) => (path.basename(filename).startsWith('.roughcut-')
       ? { duration: 6, fps: 25, width: 1280, height: 720 }
       : { duration: 8, fps: 25, width: 1920, height: 1080 }),
-    probeMediaPathImpl: () => ({ width: 1920, height: 1080, rotation: 0 }),
+    probeMediaPathImpl: (filename) => (path.basename(filename).startsWith('.roughcut-')
+      ? { width: 1280, height: 720, rotation: 0 }
+      : { width: 1920, height: 1080, rotation: 0 }),
     acquireSlotSync: () => ({ release() {} }),
     now: () => new Date('2026-10-03T09:00:00.000Z'),
     temporaryId: () => 'rough-test',
