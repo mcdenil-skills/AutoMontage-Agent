@@ -206,20 +206,26 @@ test('a project with pending pult edits or an unreadable edits file is skipped',
 test('a finished project with an active rough cut is not finished for clean until master', (t) => {
   const { projectsDir } = makePultRoot(t);
   const { projectDir } = addDraftProject(projectsDir, { folder: 'recut', approve: true, final: true });
-  assert.equal(planProjectCleanup(projectDir, { minAgeDays: 0 }).status, 'eligible');
+  const options = { minAgeDays: 0, now: NOW };
+  // Проверяем состояние нарезки независимо от дробного mtime и текущих часов CI.
+  age(projectDir, 'project.json');
+  age(projectDir, 'final/recut.mp4');
+  assert.equal(planProjectCleanup(projectDir, options).status, 'eligible');
   republishRoughCut(projectDir, { version: 1 });
+  age(projectDir, 'project.json');
   const copy = path.join(projectDir, 'previews', 'roughcut-v01.mp4');
 
-  const plan = planProjectCleanup(projectDir, { minAgeDays: 0 });
+  const plan = planProjectCleanup(projectDir, options);
   assert.equal(plan.status, 'skipped');
   assert.equal(plan.reason, 'черновая нарезка ждёт автора');
   assert.deepEqual(plan.files, []);
-  const result = applyCleanup(planCleanup(projectsDir, { minAgeDays: 0 }), { minAgeDays: 0 });
+  const result = applyCleanup(planCleanup(projectsDir, options), options);
   assert.equal(result.removedFiles, 0);
   assert.ok(fs.existsSync(copy));
 
   bumpSourceRevision(projectDir);
-  const after = planProjectCleanup(projectDir, { minAgeDays: 0 });
+  age(projectDir, 'project.json');
+  const after = planProjectCleanup(projectDir, options);
   assert.equal(after.status, 'eligible');
   assert.ok(after.files.some((file) => file.path === 'previews/roughcut-v01.mp4'));
 });
