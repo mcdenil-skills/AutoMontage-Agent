@@ -8,6 +8,7 @@ const sourceEditSchema = require('../../schema/source-edit.schema.json');
 const { configureMediaToolPath } = require('../env');
 const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
 const { runTool } = require('../process');
+const { frameRateFromFps } = require('../review/media-time');
 const { collectWords } = require('../tighten');
 const { normalizeWordTimings } = require('../transcript-words');
 const { runSegmentsTrim, runTrim } = require('../trim-media');
@@ -117,6 +118,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
     if (Math.abs(sourceProbe.fps - normalizedEdit.fps) > 1e-6) {
       throw new Error('source edit FPS does not match the active source');
     }
+    const rate = frameRateFromFps(normalizedEdit.fps);
     const transcriptPath = resolveProjectPath(workspace.dir, manifest.transcript.words, {
       label: 'active transcript path', fileSystem, mustExist: true, type: 'file',
     });
@@ -146,6 +148,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
           scale: target.scaled ? { ...size, ...(quality === 'source' ? { sampleAspectRatio: orientedSampleAspectRatio(sourceMedia) } : {}) } : null,
           audioFadeSec: 0.04,
           precision: 6,
+          fps: `${rate.numerator}/${rate.denominator}`,
         });
       },
     }, publishDependencies);
