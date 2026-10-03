@@ -80,7 +80,7 @@ function offerForBrowser({ offer, state, leadMagnetId }) {
   };
 }
 
-function folderLeadMagnet(projectsDir, folder, index) {
+function folderLeadMagnet(projectsDir, folder, index, { playbackFor } = {}) {
   const projectDir = path.join(projectsDir, folder);
   let states = [];
   let decisions = [];
@@ -109,7 +109,8 @@ function folderLeadMagnet(projectsDir, folder, index) {
   const top = broken ? { status: 'working', nextStep: BROKEN_STEP }
     : candidates.sort((left, right) => STATUS_ORDER[left.status] - STATUS_ORDER[right.status])[0] || null;
   return {
-    offers: states.map(offerForBrowser),
+    offers: states.map((state) => ({ ...offerForBrowser(state),
+      ...(playbackFor ? { playback: playbackFor(state.offer) } : {}) })),
     pending,
     magnets,
     error,

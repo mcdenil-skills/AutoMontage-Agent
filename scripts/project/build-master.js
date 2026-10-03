@@ -9,6 +9,7 @@ const { configureMediaToolPath } = require('../env');
 const { displayDimensions, probeMediaPath, probeVideo } = require('../media-probe');
 const { runTool } = require('../process');
 const { collectWords } = require('../tighten');
+const { normalizeWordTimings } = require('../transcript-words');
 const { runSegmentsTrim, runTrim } = require('../trim-media');
 const { parseQuality, workingSize, orientedSampleAspectRatio } = require('../working-quality');
 const {
@@ -78,6 +79,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
     fileSystem,
     runToolImpl: dependencies.runToolImpl || runTool,
     probeVideoImpl,
+    probeMediaPathImpl,
     now: dependencies.now || (() => new Date()),
     temporaryId: dependencies.temporaryId || randomUUID,
   };
@@ -118,7 +120,7 @@ function buildMaster({ projectDir, editPath, quality = '1080p' }, dependencies =
     const transcriptPath = resolveProjectPath(workspace.dir, manifest.transcript.words, {
       label: 'active transcript path', fileSystem, mustExist: true, type: 'file',
     });
-    const words = collectWords(JSON.parse(fileSystem.readFileSync(transcriptPath, 'utf8')));
+    const words = collectWords(normalizeWordTimings(JSON.parse(fileSystem.readFileSync(transcriptPath, 'utf8'))));
     const remapped = remapTranscriptWords(words, normalizedEdit.keep, normalizedEdit.fps);
     const duration = normalizedEdit.keep.reduce((sum, range) => sum + range.end - range.start, 0);
     // FFmpeg поворачивает кадр до фильтров, поэтому результат хранится в отображаемом размере.

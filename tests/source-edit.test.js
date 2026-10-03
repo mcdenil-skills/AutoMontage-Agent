@@ -342,14 +342,16 @@ test('master accepts an auto-rotated portrait source whose output is stored upri
     },
     probeMediaPathImpl(filename, options) {
       probeMediaPathCalls.push({ filename, options });
-      return { width: 1920, height: 1080, rotation: 90 };
+      return filename.endsWith('source.mp4')
+        ? { width: 1920, height: 1080, rotation: 90 }
+        : { width: 1080, height: 1920, rotation: 0 };
     },
     now: () => new Date('2026-08-23T13:00:00.000Z'),
     temporaryId: () => 'rotated-master',
   });
   assert.equal(result.revision, 2);
   assert.equal(readProjectManifest(fixture.workspace.dir).source.localPath, 'input/source-v02.mp4');
-  assert.equal(probeMediaPathCalls.length, 1);
+  assert.equal(probeMediaPathCalls.length, 2);
   assert.equal(probeMediaPathCalls[0].filename, path.join(fixture.workspace.dir, 'input', 'source.mp4'));
   assert.equal(probeMediaPathCalls[0].options.stage, 'master source media probe');
   assert.equal(probeMediaPathCalls[0].options.containerDurationFallback, true);
@@ -370,8 +372,10 @@ test('master rejects an output stored in the encoded size of a rotated source', 
         ? { duration: 8, fps: 25, width: 1920, height: 1080 }
         : { duration: 6, fps: 25, width: 1920, height: 1080 };
     },
-    probeMediaPathImpl() {
-      return { width: 1920, height: 1080, rotation: 90 };
+    probeMediaPathImpl(filename) {
+      return filename.endsWith('source.mp4')
+        ? { width: 1920, height: 1080, rotation: 90 }
+        : { width: 1080, height: 1920, rotation: 0 };
     },
     now: () => new Date('2026-08-23T13:00:00.000Z'),
     temporaryId: () => 'rotated-master-rejected',
@@ -427,7 +431,7 @@ for (const [label, quality, media, target] of [
       runToolImpl() {},
       probeVideoImpl: (file) => file.endsWith('source.mp4')
         ? { ...media, duration: 8, fps: 25 } : { ...target, duration: 6, fps: 25 },
-      probeMediaPathImpl: () => ({ ...media, mediaKind: 'video' }),
+      probeMediaPathImpl: (file) => ({ ...(file.endsWith('source.mp4') ? media : { ...target, rotation: 0 }), mediaKind: 'video' }),
     });
     assert.deepEqual(trim.scale, quality === 'source' ? null : target);
     assert.equal(result.revision, 2);
@@ -443,3 +447,146 @@ test('master rejects native output when working 1080p was requested', (t) => {
   }), /master output does not match the source edit/);
   assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
 });
+
+test('source master repairs old zero-length words in memory and preserves historical bytes', (t) => {
+  const fixture = makeProject(t);
+  const wordsPath = path.join(fixture.workspace.dir, 'transcript/words.json');
+  const input = [{ words: [{ w: ' а', s: 0.5, e: 0.5 }] }];
+  fs.writeFileSync(wordsPath, JSON.stringify(input));
+  const before = fs.readFileSync(wordsPath);
+  const result = buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+    runTrimImpl: ({ output }) => fs.writeFileSync(output, 'MASTER'),
+    runToolImpl() {},
+    probeVideoImpl: (file) => ({ width: 1920, height: 1080, fps: 25,
+      duration: path.basename(file).startsWith('.source-v') ? 6 : 8 }),
+    probeMediaPathImpl: () => ({ width: 1920, height: 1080, rotation: 0 }),
+  });
+  assert.equal(result.revision, 2);
+  assert.deepEqual(fs.readFileSync(wordsPath), before);
+  const published = JSON.parse(fs.readFileSync(result.transcriptPath));
+  assert.deepEqual(published[0].words, [{ w: 'а', s: 0.5, e: 0.51 }]);
+  assert.equal(fs.readFileSync(fixture.original, 'utf8'), 'ORIGINAL-SOURCE');
+});
+
+test('source master rejects inverted words before encoding and leaves the manifest intact', (t) => {
+  const fixture = makeProject(t);
+  fs.writeFileSync(path.join(fixture.workspace.dir, 'transcript/words.json'),
+    JSON.stringify([{ words: [{ w: 'x', s: 0.5, e: 0.4 }] }]));
+  const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+  let encoded = false;
+  assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+    runTrimImpl() { encoded = true; },
+    probeVideoImpl: () => ({ width: 1920, height: 1080, fps: 25, duration: 8 }),
+  }), /таймкод/);
+  assert.equal(encoded, false);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+});
+
+for (const value of [null, '', false, true, [], [1], '1']) {
+  test(`master rejects malformed equal timestamps ${JSON.stringify(value)} before encoding`, (t) => {
+    const fixture = makeProject(t);
+    const wordsPath = path.join(fixture.workspace.dir, 'transcript/words.json');
+    fs.writeFileSync(wordsPath, JSON.stringify([{ words: [{ w: 'x', s: value, e: value }] }]));
+    const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+    const wordsBefore = fs.readFileSync(wordsPath);
+    let encoded = false;
+    assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+      runTrimImpl() { encoded = true; },
+      probeVideoImpl: () => ({ width: 1920, height: 1080, fps: 25, duration: 8 }),
+    }), /таймкод/);
+    assert.equal(encoded, false);
+    assert.deepEqual(fs.readFileSync(wordsPath), wordsBefore);
+    assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+  });
+}
+
+for (const rotation of [0, 90, 270, 180]) {
+  test(`source master publishes rotation ${rotation} as an upright final stage`, (t) => {
+    const fixture = makeProject(t);
+    const calls = [];
+    const result = buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+      runTrimImpl: ({ output }) => fs.writeFileSync(output, 'ENCODED'),
+      runToolImpl(command, args, options) {
+        calls.push({ command, args, stage: options.stage });
+        if (options.stage === 'master remux') fs.writeFileSync(args.at(-1), 'UPRIGHT');
+      },
+      probeVideoImpl: (file) => ({ width: 1920, height: 1080, fps: 25,
+        duration: path.basename(file).startsWith('.source-v') ? 6 : 8 }),
+      probeMediaPathImpl: (file) => ({ width: 1920, height: 1080,
+        rotation: file.includes('.tmp.mp4') && !file.includes('.upright.') ? rotation : 0 }),
+      temporaryId: () => 'rotation-test',
+    });
+    const remux = calls.filter((call) => call.stage === 'master remux');
+    assert.equal(remux.length, rotation === 0 ? 0 : 1);
+    const decode = calls.find((call) => call.stage === 'master decode');
+    if (rotation) {
+      const stage = path.join(fixture.workspace.dir, 'input/.source-v02-rotation-test.tmp.mp4');
+      const upright = path.join(fixture.workspace.dir, 'input/.source-v02-rotation-test.upright.tmp.mp4');
+      assert.deepEqual(remux[0].args, ['-v', 'error', '-y', '-display_rotation', '0', '-i', stage,
+        '-map', '0', '-c', 'copy', '-movflags', '+faststart', upright]);
+      assert.equal(decode.args[3], upright);
+    }
+    assert.equal(fs.readFileSync(result.sourcePath, 'utf8'), rotation ? 'UPRIGHT' : 'ENCODED');
+    assert.deepEqual(fs.readdirSync(path.join(fixture.workspace.dir, 'input')).sort(), ['source-v02.mp4', 'source.mp4']);
+  });
+}
+
+for (const failure of ['remux', 'rotation', 'decode', 'width', 'fps', 'duration']) {
+  test(`master rolls back ${failure} failure after rotated output and preserves foreign files`, (t) => {
+    const fixture = makeProject(t);
+    const manifestPath = path.join(fixture.workspace.dir, 'project.json');
+    const before = fs.readFileSync(manifestPath);
+    const sentinel = path.join(fixture.workspace.dir, 'input/.source-foreign.tmp.mp4');
+    fs.writeFileSync(sentinel, 'FOREIGN');
+    assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+      runTrimImpl: ({ output }) => fs.writeFileSync(output, 'ENCODED'),
+      runToolImpl(command, args, options) {
+        if (options.stage === 'master remux') {
+          fs.writeFileSync(args.at(-1), 'PARTIAL-UPRIGHT');
+          if (failure === 'remux') throw new Error('remux failed');
+        }
+        if (options.stage === 'master decode' && failure === 'decode') throw new Error('decode failed');
+      },
+      probeMediaPathImpl: (file) => ({ width: 1920, height: 1080,
+        rotation: file.includes('.tmp.mp4') && (!file.includes('.upright.') || failure === 'rotation') ? 180 : 0 }),
+      probeVideoImpl: (file) => ({ width: failure === 'width' && file.includes('.tmp.') ? 1080 : 1920,
+        height: 1080, fps: failure === 'fps' && file.includes('.tmp.') ? 30 : 25,
+        duration: file.includes('.tmp.') ? (failure === 'duration' ? 4 : 6) : 8 }),
+    }), /failed|does not match/);
+    assert.deepEqual(fs.readFileSync(manifestPath), before);
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'FOREIGN');
+    assert.deepEqual(fs.readdirSync(path.join(fixture.workspace.dir, 'input')).sort(), ['.source-foreign.tmp.mp4', 'source.mp4']);
+    assert.deepEqual(fs.readdirSync(path.join(fixture.workspace.dir, 'transcript')), ['words.json']);
+  });
+}
+
+for (const mode of ['existing', 'replaced']) {
+  test(`master remux preserves a foreign ${mode} destination when it fails`, (t) => {
+    const fixture = makeProject(t);
+    const target = path.join(fixture.workspace.dir, 'input/.source-v02-foreign-test.upright.tmp.mp4');
+    const before = fs.readFileSync(path.join(fixture.workspace.dir, 'project.json'));
+    if (mode === 'existing') fs.writeFileSync(target, 'FOREIGN');
+    let remuxCalled = false;
+    assert.throws(() => buildMaster({ projectDir: fixture.workspace.dir, editPath: fixture.editPath }, {
+      temporaryId: () => 'foreign-test',
+      runTrimImpl: ({ output }) => fs.writeFileSync(output, 'ENCODED'),
+      runToolImpl(command, args, options) {
+        if (options.stage !== 'master remux') return;
+        remuxCalled = true;
+        if (mode === 'replaced') {
+          // Keep the reserved inode alive so the filesystem cannot recycle it.
+          if (!fs.existsSync(target)) fs.writeFileSync(target, 'PARTIAL');
+          fs.renameSync(target, `${target}.owned`);
+          fs.writeFileSync(target, 'FOREIGN');
+        }
+        throw new Error('remux failed');
+      },
+      probeVideoImpl: () => ({ width: 1920, height: 1080, fps: 25, duration: 8 }),
+      probeMediaPathImpl: () => ({ width: 1920, height: 1080, rotation: 180 }),
+    }), /EEXIST|remux failed/);
+    assert.equal(remuxCalled, mode === 'replaced');
+    assert.equal(fs.readFileSync(target, 'utf8'), 'FOREIGN');
+    assert.deepEqual(fs.readFileSync(path.join(fixture.workspace.dir, 'project.json')), before);
+    assert.equal(fs.existsSync(path.join(fixture.workspace.dir, 'input/source-v02.mp4')), false);
+  });
+}

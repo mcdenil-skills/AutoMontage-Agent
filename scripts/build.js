@@ -14,6 +14,7 @@
 //   --title "текст"   : заголовок видео для шаблона lesson (плашка сверху).
 //   --no-final-qa     : не расшифровывать готовый финал повторно (отчёт qa/final-*.txt).
 const fs = require('fs');
+const { normalizeTranscriptFile } = require('./transcript-words');
 const { randomUUID } = require('node:crypto');
 const path = require('path');
 const {
@@ -273,6 +274,7 @@ if (lessonAction === 'render') {
       transcriptPath,
       model,
     ], { cwd: ROOT, stage: 'transcription' });
+    normalizeTranscriptFile(transcriptPath);
   }
 }
 

@@ -48,6 +48,7 @@ function runBuildWithIntercept(t, args, {
     '    ffprobeIndex += 1;',
     "    return { status: 0, stdout: JSON.stringify({ streams: [{ codec_type: 'video', width: 1080, height: 1920, r_frame_rate: rate }], format: { duration: '20' } }) };",
     '  }',
+    "  if (path.basename(args[0]) === 'transcribe.py') { fs.writeFileSync(args[2], JSON.stringify([{ text: 'а', words: [{ w: 'а', s: 0.5, e: 0.5 }] }])); return { status: 0, stdout: '' }; }",
     "  if (args[0] === '--version') return { status: 0, stdout: 'Python 3.12.0' };",
     "  if (path.basename(args[0]) === 'reframe.py') { fs.writeFileSync(args[2], 'reframed'); return { status: 0, stdout: '' }; }",
     "  if (command === process.execPath && path.basename(args[0]) === 'tighten.js') { fs.writeFileSync(args[3], 'tightened'); return { status: 0, stdout: '' }; }",

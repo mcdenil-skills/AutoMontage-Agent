@@ -41,6 +41,32 @@ function roughCutTimeToSource(keep, timeSec) {
   return keep[keep.length - 1].end;
 }
 
+// Исходная секунда → только сохранившаяся секунда нарезки, без притягивания к стыку.
+function sourceTimeToRoughCut(keep, timeSec) {
+  if (!Array.isArray(keep) || !keep.length || !Number.isFinite(timeSec) || timeSec < 0) return null;
+  let passed = 0;
+  for (const piece of keep) {
+    if (timeSec >= piece.start && timeSec < piece.end) return passed + timeSec - piece.start;
+    passed += piece.end - piece.start;
+  }
+  return timeSec === keep[keep.length - 1].end ? passed : null;
+}
+
+// Обещание должно сохраниться целиком; соседние куски без пропуска можно объединить.
+function sourceRangeToRoughCut(keep, startSec, endSec) {
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return null;
+  const mappedStart = sourceTimeToRoughCut(keep, startSec);
+  if (mappedStart === null) return null;
+  let cursor = startSec;
+  for (const piece of keep) {
+    if (piece.end <= cursor) continue;
+    if (piece.start > cursor) return null;
+    cursor = Math.min(endSec, piece.end);
+    if (cursor === endSec) return { startSec: mappedStart, endSec: mappedStart + endSec - startSec };
+  }
+  return null;
+}
+
 // Что автор не увидит в нарезке: голова до первого куска, стыки между кусками и хвост.
 // `atSec` – место стыка в нарезке, `note` – причина из следующего куска (у хвоста её нет).
 // С `fps` вырез короче кадра не считается: контейнер часто длиннее последнего кадра, и список,
@@ -122,4 +148,6 @@ module.exports = {
   roughCutPaths,
   roughCutSize,
   roughCutTimeToSource,
+  sourceTimeToRoughCut,
+  sourceRangeToRoughCut,
 };

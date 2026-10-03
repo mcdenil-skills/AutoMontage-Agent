@@ -495,3 +495,23 @@ test('the state offers the last custom link and the brand call', async (t) => {
   assert.deepEqual(Object.keys(state.brand.call).sort(), ['buttons', 'title']);
   assert.ok(Array.isArray(state.brand.socials));
 });
+
+test('lead-magnet API gives a public playback target on the shortened rough-cut timeline', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = require('./helpers/pult-projects').addRoughCutProject(projectsDir, {
+    folder: 'rough', sourceDuration: 12, keep: [{ start: 0, end: 2 }, { start: 5, end: 12 }],
+  });
+  fs.writeFileSync(path.join(projectDir, 'transcript/words.json'), JSON.stringify([{ words:
+    QUOTE.split(' ').map((w, i) => ({ w, s: 8 + i * 0.08, e: 8.05 + i * 0.08 })) }]));
+  require('../scripts/lead-magnet/offers').addOffer(projectDir, {
+    codeWord: 'ГАЙД', kind: 'comment-keyword', quote: QUOTE,
+    units: require('./helpers/lead-magnet-fixtures').UNITS,
+  });
+  const { session } = await start(t, projectsDir);
+  const response = await get(session, '/api/lead-magnet?key=rough');
+  assert.equal(response.status, 200);
+  assert.equal(response.json.offers[0].playback.startSec, 5);
+  assert.match(response.json.offers[0].playback.videoUrl, /^\/media\/video\?key=rough&v=/);
+  assert.equal(response.json.offers[0].source, undefined);
+  assert.equal(JSON.stringify(response.json).includes(projectDir), false);
+});

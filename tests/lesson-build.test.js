@@ -52,6 +52,7 @@ function runLessonBuildWithIntercept(t, args, {
     'const nativeRenameSync = fs.renameSync.bind(fs);',
     'childProcess.spawnSync = (command, args) => {',
     "  fs.appendFileSync(calls, JSON.stringify({ command, args }) + '\\n');",
+    "  if (path.basename(args[0]) === 'transcribe.py') { fs.writeFileSync(args[2], JSON.stringify([{ text: 'а', words: [{ w: 'а', s: 0.5, e: 0.5 }] }])); return { status: 0, stdout: '' }; }",
     "  if (args.length === 1 && args[0] === '--version') return { status: 0, stdout: 'Python 3.12.0', stderr: '' };",
     "  if (command === 'ffprobe') return { status: 0, stdout: JSON.stringify({ streams: [{ codec_type: 'video', width: 1080, height: 1920, r_frame_rate: '25/1' }], format: { duration: '20' } }) };",
     "  if (materializePlan && command === process.execPath && path.basename(args[0]) === 'gen-brief.js') {",
@@ -623,4 +624,14 @@ test('lesson export rejects a pre-existing final symlink without overwriting its
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'outside-must-survive');
   assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
   assert.deepEqual(fs.readdirSync(temporary), []);
+});
+
+test('fresh project transcription preserves a zero-length word before lesson planning', (t) => {
+  const workspace = makePlanProject(t);
+  const { result } = runLessonBuildWithIntercept(t, [
+    'examples/demo-source.mp4', '--template', 'lesson', '--project-dir', workspace.dir,
+  ], { materializePlan: true });
+  assert.equal(result.status, 0, result.stderr);
+  const words = JSON.parse(fs.readFileSync(path.join(workspace.dir, 'transcript/words.json')));
+  assert.deepEqual(words[0].words, [{ w: 'а', s: 0.5, e: 0.51 }]);
 });
