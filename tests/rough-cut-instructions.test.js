@@ -8,6 +8,8 @@ const read = relativePath => fs.readFileSync(path.join(ROOT, relativePath), 'utf
 // Фраза из документа с любыми переносами строк и отступами между словами.
 const words = phrase => new RegExp(phrase.split(' ').map(w => w.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('\\s+'), 'u');
 const section = (text, heading) => text.split(heading)[1]?.split('\n## ')[0];
+// Заметки о черновой нарезке вышли в релизе 1.13.0; после выпуска раздел [Unreleased] пуст.
+const roughCutRelease = () => read('CHANGELOG.md').split('## [1.13.0]')[1]?.split('\n## [')[0] ?? '';
 
 const ROUGH_CUT = 'skills/reel-turnkey/references/rough-cut.md';
 const THREE_POINTS = 'Обязательные пользовательские точки – три: один выбор маршрута в начале, '
@@ -215,12 +217,11 @@ test('user documents show the rough cut command and the confirm button', () => {
 
   const decisions = read('DECISIONS.md');
   assert.match(decisions, /^## D-046 – Черновая нарезка до слоя/mu);
-  const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.split('## [Unreleased]')[1].split('\n## [')[0];
-  assert.match(unreleased, /^### Добавлено/mu);
-  assert.match(unreleased, /automontage roughcut/u);
+  const release = roughCutRelease();
+  assert.match(release, /^### Добавлено/mu);
+  assert.match(release, /automontage roughcut/u);
   // Строка про выкатку: старый движок в чужой рабочей копии не читает новые поля паспорта и правок.
-  assert.match(unreleased, words(
+  assert.match(release, words(
     'Перед первым `automontage roughcut` обновите движок во всех рабочих копиях: старый движок не '
     + 'читает `project.json` с полем `roughCut` и `pult/comments.json` с правкой к черновой нарезке.',
   ));
@@ -285,6 +286,5 @@ test('avatar videos skip the rough cut stage everywhere the stage is described',
   const decisions = read('DECISIONS.md');
   const d046 = decisions.split('## D-046')[1].split('\n## D-')[0];
   assert.match(d046, words('Аватар (видео из текста) этап пропускает – решение владельца 03.10: оговорок там нет.'));
-  const unreleased = read('CHANGELOG.md').split('## [Unreleased]')[1].split('\n## [')[0];
-  assert.match(unreleased, words('Аватар (видео из текста) этап пропускает: оговорок там нет.'));
+  assert.match(roughCutRelease(), words('Аватар (видео из текста) этап пропускает: оговорок там нет.'));
 });
