@@ -268,7 +268,7 @@ test('assertRoughCutSettled blocks every action while the author has not confirm
       () => assertRoughCutSettled(settledManifest(), action, { projectDir: '/p' }),
       (error) => {
         assert.equal(error.code, 'ROUGH_CUT_PENDING');
-        assert.equal(error.message, 'черновая нарезка previews/roughcut-v02.mp4 ждёт автора: подтверждение – кнопка «Нарезка готова» в пульте или явные слова автора в чате (automontage roughcut confirm)');
+        assert.equal(error.message, 'черновая нарезка previews/roughcut-v02.mp4 ждёт автора: подтверждает только автор – кнопкой «Нарезка готова» в пульте или явными словами в чате. Сам не подтверждай.');
         return true;
       },
     );

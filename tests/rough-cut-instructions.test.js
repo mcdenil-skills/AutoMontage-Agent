@@ -112,6 +112,14 @@ test('rough-cut.md describes the stage, the search order, commands and the stop 
   // Когда этап нужен и когда пропускается.
   assert.match(guide, /^## Когда этап нужен/mu);
   assert.match(guide, words('«режь сам» или «нарезку не показывай» до показа'));
+  // Нарезка режет активную ревизию исходника, а она равна оригиналу только в ревизии 1.
+  const applicability = section(guide, '## Когда этап нужен');
+  assert.ok(applicability, 'rough-cut.md: нет раздела «Когда этап нужен»');
+  assert.match(applicability, words(
+    'Нарезка строится до первого master, пока ревизия исходника – 1. Если master уже собран '
+    + '(ревизия 2 и выше), черновую нарезку не делай: ролик идёт прежним путём, а оговорки '
+    + 'режутся путём «Оговорка после master».',
+  ));
 
   // Порядок поиска пауз и повторов (пп. 1–6 спеки).
   for (const rule of [
@@ -203,4 +211,9 @@ test('user documents show the rough cut command and the confirm button', () => {
   const unreleased = changelog.split('## [Unreleased]')[1].split('\n## [')[0];
   assert.match(unreleased, /^### Добавлено/mu);
   assert.match(unreleased, /automontage roughcut/u);
+  // Строка про выкатку: старый движок в чужой рабочей копии не читает новые поля паспорта и правок.
+  assert.match(unreleased, words(
+    'Перед первым `automontage roughcut` обновите движок во всех рабочих копиях: старый движок не '
+    + 'читает `project.json` с полем `roughCut` и `pult/comments.json` с правкой к черновой нарезке.',
+  ));
 });

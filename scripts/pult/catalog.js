@@ -108,14 +108,18 @@ function lessonApprovalBlocker(briefBytes) {
   return unresolvedBroll ? BROLL_BLOCKER : null;
 }
 
-// «Что вырезал агент»: вырезы активной нарезки по её списку кусков. Список не читается или
-// не похож на список кусков – сводки нет, карточка нарезки от этого не ломается.
+// «Что вырезал агент»: вырезы активной нарезки по её списку кусков. Список не читается, не
+// похож на список кусков или его байты не совпадают с паспортом (правили после сборки) –
+// сводки нет: она описывала бы видео, которого на экране нет. Карточка нарезки от этого не ломается.
 function roughCutCuts(projectDir, roughCut) {
   const file = projectFile(projectDir, roughCut.editPath);
   if (!file) return [];
   let edit;
   try {
-    edit = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // Байты читаем один раз: хеш и разбор должны относиться к одной и той же версии списка.
+    const editBytes = fs.readFileSync(file);
+    if (hashBytes(editBytes) !== roughCut.editSha256) return [];
+    edit = JSON.parse(editBytes.toString('utf8'));
   } catch (_) {
     return [];
   }

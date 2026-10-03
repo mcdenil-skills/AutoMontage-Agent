@@ -391,6 +391,24 @@ test('an unreadable cut list leaves the rough cut waiting without a cut summary'
   assert.deepEqual(entry.roughCutCuts, []);
 });
 
+test('a cut list edited after the build shows no cut summary and the card stays waiting', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'edited-list' });
+  // Список кусков правят руками уже после сборки: сводка вырезов не должна описывать видео,
+  // которого на экране нет, – хеш байт списка расходится с паспортом, поэтому сводки нет.
+  fs.writeFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'), `${JSON.stringify({
+    version: 1,
+    sourceRevision: 1,
+    fps: 25,
+    keep: [{ start: 0, end: 5 }],
+  }, null, 2)}\n`);
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.status, 'waiting');
+  assert.equal(entry.video.kind, 'roughcut');
+  assert.equal(entry.roughCutConfirmable, true);
+  assert.deepEqual(entry.roughCutCuts, []);
+});
+
 test('a rough cut without its copy on disk is not active for the pult', (t) => {
   const { projectsDir } = makePultRoot(t);
   const { projectDir } = addRoughCutProject(projectsDir, { folder: 'no-copy' });

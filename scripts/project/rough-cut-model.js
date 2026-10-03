@@ -106,7 +106,7 @@ function assertRoughCutSettled(manifest, action, { projectDir }) {
   const record = activeRoughCut(manifest);
   if (!record) return;
   if (record.status === 'review') {
-    throw pendingError(`черновая нарезка ${record.filePath} ждёт автора: подтверждение – кнопка «Нарезка готова» в пульте или явные слова автора в чате (automontage roughcut confirm)`);
+    throw pendingError(`черновая нарезка ${record.filePath} ждёт автора: подтверждает только автор – кнопкой «Нарезка готова» в пульте или явными словами в чате. Сам не подтверждай.`);
   }
   if (action === 'layer new') {
     throw pendingError(`нарезка подтверждена, но master по ней ещё не собран: automontage master --project-dir "${projectDir}" --edit ${record.editPath} (или ваш список с правками автора к этой нарезке)`);
