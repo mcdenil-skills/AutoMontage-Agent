@@ -50,6 +50,10 @@ function help() {
   automontage layer brief --project-dir <p> --asset <ref> …
                                       draft brief со слоем на весь ролик
   automontage layer --help            все команды layer (new/words/check/render/import/brief/stock/sheet)
+  automontage roughcut --project-dir <p> --edit edit/roughcut-v01.json
+                                      черновая нарезка без графики для пульта (до master и слоя)
+  automontage roughcut confirm --project-dir <p>
+                                      нарезка готова – только по явным словам автора в чате
   automontage master --project-dir . --edit edit/v02-source.json [--quality 1080p|source]
     1080p по умолчанию; source (4k/native) сохраняет родной размер
                                       собрать новую source-ревизию без повторного Whisper
@@ -200,6 +204,16 @@ function main(argv = process.argv.slice(2)) {
   if (argv[0] === 'master') {
     try {
       execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'build-master.js'), ...argv.slice(1)], {
+        stdio: 'inherit', cwd: process.cwd(), shell: false,
+      });
+    } catch (e) { process.exit(e.status || 1); }
+    process.exit(0);
+  }
+
+  // черновая нарезка: лёгкая копия из активного исходника для пульта, без новой ревизии
+  if (argv[0] === 'roughcut') {
+    try {
+      execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'project', 'rough-cut-cli.js'), ...argv.slice(1)], {
         stdio: 'inherit', cwd: process.cwd(), shell: false,
       });
     } catch (e) { process.exit(e.status || 1); }

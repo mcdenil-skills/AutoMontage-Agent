@@ -229,7 +229,8 @@ SIGTERM, `/dev/fd`) пропускаются сами через `process.platfo
 PowerShell может скрыть код выхода нативной команды за пайпом. Браузерный `pult-ui.spec.js`
 в этот шаг не входит и остаётся в `review-ui`. Ещё один шаг запускает настоящие тесты склейки
 дублей (`tests/trim-media-real.test.js`, `tests/takes-master-media.test.js`,
-`tests/take-pauses.test.js`, `tests/project-takes.test.js`) после проверки кодера `libx264`.
+`tests/take-pauses.test.js`, `tests/project-takes.test.js`) и черновой нарезки
+(`tests/rough-cut-media.test.js`) после проверки кодера `libx264`.
 Локально проверяются команды и YAML; hosted Windows run остаётся обязательным pre-merge gate.
 
 Статический guard для `scripts/build.js` запрещает `execSync` и `shell: true`. Опции
@@ -248,6 +249,16 @@ Windows CI прогоняет их вместе с `tests/project-takes.test.js`
 FFmpeg нет `libx264`, чтобы тесты не пропустились молча. Контракт дублей закрывают
 `tests/takes-edit.test.js`, `tests/take-pauses.test.js`, `tests/takes-master.test.js`,
 `tests/project-takes.test.js` и `tests/takes-pack.test.js`; они входят в `npm run test:video-edit`.
+Черновую нарезку (`automontage roughcut`) закрывают два файла, тоже входящие в
+`npm run test:video-edit`. `tests/rough-cut.test.js` на фейках ffmpeg/ffprobe проверяет аргументы
+`encoder: 'proxy'`, граф склейки как у master, размер 720p (и у повёрнутой телефонной записи –
+портрет, а копия в чужом размере отвергается), слот очереди до блокировки проекта и его возврат при
+ошибке, отказы без записи в паспорт (имя, ревизия, уже готовая копия, FPS), абсолютный `--edit`,
+запись `roughCut` без новой ревизии, `confirm` (`ROUGH_CUT_MISSING`, `ROUGH_CUT_CHANGED` при
+подменённой копии, изменённом списке или чужом `expectedSha256`), разбор опций и склонение
+«месте/местах». `tests/rough-cut-media.test.js` на настоящем FFmpeg собирает копию из прямого и
+повёрнутого на 90° исходника 540×960: `h264`, `yuv420p`, 4 ± 0,08 с, тот же 540×960 без увеличения
+и атом `moov` перед `mdat`; Windows CI запускает его в шаге склейки дублей.
 `tests/take-pauses.test.js` закрывает уровни, порог паузы, выбор точки разреза, запрет перехода
 через другое слово, общие стыки и чтение звука на оси `trim` (в том числе MPEG-TS с поздним звуком);
 `tests/takes-master-media.test.js` проверяет на настоящем FFmpeg, что граница внутри звучания
@@ -845,6 +856,42 @@ job). Прогон занимает до полуминуты.
 4. Через 30 минут без открытого окна процесс пульта завершается, `projects/.pult/instance.json`
    удалён.
 5. Человек без опыта без подсказок находит финал, оставляет правку и копирует фразу для агента.
+
+### Ручная проверка этапа черновой нарезки
+
+Автотесты (`tests/rough-cut*.test.js`, `tests/pult-*.test.js`, `tests/layer-*.test.js` и блок
+«Черновая нарезка до слоя» в браузерном `pult-ui.spec.js`) кнопку «Нарезка готова» нажимают сами. Перед выпуском
+этого этапа один раз проходят путь целиком на копии настоящего ролика, а кнопку нажимает человек:
+
+1. Стенд. В `tmp/accept-roughcut/projects/<папка>/` положить паспорт `project.json` ревизии 1 без
+   brief (через `createOrOpenProject` из `scripts/project/workspace.js`) и клонировать `cp -c` из
+   законченного ролика с исходником 1080p/50 или 4K: `input/source.mp4`, `transcript/words.json`,
+   а его `edit/v02-source.json` – как `edit/roughcut-v01.json`. `createOrOpenProject` копирует
+   исходник обычным способом, поэтому клон кладут поверх после создания паспорта. `tmp/`
+   игнорируется Git, настоящий `projects/` не трогать.
+2. `time node scripts/cli.js roughcut --project-dir tmp/accept-roughcut/projects/<папка> --edit
+   edit/roughcut-v01.json`: итог `✅ черновая нарезка…`, у ролика 100–120 с при свободной очереди
+   не дольше 40 с. `ffprobe previews/roughcut-v01.mp4`: `yuv420p`, 720 по короткой стороне, FPS и
+   длительность как у списка кусков; в `project.json.roughCut` `status: review`, `sha256` совпадает
+   с файлом.
+3. Пульт, проверяет человек: `node scripts/cli.js pult --projects-dir tmp/accept-roughcut/projects`.
+   Карточка «Черновая нарезка – посмотрите и отметьте оговорки»: видео играет, список вырезов
+   совпадает со списком кусков. Оставить правку на секунде, нажать «Нарезка готова». Агент и
+   автотест эту кнопку и `/api/*` не вызывают: утверждение – решение автора.
+4. `node scripts/cli.js inbox --projects-dir tmp/accept-roughcut/projects`: строка «Нарезка
+   подтверждена» и строка правки с двумя секундами – на копии и в исходнике. Вторую сверить с
+   списком: для секунды `t` внутри куска `i` она равна `keep[i].start` плюс `t` минус сумма
+   длин предыдущих кусков; на слух – `ffplay -ss <секунда> input/source.mp4`.
+5. `node scripts/cli.js layer new --project-dir tmp/accept-roughcut/projects/<папка>` до master
+   отказывает: «нарезка подтверждена, но master по ней ещё не собран…», папка `motion-vNN` не
+   создана.
+6. Правка автора вносится в копию списка: `edit/v02-source.json` из `edit/roughcut-v01.json`
+   (`roughcut-v01.json` не меняется), затем `time node scripts/cli.js master --project-dir
+   tmp/accept-roughcut/projects/<папка> --edit edit/v02-source.json` – ревизия исходника 2.
+7. `layer new` теперь создаёт `motion-v01`, во входящих нет строки «Нарезка подтверждена», а
+   `inbox --accept <папка> <id>` закрывает правку, и входящие по стенду пусты.
+
+Папку `tmp/accept-roughcut/` удаляют только после проверки и с согласия владельца.
 
 ## 12. Лид-магниты: данные и проверка
 

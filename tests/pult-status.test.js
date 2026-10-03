@@ -160,3 +160,106 @@ test('russian plural forms for edits', () => {
     ['1 правка', '2 правки', '5 правок', '11 правок', '12 правок', '21 правка', '22 правки', '25 правок'],
   );
 });
+
+const ROUGH_CUT = {
+  editPath: 'edit/roughcut-v01.json',
+  filePath: 'previews/roughcut-v01.mp4',
+  sourceRevision: 1,
+  sourceDuration: 6,
+  editSha256: 'd'.repeat(64),
+  sha256: 'e'.repeat(64),
+  duration: 4,
+  width: 1280,
+  height: 720,
+  fps: 25,
+  createdAt: '2026-10-03T08:00:00.000Z',
+  status: 'review',
+};
+const ROUGH_CUT_VIDEO = { kind: 'roughcut', path: 'previews/roughcut-v01.mp4', sha256: 'e'.repeat(64) };
+const NO_BRIEF = { currentBrief: null, currentPreview: null };
+const NO_BRIEF_INPUT = { currentBriefStatus: null, currentBriefSha256: null };
+
+test('an active rough cut in review waits for the author and is never approvable', () => {
+  const result = derive({ ...NO_BRIEF, roughCut: ROUGH_CUT }, { ...NO_BRIEF_INPUT, roughCutExists: true });
+  assert.equal(result.status, 'waiting');
+  assert.equal(result.nextStep, 'Черновая нарезка – посмотрите и отметьте оговорки');
+  assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
+  assert.equal(result.approvable, false);
+  assert.equal(result.roughCutConfirmable, true);
+  // Время подтверждения у нарезки в review ещё не существует – null, а не отсутствующее поле.
+  assert.deepEqual(result.roughCut, {
+    editPath: 'edit/roughcut-v01.json',
+    sha256: 'e'.repeat(64),
+    status: 'review',
+    confirmedAt: null,
+  });
+  assert.equal(result.needsFinal, false);
+});
+
+test('new edits to a rough cut go to the agent but keep the rough cut on screen and confirmable', () => {
+  const result = derive(
+    { ...NO_BRIEF, roughCut: ROUGH_CUT },
+    { ...NO_BRIEF_INPUT, roughCutExists: true, pendingComments: 2 },
+  );
+  assert.equal(result.status, 'working');
+  assert.equal(result.nextStep, 'Ждёт агента: 2 правки');
+  assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
+  assert.equal(result.approvable, false);
+  assert.equal(result.roughCutConfirmable, true);
+});
+
+test('a confirmed rough cut stays on screen while the agent builds the layer', () => {
+  const confirmed = { ...ROUGH_CUT, status: 'confirmed', confirmedAt: '2026-10-03T09:00:00.000Z', confirmedBy: 'pult' };
+  const result = derive({ ...NO_BRIEF, roughCut: confirmed }, { ...NO_BRIEF_INPUT, roughCutExists: true });
+  assert.equal(result.status, 'working');
+  assert.equal(result.nextStep, 'Нарезка подтверждена – агент собирает слой');
+  assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
+  assert.equal(result.approvable, false);
+  assert.equal(result.roughCutConfirmable, false);
+  assert.equal(result.roughCut.status, 'confirmed');
+  // Время подтверждения идёт к странице как есть: по нему блок рисует «Нарезка подтверждена в …».
+  assert.equal(result.roughCut.confirmedAt, '2026-10-03T09:00:00.000Z');
+});
+
+test('a rough cut of an older source revision or without its file is history for the pult', () => {
+  const history = derive(
+    { ...NO_BRIEF, source: { revision: 2 }, roughCut: ROUGH_CUT },
+    { ...NO_BRIEF_INPUT, roughCutExists: true },
+  );
+  assert.equal(history.status, 'working');
+  assert.equal(history.nextStep, 'Агент готовит черновик');
+  assert.equal(history.video, null);
+  assert.equal(history.roughCut, null);
+  assert.equal(history.roughCutConfirmable, false);
+
+  // Файла копии нет – показывать и подтверждать нечего: прежняя логика.
+  const missing = derive({ ...NO_BRIEF, roughCut: ROUGH_CUT }, NO_BRIEF_INPUT);
+  assert.equal(missing.nextStep, 'Агент готовит черновик');
+  assert.equal(missing.roughCut, null);
+  assert.equal(missing.roughCutConfirmable, false);
+
+  // Без нарезки в паспорте – прежние значения по умолчанию.
+  assert.equal(derive().roughCut, null);
+  assert.equal(derive().roughCutConfirmable, false);
+});
+
+test('a rough cut in review outranks a fresh draft preview: no approval of the rough cut', () => {
+  const result = derive({ roughCut: ROUGH_CUT }, { roughCutExists: true });
+  assert.equal(result.status, 'waiting');
+  assert.equal(result.nextStep, 'Черновая нарезка – посмотрите и отметьте оговорки');
+  assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
+  assert.equal(result.approvable, false);
+  assert.equal(result.roughCutConfirmable, true);
+  // previewSha256 и briefPath по-прежнему описывают preview: билет утверждения сервер
+  // всё равно не выдаст, потому что approvable ложно.
+  assert.equal(result.briefPath, BRIEF);
+});
+
+// Утверждённый brief прежнего монтажа не должен звать агента собирать финал, пока автор
+// смотрит новую черновую нарезку: на экране нарезка, а не утверждённый preview.
+test('an active rough cut does not ask for a final of an older approved brief', () => {
+  const result = derive({ currentBrief: APPROVED, roughCut: ROUGH_CUT }, { currentBriefStatus: 'approved', roughCutExists: true });
+  assert.equal(result.status, 'waiting');
+  assert.equal(result.needsFinal, false);
+  assert.deepEqual(result.video, ROUGH_CUT_VIDEO);
+});

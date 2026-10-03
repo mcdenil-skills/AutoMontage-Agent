@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readComments } = require('../pult/comments');
 const { deriveVariantStatus } = require('../pult/status');
+const { activeRoughCut } = require('./rough-cut-model');
 
 // Уровни чистки готового ролика. renders – промежуточные рендеры, preview, tmp и копии спикера:
 // после них ролик по-прежнему перерендеривается из своих файлов. archive – ещё промежуточные
@@ -154,12 +155,18 @@ function walk(dir, fileSystem, relative = []) {
 
 // «Готов» – то же, что видит человек в пульте: финал собран по текущему утверждённому ТЗ и правок
 // нет. Утверждённая, но ещё не отрендеренная версия или новые правки – работа не закончена.
+// Активная черновая нарезка – идёт новый монтаж, даже если финал прежней версии на месте: её копию
+// автор смотрит сейчас. Первый master делает нарезку историей, и чистка снова прежняя.
 function pultBlocker(projectDir, manifest) {
   let pending;
   try {
     pending = readComments(projectDir).filter((comment) => comment.status === 'new').length;
   } catch {
     return 'pult/comments.json не читается';
+  }
+  const roughCut = activeRoughCut(manifest);
+  if (roughCut) {
+    return roughCut.status === 'review' ? 'черновая нарезка ждёт автора' : 'нарезка подтверждена – агент собирает слой';
   }
   const currentBrief = manifest.currentBrief ?? null;
   const entry = (Array.isArray(manifest.briefs) ? manifest.briefs : []).find((brief) => brief?.jsonPath === currentBrief);

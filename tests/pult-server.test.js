@@ -6,13 +6,22 @@ const net = require('node:net');
 const path = require('node:path');
 
 const { planPreview, publishCurrentPreview } = require('../scripts/project/preview-workspace');
+const { confirmRoughCut } = require('../scripts/project/rough-cut');
 const { createOrOpenProject, readProjectManifest } = require('../scripts/project/workspace');
 const { acceptComment, readComments } = require('../scripts/pult/comments');
 const { buildInbox, formatInbox } = require('../scripts/pult/inbox');
 const { startPultServer } = require('../scripts/pult/server');
 const { readPultState } = require('../scripts/pult/state');
 const {
-  ROOT, addDraftProject, addLegacyFolder, addSecondRevision, makePultRoot, sha256, unresolvedBrollScenes,
+  ROOT,
+  addDraftProject,
+  addLegacyFolder,
+  addRoughCutProject,
+  addSecondRevision,
+  makePultRoot,
+  republishRoughCut,
+  sha256,
+  unresolvedBrollScenes,
 } = require('./helpers/pult-projects');
 
 function fakeCapture(command, args) {
@@ -126,6 +135,7 @@ async function variantOf(session, key) {
 }
 
 const approve = (session, key, ticket) => post(session, '/api/approve', { key, ticket, confirmPreviewViewed: true });
+const confirmCut = (session, key, ticket) => post(session, '/api/roughcut/confirm', { key, ticket, confirmViewed: true });
 
 function approvedBriefs(projectsDir, folder) {
   return fs.readdirSync(path.join(projectsDir, folder, 'brief')).filter((name) => /-approved\./.test(name));
@@ -595,6 +605,290 @@ test('a ticket for an older preview, an excerpt or another video is refused', as
   const fresh = (await variantOf(session, 'waiting-clip')).approvalTicket;
   assert.notEqual(fresh, ticket);
   assert.equal((await approve(session, 'waiting-clip', fresh)).status, 201);
+});
+
+// «Нарезка готова»: POST /api/roughcut/confirm по билету той копии, которую видел автор.
+const ROUGHCUT_CHANGED = { code: 'ROUGHCUT_CHANGED', message: 'Появилась новая черновая нарезка – посмотрите её' };
+const ROUGHCUT_DAMAGED = {
+  code: 'ROUGHCUT_DAMAGED',
+  message: 'Файл нарезки не совпадает с паспортом – попросите агента пересобрать нарезку',
+};
+
+function manifestBytes(projectDir) {
+  return fs.readFileSync(path.join(projectDir, 'project.json'));
+}
+
+test('a rough cut on screen gets its own confirmation ticket and never an approval', async (t) => {
+  const projectsDir = await standardRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'cut-clip', name: 'Нарезка' });
+  addRoughCutProject(projectsDir, {
+    folder: 'confirmed-cut',
+    name: 'Подтверждена',
+    status: 'confirmed',
+    confirmedAt: '2026-10-03T07:11:00.000Z',
+  });
+  const { session } = await startTest(t, projectsDir);
+  const response = await get(session, '/api/cards');
+  const variants = [...response.json.waiting, ...response.json.working, ...response.json.ready]
+    .flatMap((card) => card.variants);
+
+  const cut = variants.find((variant) => variant.key === 'cut-clip');
+  assert.equal(cut.status, 'waiting');
+  assert.equal(cut.video.kind, 'roughcut');
+  assert.equal(cut.roughCutConfirmable, true);
+  assert.equal(cut.roughCutConfirmedAt, null);
+  assert.match(cut.roughCutTicket, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(cut.approvable, false);
+  assert.equal(cut.approvalTicket, null);
+  assert.deepEqual(cut.roughCutCuts, [
+    { atSec: 2, removedSec: 1, note: 'вырезан повтор «Первое»' },
+    { atSec: 4, removedSec: 1, note: null },
+  ]);
+  // Подтверждённая нарезка уже у агента: подтверждать нечего.
+  const confirmed = variants.find((variant) => variant.key === 'confirmed-cut');
+  assert.equal(confirmed.video.kind, 'roughcut');
+  assert.equal(confirmed.roughCutConfirmable, false);
+  assert.equal(confirmed.roughCutTicket, null);
+  // Но отметка «Нарезка подтверждена в …» остаётся: время идёт ISO-строкой, без путей и хешей.
+  assert.equal(confirmed.roughCutConfirmedAt, '2026-10-03T07:11:00.000Z');
+  // Обычный preview – прежние «Утверждаю» и билет утверждения, без билета нарезки.
+  const preview = variants.find((variant) => variant.key === 'waiting-clip');
+  assert.equal(typeof preview.approvalTicket, 'string');
+  assert.equal(preview.roughCutConfirmable, false);
+  assert.equal(preview.roughCutTicket, null);
+  assert.equal(preview.roughCutConfirmedAt, null);
+  assert.deepEqual(preview.roughCutCuts, []);
+
+  const text = response.body.toString('utf8');
+  assertNoPathLeak(text, projectsDir);
+  // assertNoPathLeak ловит только абсолютный projectsDir: относительные пути и хеши – отдельно.
+  assert.doesNotMatch(text, /roughcut-v\d|edit\/|"[a-f0-9]{64}"/);
+});
+
+test('the author confirms the rough cut on screen once, through the engine', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const engineCalls = [];
+  const { session, calls } = await startTest(t, projectsDir, {
+    confirmRoughCutImpl: (workspace, options) => {
+      engineCalls.push({ dir: workspace.dir, options });
+      return confirmRoughCut(workspace, options);
+    },
+  });
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const confirmed = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(confirmed.status, 201);
+  assert.deepEqual(confirmed.json, { ok: true });
+  const copySha256 = sha256(fs.readFileSync(path.join(projectDir, 'previews', 'roughcut-v01.mp4')));
+  assert.deepEqual(engineCalls, [{ dir: projectDir, options: { expectedSha256: copySha256, by: 'pult' } }]);
+  const record = readProjectManifest(projectDir).roughCut;
+  assert.equal(record.status, 'confirmed');
+  assert.equal(record.confirmedBy, 'pult');
+  assert.equal(typeof record.confirmedAt, 'string');
+
+  const after = await variantOf(session, 'cut-clip');
+  assert.equal(after.status, 'working');
+  assert.equal(after.nextStep, 'Нарезка подтверждена – агент собирает слой');
+  assert.equal(after.roughCutConfirmable, false);
+  assert.equal(after.roughCutTicket, null);
+  // Нажатие в пульте оставляет отметку: время – то самое, что движок записал в паспорт.
+  assert.equal(after.roughCutConfirmedAt, record.confirmedAt);
+
+  // Повтор тем же билетом: нарезка уже не ждёт автора, движок не вызывается.
+  const manifestAfter = manifestBytes(projectDir);
+  const replay = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(replay.status, 409);
+  assert.deepEqual(replay.json, ROUGHCUT_CHANGED);
+  assert.deepEqual(manifestBytes(projectDir), manifestAfter);
+  assert.equal(engineCalls.length, 1);
+  assert.deepEqual(calls.logs, []);
+});
+
+test('confirming a rough cut needs the checkbox, the exact body, the page origin and a known key', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const before = manifestBytes(projectDir);
+
+  for (const confirmViewed of [false, 'true', 1, null]) {
+    const unchecked = await post(session, '/api/roughcut/confirm', { key: 'cut-clip', ticket, confirmViewed });
+    assert.equal(unchecked.status, 400, String(confirmViewed));
+    assert.deepEqual(unchecked.json, {
+      code: 'CONFIRMATION_REQUIRED',
+      message: 'Отметьте, что посмотрели нарезку целиком',
+    });
+  }
+  for (const body of [
+    { key: 'cut-clip', ticket, confirmViewed: true, by: 'chat' },
+    { key: 'cut-clip', ticket, confirmPreviewViewed: true },
+    { key: 'cut-clip', ticket },
+    [],
+  ]) {
+    const malformed = await post(session, '/api/roughcut/confirm', body);
+    assert.equal(malformed.status, 400, JSON.stringify(body));
+    assert.equal(malformed.json.code, 'INVALID_REQUEST');
+  }
+  const unknown = await confirmCut(session, 'no-such-clip', ticket);
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.json.code, 'NOT_FOUND');
+  const foreign = await request(session, '/api/roughcut/confirm', {
+    method: 'POST', token: session.token, origin: 'http://evil.test', body: { key: 'cut-clip', ticket, confirmViewed: true },
+  });
+  assert.equal(foreign.status, 403);
+  assert.deepEqual(manifestBytes(projectDir), before);
+});
+
+test('a rough cut ticket is bound to its project and to the cut the author watched', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const other = addRoughCutProject(projectsDir, { folder: 'other-cut' });
+  const { session } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+
+  const otherBefore = manifestBytes(other.projectDir);
+  const foreign = await confirmCut(session, 'other-cut', ticket);
+  assert.equal(foreign.status, 409);
+  assert.deepEqual(foreign.json, ROUGHCUT_CHANGED);
+  assert.deepEqual(manifestBytes(other.projectDir), otherBefore);
+
+  // Агент собрал v02, пока страница показывала v01. Даже с теми же байтами копии старый
+  // билет не подтверждает другой список кусков.
+  const v01Bytes = fs.readFileSync(path.join(projectDir, 'previews', 'roughcut-v01.mp4'));
+  republishRoughCut(projectDir, { version: 2, videoBytes: v01Bytes });
+  const stale = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(stale.status, 409);
+  assert.deepEqual(stale.json, ROUGHCUT_CHANGED);
+  assert.equal(readProjectManifest(projectDir).roughCut.status, 'review');
+
+  const fresh = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  assert.notEqual(fresh, ticket);
+  assert.equal((await confirmCut(session, 'cut-clip', fresh)).status, 201);
+  const record = readProjectManifest(projectDir).roughCut;
+  assert.equal(record.editPath, 'edit/roughcut-v02.json');
+  assert.equal(record.status, 'confirmed');
+});
+
+test('confirmation checks the rough cut bytes the page was shown', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  let engineCalls = 0;
+  const { session } = await startTest(t, projectsDir, {
+    confirmRoughCutImpl: (...args) => {
+      engineCalls += 1;
+      return confirmRoughCut(...args);
+    },
+  });
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const copy = path.join(projectDir, 'previews', 'roughcut-v01.mp4');
+  const original = fs.readFileSync(copy);
+  const before = manifestBytes(projectDir);
+
+  fs.writeFileSync(copy, 'bytes the author never saw');
+  const swapped = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(swapped.status, 409);
+  assert.deepEqual(swapped.json, ROUGHCUT_DAMAGED);
+  assert.equal(engineCalls, 0);
+  assert.deepEqual(manifestBytes(projectDir), before);
+  // Билет по-прежнему актуален: обновление страницы не поможет, нужна новая копия от агента.
+  assert.equal((await variantOf(session, 'cut-clip')).roughCutTicket, ticket);
+
+  fs.writeFileSync(copy, original);
+  assert.equal((await confirmCut(session, 'cut-clip', ticket)).status, 201);
+  assert.equal(readProjectManifest(projectDir).roughCut.status, 'confirmed');
+});
+
+test('a cut list changed after the rough cut was built is reported as damaged, not as a new cut', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const { session, calls } = await startTest(t, projectsDir);
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const before = manifestBytes(projectDir);
+
+  fs.appendFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'), '\n');
+  const damaged = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(damaged.status, 409);
+  assert.deepEqual(damaged.json, ROUGHCUT_DAMAGED);
+  assert.deepEqual(manifestBytes(projectDir), before);
+  assertNoPathLeak(damaged.body.toString('utf8'), projectsDir);
+  // Сообщение движка называет список кусков – в лог идёт только класс ошибки.
+  assert.ok(calls.logs.length > 0);
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('roughcut-v01')));
+});
+
+test('engine refusals of a rough cut confirmation map to pult codes without leaking paths', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const secret = path.join(projectDir, 'previews', 'roughcut-v01.mp4');
+  let failure = null;
+  const { session, calls } = await startTest(t, projectsDir, {
+    confirmRoughCutImpl: () => { throw failure(); },
+  });
+  const coded = (code) => () => Object.assign(new Error(`${code}: ${secret}`), { code });
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const before = manifestBytes(projectDir);
+  const cases = [
+    // Гонка с master: пока шло подтверждение, нарезка перестала ждать автора.
+    [coded('ROUGH_CUT_MISSING'), 409, ROUGHCUT_CHANGED],
+    [coded('ROUGH_CUT_CHANGED'), 409, ROUGHCUT_DAMAGED],
+    [coded('PROJECT_MANIFEST_CONFLICT'), 409, {
+      code: 'PROJECT_BUSY', message: 'Агент сейчас меняет этот ролик – попробуйте через минуту',
+    }],
+    [() => new TypeError(`EACCES: ${secret}`), 500, { code: 'INTERNAL', message: 'Внутренняя ошибка пульта' }],
+  ];
+  for (const [make, status, json] of cases) {
+    failure = make;
+    const refused = await confirmCut(session, 'cut-clip', ticket);
+    assert.equal(refused.status, status, json.code);
+    assert.deepEqual(refused.json, json);
+    assertNoPathLeak(refused.body.toString('utf8'), projectsDir);
+  }
+  assert.deepEqual(manifestBytes(projectDir), before);
+  // Одна строка лога на отказ, и в ней только класс ошибки.
+  assert.equal(calls.logs.length, cases.length);
+  assert.ok(calls.logs.every((line) => !line.includes(projectsDir) && !line.includes('EACCES')
+    && !line.includes('ROUGH_CUT') && !line.includes('PROJECT_MANIFEST')));
+});
+
+test('a new rough cut published during the confirmation asks the author to watch it', async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const { session } = await startTest(t, projectsDir, {
+    confirmRoughCutImpl: (workspace) => {
+      // Агент успел собрать v02: движок видит другой SHA-256, но билет страницы уже устарел.
+      republishRoughCut(workspace.dir, { version: 2 });
+      throw Object.assign(new Error('changed'), { code: 'ROUGH_CUT_CHANGED' });
+    },
+  });
+  const ticket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const changed = await confirmCut(session, 'cut-clip', ticket);
+  assert.equal(changed.status, 409);
+  assert.deepEqual(changed.json, ROUGHCUT_CHANGED);
+  const record = readProjectManifest(projectDir).roughCut;
+  assert.equal(record.editPath, 'edit/roughcut-v02.json');
+  assert.equal(record.status, 'review');
+});
+
+test('a rough cut ticket cannot approve, and an approval ticket cannot confirm a rough cut', async (t) => {
+  const projectsDir = await standardRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const { session } = await startTest(t, projectsDir);
+  const cutTicket = (await variantOf(session, 'cut-clip')).roughCutTicket;
+  const approvalTicket = (await variantOf(session, 'waiting-clip')).approvalTicket;
+  const cutBefore = manifestBytes(projectDir);
+  const waitingBefore = manifestBytes(path.join(projectsDir, 'waiting-clip'));
+
+  for (const key of ['cut-clip', 'waiting-clip']) {
+    const approved = await approve(session, key, cutTicket);
+    assert.equal(approved.status, 409, key);
+    assert.equal(approved.json.code, 'PREVIEW_CHANGED', key);
+    const confirmed = await confirmCut(session, key, approvalTicket);
+    assert.equal(confirmed.status, 409, key);
+    assert.deepEqual(confirmed.json, ROUGHCUT_CHANGED, key);
+  }
+  assert.deepEqual(manifestBytes(projectDir), cutBefore);
+  assert.deepEqual(manifestBytes(path.join(projectsDir, 'waiting-clip')), waitingBefore);
+  assert.deepEqual(approvedBriefs(projectsDir, 'waiting-clip'), []);
 });
 
 test('a valid token does not help a request with a foreign Host', async (t) => {

@@ -165,6 +165,51 @@ Master полностью декодирует результат и атома�
 `currentPreview`. Draft не переписывается автоматически: новая режиссура должна явно зафиксировать
 новую source revision.
 
+Черновая нарезка – проверка сокращения до motion-слоя. Её данные живут в необязательном поле
+`project.json.roughCut` (`null` или запись по `schema/project.schema.json`): список кусков
+`edit/roughcut-vNN.json` (обычный source-edit, NN – 2–3 цифры), копия `previews/roughcut-vNN.mp4` с тем
+же NN, их SHA-256, размер, длительность, `sourceDuration`, `status` (`review` – ждёт автора,
+`confirmed` – подтверждена) и у `confirmed` ещё `confirmedAt` и `confirmedBy` (`pult` | `chat`).
+Этап активен, пока `roughCut.sourceRevision` равна `source.revision`: первый же master поднимает
+ревизию, и запись становится историей. `validateProjectManifest` проверяет согласованность
+`status` с `confirmedAt`/`confirmedBy`, пару `editPath`↔`filePath` (до проверки путей, поэтому и без
+каталога проекта) и containment обоих путей; отсутствие файла копии паспорт не ломает.
+Чистая модель `scripts/project/rough-cut-model.js` (без чтения диска и без `workspace.js`, чтобы не
+было цикла require) переводит секунды нарезки в секунды исходника (`roughCutTimeToSource`),
+перечисляет вырезы с причинами из `note` (`removedRanges`), считает размер копии `roughCutSize`
+(короткая сторона 720, без увеличения, чётные стороны) и определяет охрану
+`assertRoughCutSettled` для `master` и `layer new` (ошибка с `code === 'ROUGH_CUT_PENDING'`; другое
+имя действия – обычная ошибка, чтобы опечатка не снимала охрану). Охрана подключена: `buildMaster`
+вызывает её сразу после чтения паспорта, до слота очереди, а `layer new` – сразу после `projectFrom`,
+до папки слоя. Пока нарезка ждёт автора, отказывают обе команды; после подтверждения master
+разрешён, а `layer new` ждёт, пока master не поднимет ревизию исходника.
+
+`automontage roughcut` (`scripts/project/rough-cut-cli.js` → `buildRoughCut` в
+`scripts/project/rough-cut.js`) собирает копию нарезки, не создавая ревизии исходника. До слота
+очереди: имя `edit/roughcut-vNN.json` (абсолютный `--edit` внутри проекта сначала переводится в
+относительный), та же `validateSourceEdit`, что у master, FPS исходника и отказ, если
+`previews/roughcut-vNN.mp4` уже есть (нужен `edit/roughcut-v(NN+1).json`). Размер копии –
+`roughCutSize(workingSize(displayDimensions + orientedSampleAspectRatio, '1080p'))`, то есть повёрнутая
+телефонная запись даёт портретную копию. Затем слот общей очереди `roughcut <папка>` (до project
+mutation lease, отпускается в `finally`) и под lease, по образцу `publishSourceRevision`: сверка
+активных `source.revision`/`localPath` и SHA-256 байтов списка, `runTrim()` тем же графом
+`buildConcatFilter` (`audioFadeSec: 0.04`, `precision: 6`, `scale`) в
+`previews/.roughcut-vNN-<token>.tmp.mp4`, но с `encoder: 'proxy'` (`-preset ultrafast -crf 26
+-pix_fmt yuv420p`, `aac -b:a 128k`, `-movflags +faststart`; по умолчанию `encoder: 'master'` с
+прежними аргументами); если у стадии остался флаг поворота (FFmpeg 7.1.0/7.1.1 поворачивает кадры,
+но оставляет флаг), одна перепаковка без перекодирования `-display_rotation 0 -i <стадия> -map 0
+-c copy -movflags +faststart` во вторую стадию `.roughcut-vNN-<token>.upright.tmp.mp4` и удаление
+первой; затем полное декодирование `ffmpeg -f null`, сверка длительности
+(`max(0.08, 1/fps)`), FPS, размера копии и размера показа (`displayDimensions` при повороте 0),
+повторная сверка байтов списка, `linkSync` в итоговое имя
+и последней – запись `roughCut` со `status: review` (`purpose: 'rough-cut-manifest'`). Ошибка на любом
+шаге убирает обе стадии и не меняет паспорт. `confirmRoughCut(workspace, { expectedSha256, by })` под
+lease ставит `confirmed` с `confirmedAt`/`confirmedBy` только для активной записи в `review`
+(иначе `code: 'ROUGH_CUT_MISSING'`) и только если байты копии равны `sha256`, байты списка –
+`editSha256`, а заданный `expectedSha256` – `sha256` (иначе `code: 'ROUGH_CUT_CHANGED'`).
+`automontage roughcut confirm` вызывает её с `by: 'chat'`, маршрут пульта
+`POST /api/roughcut/confirm` – с `by: 'pult'` (раздел 3.4).
+
 `scripts/project/clean.js` (`automontage clean`) чистит диск у готовых роликов. Планировщик
 `planProjectCleanup` берёт только проекты, которые пульт считает готовыми (`deriveVariantStatus`
 из `scripts/pult/status.js` и новые правки из `scripts/pult/comments.js`), без lock и старше
@@ -655,7 +700,7 @@ flowchart LR
   S --> C["catalog: project.json + pult-card.json"]
   S --> K["projects/.pult: state, cache, instance, serve.log"]
   S --> M["projects/&lt;id&gt;/pult: comments.json, frames"]
-  S --> B["approveBrief движка"]
+  S --> B["approveBrief и confirmRoughCut движка"]
   S --> R["Review Workbench в том же процессе"]
   A["Агент"] --> X["automontage inbox"] --> M
   X --> K
@@ -714,6 +759,29 @@ flowchart LR
   а nextStep карточки заменяется на `Утверждено, в архиве – агент соберёт финал по вашей
   просьбе` только без невыполненных правок – иначе он остаётся обычным `Ждёт агента: …`, не
   трогая сами entries каталога.
+- Черновая нарезка (раздел 3.2) – отдельный вид видео `roughcut`. Пока этап активен и копия
+  лежит на диске, статус берётся из `roughCut.status` (новые правки по-прежнему первыми):
+  `review` – «Ждёт меня», «Черновая нарезка – посмотрите и отметьте оговорки»; `confirmed` –
+  «В работе», «Нарезка подтверждена – агент собирает слой». На экране – копия нарезки, и
+  `approvable` ложно: утвердить можно только preview, билета утверждения у нарезки нет. Вариант
+  получает `roughCutConfirmable` (нарезка в `review` и видео играет), `roughCutConfirmedAt`
+  (ISO-время подтверждения из `roughCut.confirmedAt`, пока нарезка `confirmed`, иначе `null`;
+  по нему `roughCutBlock` в `pult/app.js` вместо кнопки рисует отметку «✅ Нарезка подтверждена
+  в HH:MM» по местному времени браузера, а фоновое обновление заменяет блок при смене билета или
+  этого времени), `roughCutCuts` (время выреза в нарезке, сколько секунд убрано, причина из
+  `note` не длиннее 500 знаков) и `roughCutTicket` – HMAC того же секрета сессии от `key\0roughcut\0editPath\0sha256`: новая
+  нарезка делает старый билет недействительным, а слово `roughcut` не даёт выдать билет нарезки
+  за билет утверждения и наоборот. `POST /api/roughcut/confirm` принимает ровно
+  `{key, ticket, confirmViewed}` (`confirmViewed` не `true` – `400 CONFIRMATION_REQUIRED`) и
+  проходит те же три шага, что и утверждение: билет (иначе `409 ROUGHCUT_CHANGED`), байты
+  отдаваемой копии против `roughCut.sha256` (иначе `409 ROUGHCUT_DAMAGED`) и
+  `confirmRoughCut(workspace, { expectedSha256, by: 'pult' })`. Отказ движка сначала сверяется с
+  билетом текущей записи: нарезка сменилась или `ROUGH_CUT_MISSING` (гонка с master) –
+  `409 ROUGHCUT_CHANGED`; `ROUGH_CUT_CHANGED` при актуальном билете (байты копии или списка
+  кусков, который правили после сборки) – `409 ROUGHCUT_DAMAGED`, обновление страницы тут не
+  поможет; `PROJECT_MANIFEST_CONFLICT` – `409 PROJECT_BUSY`; остальное – `500 INTERNAL`, в лог
+  – только класс ошибки. Подтверждает нарезку только человек этой кнопкой или словами в чате
+  (`automontage roughcut confirm`); агент маршрут не вызывает.
 - Сервер слушает только `127.0.0.1`, требует `Bearer`-токен для API (для медиа – `?token=`,
   потому что `<video>` и `<img>` не шлют заголовки), проверяет `Host` на всех маршрутах и
   `Origin` на изменяющих. Тело запроса – JSON до 64 KiB ровно с ожидаемыми полями. Файлы
@@ -728,7 +796,8 @@ flowchart LR
   'self'` в CSP уже разрешает его загрузку без отдельного `font-src`.
 - Пульт ничего не удаляет и не перемещает в папках роликов. Он пишет только `projects/.pult/`
   (`state.json` архива, `cache/`, `instance.json`, `starting.lock`, `serve.log`) и
-  `projects/<id>/pult/` (`comments.json`, `frames/`); утверждённый brief создаёт движок.
+  `projects/<id>/pult/` (`comments.json`, `frames/`); утверждённый brief и подтверждение
+  черновой нарезки в `project.json` записывает движок.
   Симлинк вместо `.pult` или `pult/` отклоняется до записи и до чтения кэша, служебные JSON
   читаются без следования симлинку.
 - Живой экземпляр описывает `instance.json` (права `0600`: pid, порт, токен). `checkHealth`
@@ -765,6 +834,19 @@ flowchart LR
   вырезаются из каждого значения, которое попадает в терминал: текста правки, названия, путей
   папки, brief, видео и кадра, id. `comments.json`, где путь видео содержит управляющие символы,
   начинается с `/` или `\` или содержит сегмент `..`, считается повреждённым.
+  Правка с видом `roughcut` печатается как «к черновой нарезке» и получает секунду исходника:
+  `buildInbox` берёт список кусков именно этой копии (`editPathForRoughCutVideo` от пути видео
+  из самой правки, не текущая нарезка), читает его через `resolveProjectPath` (`mustExist`,
+  файл, без симлинков) и переводит секунду через `roughCutTimeToSource`. Результат – поля
+  `sourceTimeSec` и `sourceRevision` (из списка), строка получает «(в исходнике ревизии N:
+  M:SS.СС)» (`formatSourceTime`); старая правка, помеченная «к прежней версии видео», всё равно
+  считается по своему списку. Список не читается (нет файла, битый JSON, пустой или
+  пересекающийся список, нет ревизии, симлинк) – поля `null` и строка без секунды исходника.
+  Подтверждённая нарезка без master (`entry.roughCut.status === 'confirmed'`, этап активен) даёт
+  элементу `roughCutConfirmed` (путь списка) и строку «Нарезка подтверждена: …»: она не зависит
+  ни от `needsFinal`, ни от архива (кнопка «Нарезка готова» – явное решение автора, как и
+  правки), а после master, когда ревизия исходника выросла, исчезает. Нарезка в `review`
+  строки не даёт – ход за автором, и папка без правок во входящих не появляется.
 
 ### 3.5 Motion-kit слой и гейты
 
@@ -827,7 +909,7 @@ flowchart TD
   G9–G11, исключения через `applyWaivers`), дополнительно меряя ffprobe клипы stock-вставок для
   G10. Любой отказ сборки или формы манифеста – отчёт с `error`, код 2.
 - **Машинная очередь** (`scripts/heavy-queue.js`, D-044) общая для `layer render`,
-  `layer import`, `preview`, final render (lesson и Dynamic) и `master`. Атомарные
+  `layer import`, `preview`, final render (lesson и Dynamic), `master` и `roughcut`. Атомарные
   project mutation leases папок `slot-0` … `slot-(N-1)` исключают одновременное занятие слота,
   recovery использует тот же identity-проверенный протокол, но смерти оркестратора недостаточно.
   `heavy-execution.js` пишет intent в `.execution-<lease-token>/` до запуска;
@@ -1021,7 +1103,7 @@ Remotion `OffthreadVideo`. `trimBefore = round(trimStartSec × fps)`, а дли�
 | Пользовательский CLI | `scripts/cli.js`, `scripts/doctor.js` |
 | Оркестрация и процессы | `scripts/build.js`, `scripts/env.js`, `scripts/process.js`, `scripts/media-probe.js`, `scripts/source-timing.js` |
 | Папки и версии роликов | `scripts/project/workspace.js`, `scripts/project/build-context.js` |
-| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/project/take-pauses.js`, `scripts/trim-media.js` |
+| Source revisions и дубли | `scripts/project/build-master.js`, `scripts/project/source-revision.js`, `scripts/project/takes.js`, `scripts/project/takes-pack.js`, `scripts/project/takes-cli.js`, `scripts/project/takes-edit.js`, `scripts/project/build-takes-master.js`, `scripts/project/take-pauses.js`, `scripts/project/rough-cut-model.js`, `scripts/project/rough-cut.js`, `scripts/project/rough-cut-cli.js`, `scripts/trim-media.js` |
 | Транскрипция и субтитры | `scripts/transcribe.py`, `scripts/build-captions.js` |
 | Lesson brief | `scripts/gen-brief.js`, `scripts/lesson/*` |
 | Локальная проверка | `scripts/review/*`, `review/*` |
@@ -1061,9 +1143,9 @@ symlink; symlink прерывает построение cache key.
   создаёт движок через `approveBrief`.
 - Локальный batch index – игнорируемый сводный указатель на независимые project workspace; он не
   заменяет их manifest, не является release asset и не попадает в Git.
-- `project.json` – журнал относительных project-путей, статусов brief и рендеров. Только
-  `source.originalPath` и `takes[].originalPath` хранят исторические абсолютные
-  пути исходника и дублей.
+- `project.json` – журнал относительных project-путей, статусов brief и рендеров, а также записи
+  черновой нарезки `roughCut` (раздел 3.2). Только `source.originalPath` и `takes[].originalPath`
+  хранят исторические абсолютные пути исходника и дублей.
 - `input/takes/take-NN.<ext>` (начиная с take-02; take-01 ссылается на оригинальный исходник
   проекта) и `transcript/takes/take-NN.json` (для всех дублей) – неизменяемые копии дублей и их
   локальные транскрипты; `edit/vNN-source.json` и `edit/vNN-takes.json` – входы `automontage

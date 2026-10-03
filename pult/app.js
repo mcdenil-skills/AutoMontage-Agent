@@ -6,6 +6,7 @@ const VIDEO_LABELS = {
   final: 'Финальная версия',
   preview: 'Preview на проверку',
   'stale-preview': 'Preview устарел – агент готовит новый',
+  roughcut: 'Черновая нарезка без графики',
 };
 // Показываем, когда видео есть на диске, но пульт не умеет отдать его браузеру
 // (legacy-форматы вроде .mkv/.avi) – «Показать в папке» при этом остаётся рабочим.
@@ -121,6 +122,24 @@ function formatClockFloor(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// Отметка в блоке нарезки после подтверждения: время – по местным часам браузера, как в самом
+// пульте. Сегодняшнее подтверждение – «в 10:11», раньше – «3 октября в 10:11» (месяц в родительном
+// падеже). Время пишем руками из getHours/getMinutes: у hour12:false в Intl бывает «24:05».
+// Нет времени или оно битое – просто «Нарезка подтверждена»: отметка важнее часов. now – для тестов.
+function formatConfirmedAt(iso, now = new Date()) {
+  const base = '✅ Нарезка подтверждена';
+  const date = typeof iso === 'string' && iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return base;
+  const two = (value) => String(value).padStart(2, '0');
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  const today = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (today) return `${base} в ${time}`;
+  const day = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return `${base} ${day} в ${time}`;
+}
+
 function formatAspect(meta) {
   if (!meta) return '';
   const ratio = meta.width / meta.height;
@@ -137,12 +156,22 @@ function formatDate(iso) {
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
-function pluralVariants(count) {
+// Число со словом в нужной форме: 1 вариант, 2 варианта, 5 вариантов, 11–14 – всегда «много».
+function pluralRu(count, one, few, many) {
   const mod10 = count % 10;
   const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${count} вариант`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} варианта`;
-  return `${count} вариантов`;
+  if (mod10 === 1 && mod100 !== 11) return `${count} ${one}`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} ${few}`;
+  return `${count} ${many}`;
+}
+
+function pluralVariants(count) {
+  return pluralRu(count, 'вариант', 'варианта', 'вариантов');
+}
+
+// Секунды выреза – с одной цифрой после запятой, как пишут по-русски: 1 → «1,0».
+function formatCutSeconds(seconds) {
+  return seconds.toFixed(1).replace('.', ',');
 }
 
 function allCards() {
@@ -452,6 +481,108 @@ function approveBlock(variant) {
   return box;
 }
 
+// Черновая нарезка ждёт автора: её не утверждают, а подтверждают – «Нарезка готова». Устроен
+// как блок утверждения: билет на коробке для фоновой сверки, кнопка – только после флажка и
+// не при просмотре Истории.
+function roughCutBlock(variant) {
+  const box = el('div', 'roughcut');
+  box.dataset.ticket = variant.roughCutTicket || '';
+  // Вторая половина «отпечатка» блока для фонового обновления (см. syncDetail): подтверждение
+  // вне пульта меняет и билет, и время, а блок после подтверждения должен остаться на экране.
+  box.dataset.confirmedAt = variant.roughCutConfirmedAt || '';
+  if (!variant.roughCutConfirmable) {
+    box.setHistoryMode = () => {};
+    if (!variant.roughCutConfirmedAt) {
+      box.hidden = true;
+      return box;
+    }
+    // Нарезку уже подтвердили (в пульте или в чате), агент собирает слой. Кнопка пропала –
+    // отметка остаётся, чтобы автор видел, что решение принято, и не гадал, нажимал ли он.
+    box.classList.add('roughcut--confirmed');
+    box.append(
+      el('h3', '', 'Черновая нарезка'),
+      el('p', 'confirmed', formatConfirmedAt(variant.roughCutConfirmedAt)),
+    );
+    return box;
+  }
+  box.append(el('h3', '', 'Черновая нарезка'));
+  const label = el('label', 'check');
+  const checkbox = el('input');
+  checkbox.type = 'checkbox';
+  checkbox.dataset.roughcutViewed = '';
+  label.append(checkbox, el('span', '', 'Я посмотрел нарезку целиком'));
+  const confirm = el('button', 'primary', 'Нарезка готова');
+  confirm.type = 'button';
+  confirm.disabled = true;
+  let viewingHistory = false;
+  checkbox.addEventListener('change', () => { confirm.disabled = viewingHistory || !checkbox.checked; });
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true;
+    try {
+      await api('/api/roughcut/confirm', {
+        method: 'POST',
+        body: { key: variant.key, ticket: variant.roughCutTicket, confirmViewed: true },
+      });
+      notify('Нарезка подтверждена. Скопируйте фразу для агента – он соберёт слой.');
+      await refresh();
+    } catch (error) {
+      if (error.code === 'ROUGHCUT_CHANGED') {
+        // Агент собрал новую нарезку или её уже подтвердили – перечитываем карточку целиком.
+        await refresh();
+        notify('Появилась новая черновая нарезка – посмотрите её.', 'error');
+      } else {
+        // ROUGHCUT_DAMAGED и прочие отказы: обновление страницы не поможет, текст – от сервера.
+        notify(error.message, 'error');
+        confirm.disabled = viewingHistory || !checkbox.checked;
+      }
+    }
+  });
+  box.append(
+    el('p', 'hint', 'Отметили оговорки – агент вырежет их и продолжит без повторного показа. '
+      + 'Хотите посмотреть ещё раз – не нажимайте, оставьте правки.'),
+    label,
+    confirm,
+  );
+  box.setHistoryMode = (active) => {
+    viewingHistory = active;
+    confirm.disabled = active || !checkbox.checked;
+  };
+  return box;
+}
+
+// «Что вырезал агент»: строка на каждый вырез – время в нарезке, сколько убрано и причина.
+// Клик ставит видео за секунду до стыка, чтобы услышать склейку. Причина пишется текстом
+// (textContent), не разметкой: её сочинил агент, и в пульте она не должна ничего выполнять.
+function roughCutCutsBlock(variant, getVideo) {
+  const box = el('div', 'roughcut-cuts');
+  box.dataset.roughcutCuts = '';
+  const cuts = variant.roughCutCuts || [];
+  if (!variant.video || variant.video.kind !== 'roughcut' || !cuts.length) {
+    box.hidden = true;
+    return box;
+  }
+  const removed = cuts.reduce((sum, cut) => sum + cut.removedSec, 0);
+  box.append(el('h3', '', `Что вырезал агент (${pluralRu(cuts.length, 'место', 'места', 'мест')}, ${formatCutSeconds(removed)} с)`));
+  const list = el('ul', 'cut-list');
+  for (const cut of cuts) {
+    const row = el('button', 'cut');
+    row.type = 'button';
+    row.append(
+      el('span', 'cut__time', formatClockFloor(cut.atSec)),
+      document.createTextNode(` – вырезано ${formatCutSeconds(cut.removedSec)} с${cut.note ? `: ${cut.note}` : ''}`),
+    );
+    row.addEventListener('click', () => {
+      const video = getVideo();
+      if (video) video.currentTime = Math.max(0, cut.atSec - 1);
+    });
+    const item = el('li');
+    item.append(row);
+    list.append(item);
+  }
+  box.append(list);
+  return box;
+}
+
 // Режим Истории читается и применяется по текущему DOM, а не по ссылкам, запомненным при
 // отрисовке: фоновое обновление заменяет блок утверждения новым, и старая ссылка вела бы
 // в уже удалённый элемент.
@@ -461,7 +592,11 @@ function historyShown() {
 }
 
 function applyHistoryMode(active) {
-  document.querySelectorAll('[data-view="detail"] .approve, [data-view="detail"] .comments').forEach((box) => {
+  document.querySelectorAll([
+    '[data-view="detail"] .approve',
+    '[data-view="detail"] .roughcut',
+    '[data-view="detail"] .comments',
+  ].join(', ')).forEach((box) => {
     if (typeof box.setHistoryMode === 'function') box.setHistoryMode(active);
   });
 }
@@ -484,8 +619,8 @@ function videoLabelFor(variant) {
   return 'Видео пока нет';
 }
 
-function replaceApproveBlock(box, variant) {
-  const fresh = approveBlock(variant);
+// Замена блока утверждения или нарезки свежим (fresh = approveBlock/roughCutBlock).
+function replaceDecisionBlock(box, fresh) {
   box.replaceWith(fresh);
   // Человек всё ещё смотрит старую версию из Истории – новый блок тоже заблокирован.
   if (historyShown()) fresh.setHistoryMode(true);
@@ -765,7 +900,9 @@ function renderDetail() {
     offerSlot,
     badge,
     next,
+    roughCutBlock(variant),
     approveBlock(variant),
+    roughCutCutsBlock(variant, getVideo),
     commentsBlock(variant, getVideo),
     actionsBlock(card, variant),
     agentHandoffBlock(card, variant),
@@ -825,7 +962,12 @@ function syncDetail(card) {
     // Агент опубликовал новый файл: старый в плеере утверждать нельзя, его ещё не видели.
     // Если видео, наоборот, пропало, заглушка сама скажет «Видео пока нет».
     rerenderDetailKeepingDraft();
-    if (freshVideoUrl) notify('Появилась новая версия видео – посмотрите её перед утверждением.');
+    // Черновую нарезку не утверждают – о новой говорим её словами.
+    if (freshVideoUrl) {
+      notify(variant.video.kind === 'roughcut'
+        ? 'Появилась новая черновая нарезка – посмотрите её.'
+        : 'Появилась новая версия видео – посмотрите её перед утверждением.');
+    }
     return;
   }
   // Файл видео тот же, но статус вокруг него мог поменяться без участия пульта (например,
@@ -848,6 +990,17 @@ function syncDetail(card) {
     badge.className = `badge badge--${variant.status}`;
   }
   if (next) next.textContent = variant.nextStep;
+  // Билет нарезки сверяем раньше билета утверждения: ниже – ранние выходы. Видео то же, а
+  // билета нет – нарезку подтвердили вне пульта (в чате), блок с кнопкой прячем. Новая нарезка
+  // – это новый файл, её уже показала полная перерисовка выше; свежий блок всегда приходит
+  // с пустым флажком, так что подтвердить неувиденное нельзя.
+  const roughCutBox = document.querySelector('[data-view="detail"] .roughcut');
+  if (roughCutBox && (
+    (variant.roughCutTicket || '') !== (roughCutBox.dataset.ticket || '')
+    || (variant.roughCutConfirmedAt || '') !== (roughCutBox.dataset.confirmedAt || '')
+  )) {
+    replaceDecisionBlock(roughCutBox, roughCutBlock(variant));
+  }
   // Видео то же, но билет утверждения мог измениться: новая правка убирает возможность
   // утвердить, удаление правки – возвращает тот же билет для того же preview.
   const approveBox = document.querySelector('[data-view="detail"] .approve');
@@ -855,7 +1008,7 @@ function syncDetail(card) {
   const shownTicket = approveBox.dataset.ticket || '';
   if (freshTicket === shownTicket) return;
   if (!freshTicket || freshTicket === shownDetail.ticket) {
-    replaceApproveBlock(approveBox, variant);
+    replaceDecisionBlock(approveBox, approveBlock(variant));
     return;
   }
   // Билет, которого карточка при отрисовке не видела, – ролик изменился иначе, чем

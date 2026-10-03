@@ -117,7 +117,10 @@ provider-скрипт `scripts/gen-brief.js` остаётся только яв�
 запускаться обычным навыком `reel-turnkey`.
 
 Если нужно сначала вырезать паузы или неудачные дубли, создай frame-aligned
-`edit/v02-source.json` и выполни до новой режиссуры:
+`edit/v02-source.json` и выполни до новой режиссуры. Для своей съёмки с речью список кусков сначала
+показывают автору черновой нарезкой (`automontage roughcut`, порядок –
+[`rough-cut.md`](../skills/reel-turnkey/references/rough-cut.md)), и master собирается после
+«Нарезка готова»:
 
 ```bash
 automontage master --project-dir projects/YYYY.MM.DD_<slug> \

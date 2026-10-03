@@ -2,6 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { editPathForRoughCutVideo, roughCutTimeToSource } = require('../project/rough-cut-model');
+const { resolveProjectPath } = require('../project/workspace');
 const { scanProjects } = require('./catalog');
 const { cardIdFor } = require('./cards');
 const { COMMENT_ID, acceptComment, readComments } = require('./comments');
@@ -19,12 +21,57 @@ function formatTime(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// Секунда исходника для строки правки к нарезке: минуты и сотые, как говорит агент
+// («0:31.20»). Округляем до сотых целиком, а не по частям: 59,999 с – это 1:00.00, а не 0:60.00.
+function formatSourceTime(seconds) {
+  const hundredths = Math.round(Math.max(0, seconds) * 100);
+  const minutes = Math.floor(hundredths / 6000);
+  const rest = (hundredths % 6000) / 100;
+  return `${minutes}:${rest.toFixed(2).padStart(5, '0')}`;
+}
+
 function readNewComments(projectDir) {
   try {
     return { comments: readComments(projectDir).filter((comment) => comment.status === 'new'), broken: false };
   } catch (_) {
     return { comments: [], broken: true };
   }
+}
+
+// Список кусков пишет агент и может править руками, файл мог оказаться чем угодно: нужен непустой
+// список непересекающихся кусков по порядку и ревизия исходника, к которой он относится.
+// Любое отклонение – список «не читается», и строка правки остаётся без секунды исходника.
+function readRoughCutKeep(projectDir, editPath) {
+  try {
+    const file = resolveProjectPath(projectDir, editPath, { mustExist: true, type: 'file' });
+    const edit = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!edit || !Array.isArray(edit.keep) || !edit.keep.length) return null;
+    if (!Number.isSafeInteger(edit.sourceRevision) || edit.sourceRevision < 1) return null;
+    let previousEnd = 0;
+    for (const piece of edit.keep) {
+      if (!piece || !Number.isFinite(piece.start) || !Number.isFinite(piece.end)) return null;
+      if (piece.start < previousEnd || piece.end <= piece.start) return null;
+      previousEnd = piece.end;
+    }
+    return { keep: edit.keep, sourceRevision: edit.sourceRevision };
+  } catch (_) {
+    return null;
+  }
+}
+
+// Автор смотрел копию, а не исходник: секунду правки переводим в секунду исходника по списку
+// кусков ИМЕННО ЭТОЙ копии (путь видео из самой правки). Если агент с тех пор собрал новую
+// нарезку, правка помечена устаревшей, но место в исходнике по прежнему списку остаётся верным.
+function roughCutSource(projectDir, comment, cache) {
+  const editPath = editPathForRoughCutVideo(comment.video.path);
+  if (!editPath) return { sourceTimeSec: null, sourceRevision: null };
+  if (!cache.has(editPath)) cache.set(editPath, readRoughCutKeep(projectDir, editPath));
+  const list = cache.get(editPath);
+  if (!list) return { sourceTimeSec: null, sourceRevision: null };
+  return {
+    sourceTimeSec: Number(roughCutTimeToSource(list.keep, comment.timeSec).toFixed(3)),
+    sourceRevision: list.sourceRevision,
+  };
 }
 
 // Собирает входящие по каждой папке ролика: новые правки и утверждения без финала.
@@ -38,7 +85,8 @@ function readNewComments(projectDir) {
 // его собственную кнопку «Утверждаю» (scripts/pult/server.js, /api/approve) – эта пометка
 // появляется, когда утверждение случилось иначе (Review Workbench, CLI в чате) или когда
 // пользователь убрал карточку в архив уже после утверждения. Новые правки того же ролика архив
-// не трогает – это явная новая работа автора.
+// не трогает – это явная новая работа автора. То же с «Нарезка подтверждена»: кнопка «Нарезка
+// готова» – само явное решение автора, поэтому строка не зависит ни от архива, ни от needsFinal.
 function buildInbox({ projectsDir }) {
   const archivedIds = new Set(readPultState(projectsDir).archived);
   const byFolder = new Map();
@@ -51,6 +99,7 @@ function buildInbox({ projectsDir }) {
         folder: entry.folder,
         title: entry.title,
         approved: [],
+        roughCutConfirmed: null,
         comments,
         commentsBroken: broken,
         passportError: null,
@@ -58,6 +107,9 @@ function buildInbox({ projectsDir }) {
       };
       byFolder.set(entry.folder, item);
     }
+    // Нарезка подтверждена, а master по ней ещё не собран: после master ревизия исходника
+    // растёт, этап перестаёт быть активным, и entry.roughCut снова null.
+    if (entry.roughCut && entry.roughCut.status === 'confirmed') item.roughCutConfirmed = entry.roughCut.editPath;
     if (entry.needsFinal) {
       item.approved.push({ briefPath: entry.briefPath, archived: archivedIds.has(cardIdFor(entry)) });
     }
@@ -85,6 +137,7 @@ function buildInbox({ projectsDir }) {
       folder: problem.folder,
       title: problem.folder.normalize('NFC'),
       approved: [],
+      roughCutConfirmed: null,
       comments,
       commentsBroken: broken,
       passportError: problem.passportError,
@@ -93,18 +146,25 @@ function buildInbox({ projectsDir }) {
   }
 
   return [...byFolder.values()]
-    .filter((item) => item.comments.length || item.approved.length || item.commentsBroken || item.passportError)
-    .map((item) => ({
-      folder: item.folder,
-      title: item.title,
-      approved: item.approved,
-      commentsBroken: item.commentsBroken,
-      passportError: item.passportError,
-      comments: item.comments.map((comment) => ({
-        ...comment,
-        outdated: !item.currentVideos.has(`${comment.video.path}\0${comment.video.sha256}`),
-      })),
-    }));
+    .filter((item) => item.comments.length || item.approved.length || item.roughCutConfirmed
+      || item.commentsBroken || item.passportError)
+    .map((item) => {
+      const projectDir = path.join(projectsDir, item.folder);
+      const cutLists = new Map();
+      return {
+        folder: item.folder,
+        title: item.title,
+        approved: item.approved,
+        roughCutConfirmed: item.roughCutConfirmed,
+        commentsBroken: item.commentsBroken,
+        passportError: item.passportError,
+        comments: item.comments.map((comment) => ({
+          ...comment,
+          outdated: !item.currentVideos.has(`${comment.video.path}\0${comment.video.sha256}`),
+          ...(comment.video.kind === 'roughcut' ? roughCutSource(projectDir, comment, cutLists) : {}),
+        })),
+      };
+    });
 }
 
 // Всё, что входящие подставляют в вывод, попадает прямо в терминал агента: текст правки,
@@ -148,13 +208,20 @@ function formatInbox(items, { projectsDir, cwd = process.cwd() }) {
         ? `- Утверждено (в архиве – не начинай без просьбы пользователя): \`${briefPath}\`. По просьбе пользователя – собери финал и проведи полный QA.`
         : `- Утверждено: \`${briefPath}\`. Собери финал и проведи полный QA.`);
     }
+    if (item.roughCutConfirmed) {
+      lines.push(`- Нарезка подтверждена: \`${stripControls(item.roughCutConfirmed)}\`. Если к ней есть правки – скопируй список в edit/vNN-source.json и внеси их по секундам исходника; затем собери master и переходи к слою.`);
+    }
     for (const comment of item.comments) {
       const outdated = comment.outdated ? ' (к прежней версии видео)' : '';
+      const roughCut = comment.video.kind === 'roughcut' ? ' к черновой нарезке' : '';
+      const inSource = Number.isFinite(comment.sourceTimeSec) && Number.isSafeInteger(comment.sourceRevision)
+        ? ` (в исходнике ревизии ${comment.sourceRevision}: ${formatSourceTime(comment.sourceTimeSec)})`
+        : '';
       const frame = comment.frame ? ` Кадр: \`${display(path.join(dir, ...comment.frame.split('/')))}\`.` : '';
       const text = sanitizeText(comment.text);
       const id = stripControls(comment.id);
       const video = stripControls(comment.video.path);
-      lines.push(`- Правка \`${id}\` на ${formatTime(comment.timeSec)}${outdated}: «${text}». Видео: \`${video}\`.${frame}`);
+      lines.push(`- Правка \`${id}\`${roughCut} на ${formatTime(comment.timeSec)}${outdated}${inSource}: «${text}». Видео: \`${video}\`.${frame}`);
     }
     lines.push('');
   }
@@ -237,5 +304,5 @@ function main(argv = process.argv.slice(2), { write = (line) => console.log(line
 if (require.main === module) process.exitCode = main();
 
 module.exports = {
-  buildInbox, formatInbox, main, parseInboxOptions,
+  buildInbox, formatInbox, formatSourceTime, main, parseInboxOptions,
 };

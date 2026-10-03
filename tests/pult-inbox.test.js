@@ -3,12 +3,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { buildInbox, formatInbox, main, parseInboxOptions } = require('../scripts/pult/inbox');
+const {
+  buildInbox, formatInbox, formatSourceTime, main, parseInboxOptions,
+} = require('../scripts/pult/inbox');
 const { scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
 const { cardIdFor } = require('../scripts/pult/cards');
 const { setArchived } = require('../scripts/pult/state');
-const { addDraftProject, addLegacyFolder, makePultRoot } = require('./helpers/pult-projects');
+const {
+  addDraftProject, addLegacyFolder, addRoughCutProject, bumpSourceRevision, makePultRoot, republishRoughCut,
+} = require('./helpers/pult-projects');
 
 function withComment(t) {
   const { projectsDir } = makePultRoot(t);
@@ -303,4 +307,219 @@ test('comment text is stripped of terminal control characters, plain text stays 
   assert.match(text, /RED/);
   assert.match(text, /конец/);
   assert.match(text, /Обычный текст без сюрпризов/);
+});
+
+// Черновая нарезка: автор смотрит копию, а не исходник, поэтому секунду правки переводим в секунду
+// исходника по списку кусков этой копии – агент режет нужное место в оригинале.
+const captureStub = (videoPath, timeSec, outPath) => {
+  fs.writeFileSync(outPath, 'jpg');
+  return true;
+};
+
+function addRoughCutEdit(projectsDir, folder, { timeSec = 2.5, text = 'Оговорка', id = 'c-0001' } = {}) {
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === folder);
+  addComment(path.join(projectsDir, folder), { timeSec, text, video: entry.video }, {
+    id: () => id,
+    captureFrame: captureStub,
+  });
+}
+
+function inboxText(projectsDir) {
+  return formatInbox(buildInbox({ projectsDir }), { projectsDir, cwd: path.dirname(projectsDir) });
+}
+
+test('formatSourceTime shows minutes and hundredths of a second', () => {
+  assert.equal(formatSourceTime(31.2), '0:31.20');
+  assert.equal(formatSourceTime(75.5), '1:15.50');
+  assert.equal(formatSourceTime(0), '0:00.00');
+  assert.equal(formatSourceTime(3.5), '0:03.50');
+  // Округление до сотых не должно давать «0:59.100» или «0:60.00».
+  assert.equal(formatSourceTime(59.999), '1:00.00');
+  assert.equal(formatSourceTime(3599.994), '59:59.99');
+});
+
+test('an edit to the rough cut gets the source second from the cut list', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough', name: 'Нарезка' });
+  addRoughCutEdit(projectsDir, 'rough');
+  const text = inboxText(projectsDir);
+  assert.match(
+    text,
+    /^- Правка `c-0001` к черновой нарезке на 0:02 \(в исходнике ревизии 1: 0:03\.50\): «Оговорка»\. Видео: `previews\/roughcut-v01\.mp4`\. Кадр: `projects\/rough\/pult\/frames\/c-0001\.jpg`\.$/m,
+  );
+  const [item] = buildInbox({ projectsDir });
+  assert.equal(item.roughCutConfirmed, null);
+  assert.equal(item.comments[0].sourceTimeSec, 3.5);
+  assert.equal(item.comments[0].sourceRevision, 1);
+  // Нарезка в review строки «подтверждена» не даёт: ход за автором.
+  assert.doesNotMatch(text, /Нарезка подтверждена/);
+});
+
+test('a second inside the first piece maps one to one, the end of the cut maps to the end of the last piece', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough' });
+  addRoughCutEdit(projectsDir, 'rough', { timeSec: 1.2, text: 'Начало', id: 'c-0001' });
+  addRoughCutEdit(projectsDir, 'rough', { timeSec: 4, text: 'Конец', id: 'c-0002' });
+  const text = inboxText(projectsDir);
+  assert.match(text, /на 0:01 \(в исходнике ревизии 1: 0:01\.20\): «Начало»/);
+  // Нарезка длится 4 с (2 + 2): секунда 4 – конец последнего куска исходника, 5 с.
+  assert.match(text, /на 0:04 \(в исходнике ревизии 1: 0:05\.00\): «Конец»/);
+});
+
+// Review Focus 5: правка осталась от нарезки v01, агент уже собрал v02. Секунда исходника
+// считается по списку v01, иначе место выреза уехало бы на длину кусков новой нарезки.
+test('an edit left on an older rough cut is marked and still maps through its own cut list', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'rough' });
+  addRoughCutEdit(projectsDir, 'rough');
+  republishRoughCut(projectDir, { version: 2, keep: [{ start: 0, end: 4 }] });
+  const text = inboxText(projectsDir);
+  const line = text.split('\n').find((row) => row.startsWith('- Правка `c-0001`'));
+  assert.match(line, /к черновой нарезке на 0:02 \(к прежней версии видео\)/);
+  assert.match(line, /в исходнике ревизии 1: 0:03\.50/);
+  assert.match(line, /Видео: `previews\/roughcut-v01\.mp4`/);
+  // По списку v02 (0–4) та же секунда была бы 0:02.50: сверяем, что взят именно список v01.
+  assert.doesNotMatch(line, /0:02\.50/);
+});
+
+test('an unreadable or broken cut list gives the plain edit line without the source second', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'rough' });
+  addRoughCutEdit(projectsDir, 'rough');
+  const editFile = path.join(projectDir, 'edit', 'roughcut-v01.json');
+  const brokenLists = [
+    '{ not json',
+    JSON.stringify({ version: 1, sourceRevision: 1, fps: 25, keep: [] }),
+    JSON.stringify({ version: 1, sourceRevision: 1, fps: 25, keep: [{ start: 2, end: 1 }] }),
+    JSON.stringify({ version: 1, sourceRevision: 1, fps: 25, keep: [{ start: 0, end: 2 }, { start: 1, end: 3 }] }),
+    JSON.stringify({ version: 1, sourceRevision: 1, fps: 25 }),
+    JSON.stringify({ version: 1, fps: 25, keep: [{ start: 0, end: 2 }] }),
+    JSON.stringify({ version: 1, sourceRevision: 0, fps: 25, keep: [{ start: 0, end: 2 }] }),
+    'null',
+  ];
+  for (const body of brokenLists) {
+    fs.writeFileSync(editFile, body);
+    const text = inboxText(projectsDir);
+    assert.match(
+      text,
+      /^- Правка `c-0001` к черновой нарезке на 0:02: «Оговорка»\. Видео: `previews\/roughcut-v01\.mp4`\./m,
+      body,
+    );
+    assert.doesNotMatch(text, /в исходнике/, body);
+    const [item] = buildInbox({ projectsDir });
+    assert.equal(item.comments[0].sourceTimeSec, null, body);
+    assert.equal(item.comments[0].sourceRevision, null, body);
+  }
+  // Списка нет вовсе – то же самое.
+  fs.rmSync(editFile);
+  const missing = inboxText(projectsDir);
+  assert.match(missing, /^- Правка `c-0001` к черновой нарезке на 0:02: «Оговорка»\. Видео:/m);
+  assert.doesNotMatch(missing, /в исходнике/);
+});
+
+test('a cut list that is a symbolic link out of the project is not read', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'rough' });
+  addRoughCutEdit(projectsDir, 'rough');
+  const outside = path.join(path.dirname(projectsDir), 'outside-list.json');
+  fs.writeFileSync(outside, JSON.stringify({ version: 1, sourceRevision: 1, fps: 25, keep: [{ start: 10, end: 20 }] }));
+  const editFile = path.join(projectDir, 'edit', 'roughcut-v01.json');
+  fs.rmSync(editFile);
+  try {
+    fs.symlinkSync(outside, editFile);
+  } catch (error) {
+    t.skip(`symlink недоступен: ${error.code}`);
+    return;
+  }
+  const text = inboxText(projectsDir);
+  // Паспорт с такой ссылкой каталог не читает (папка идёт как «не читается»), но правка автора
+  // остаётся видна, а чужой файл не читается: секунды 10–20 из него в выводе нет.
+  assert.doesNotMatch(text, /в исходнике/);
+  assert.doesNotMatch(text, /0:1\d/);
+  assert.match(text, /к черновой нарезке на 0:02[^\n]*: «Оговорка»/);
+  const [item] = buildInbox({ projectsDir });
+  assert.equal(item.comments[0].sourceTimeSec, null);
+  assert.equal(item.comments[0].sourceRevision, null);
+});
+
+test('a confirmed rough cut without a master is listed once, with the list path', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough', name: 'Нарезка', status: 'confirmed' });
+  const text = inboxText(projectsDir);
+  assert.match(text, /## Нарезка – `projects\/rough`/);
+  assert.match(
+    text,
+    /^- Нарезка подтверждена: `edit\/roughcut-v01\.json`\. Если к ней есть правки – скопируй список в edit\/vNN-source\.json и внеси их по секундам исходника; затем собери master и переходи к слою\.$/m,
+  );
+  assert.equal((text.match(/Нарезка подтверждена/g) || []).length, 1);
+  assert.equal(buildInbox({ projectsDir })[0].roughCutConfirmed, 'edit/roughcut-v01.json');
+});
+
+test('a confirmed rough cut with edits lists the line and the edits together', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough', status: 'confirmed' });
+  addRoughCutEdit(projectsDir, 'rough');
+  const text = inboxText(projectsDir);
+  assert.match(text, /^- Нарезка подтверждена: `edit\/roughcut-v01\.json`\./m);
+  assert.match(text, /^- Правка `c-0001` к черновой нарезке на 0:02 \(в исходнике ревизии 1: 0:03\.50\)/m);
+});
+
+// Ruling R11: нажатие «Нарезка готова» – само явное решение автора, архив его не отменяет
+// (как и правки). Пометки «в архиве» у этой строки нет.
+test('a confirmed rough cut on an archived card is still listed, without an archive mark', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough', name: 'Нарезка', status: 'confirmed' });
+  const entry = scanProjects({ projectsDir }).entries.find((item) => item.key === 'rough');
+  setArchived(projectsDir, cardIdFor(entry), true);
+  const text = inboxText(projectsDir);
+  assert.match(text, /^- Нарезка подтверждена: `edit\/roughcut-v01\.json`\./m);
+  assert.doesNotMatch(text, /в архиве/);
+});
+
+test('the confirmed line disappears once master moves the source to a new revision', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'rough', status: 'confirmed' });
+  assert.match(inboxText(projectsDir), /Нарезка подтверждена/);
+  bumpSourceRevision(projectDir);
+  assert.equal(inboxText(projectsDir), 'Во входящих пульта пусто.');
+});
+
+test('a rough cut waiting for the author without edits leaves the inbox empty', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'rough', status: 'review' });
+  assert.deepEqual(buildInbox({ projectsDir }), []);
+  assert.equal(inboxText(projectsDir), 'Во входящих пульта пусто.');
+});
+
+test('terminal control characters in rough cut edits and paths never reach the output', () => {
+  const projectsDir = path.join(path.sep, 'tmp', 'pult-inbox', 'projects');
+  const text = formatInbox([{
+    folder: 'clip',
+    title: 'Ролик',
+    approved: [],
+    commentsBroken: false,
+    passportError: null,
+    roughCutConfirmed: 'edit/roughcut-v01\u001b[2J.json',
+    comments: [{
+      id: 'c-1',
+      timeSec: 2.5,
+      text: 'Оговорка \u001b]0;PWNED\u0007 конец',
+      video: { kind: 'roughcut', path: 'previews/roughcut-v01\u009b.mp4', sha256: null },
+      frame: null,
+      outdated: false,
+      sourceTimeSec: 3.5,
+      sourceRevision: 1,
+    }],
+  }], { projectsDir, cwd: path.dirname(projectsDir) });
+  assert.doesNotMatch(text, /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/);
+  assert.match(text, /Нарезка подтверждена: `edit\/roughcut-v01 \[2J\.json`/);
+  assert.match(text, /к черновой нарезке на 0:02 \(в исходнике ревизии 1: 0:03\.50\): «Оговорка {1,2}\]0;PWNED {1,2}конец»/);
+});
+
+test('a plain edit to a preview keeps its old line without the rough cut wording', (t) => {
+  const { projectsDir } = withComment(t);
+  const text = inboxText(projectsDir);
+  assert.match(text, /^- Правка `c-0001` на 0:14: «Текст залезает на лицо»\. Видео: `previews\//m);
+  assert.doesNotMatch(text, /черновой нарезке/);
+  assert.doesNotMatch(text, /в исходнике/);
 });

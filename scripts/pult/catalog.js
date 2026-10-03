@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { activeRoughCut, removedRanges } = require('../project/rough-cut-model');
 const { readProjectManifest, resolveProjectPath } = require('../project/workspace');
 const { readPultCard } = require('./card-file');
 const { countNewComments } = require('./comments');
@@ -25,6 +26,8 @@ const BROLL_BLOCKER = 'Выберите B-roll в проверке монтаж�
 // Реальные рендеры кладут промежуточные файлы вроде layout-revision.raw.mp4, не только
 // точное raw.mp4 – суффикс должен отсекать оба варианта, без учёта регистра.
 const RAW_RENDER_SUFFIX = /(^|\.)raw\.mp4$/i;
+// Причина выреза из списка кусков пишет агент: в карточку она попадает не длиннее этого.
+const MAX_CUT_NOTE = 500;
 
 function listFolders(projectsDir) {
   let dirents;
@@ -105,6 +108,33 @@ function lessonApprovalBlocker(briefBytes) {
   return unresolvedBroll ? BROLL_BLOCKER : null;
 }
 
+// «Что вырезал агент»: вырезы активной нарезки по её списку кусков. Список не читается, не
+// похож на список кусков или его байты не совпадают с паспортом (правили после сборки) –
+// сводки нет: она описывала бы видео, которого на экране нет. Карточка нарезки от этого не ломается.
+function roughCutCuts(projectDir, roughCut) {
+  const file = projectFile(projectDir, roughCut.editPath);
+  if (!file) return [];
+  let edit;
+  try {
+    // Байты читаем один раз: хеш и разбор должны относиться к одной и той же версии списка.
+    const editBytes = fs.readFileSync(file);
+    if (hashBytes(editBytes) !== roughCut.editSha256) return [];
+    edit = JSON.parse(editBytes.toString('utf8'));
+  } catch (_) {
+    return [];
+  }
+  const keep = edit && Array.isArray(edit.keep) ? edit.keep : [];
+  const validPiece = (piece) => Boolean(piece) && Number.isFinite(piece.start) && Number.isFinite(piece.end)
+    && piece.end > piece.start;
+  if (!keep.length || !keep.every(validPiece) || !Number.isFinite(edit.fps) || edit.fps <= 0) return [];
+  // FPS списка обязателен: иначе хвост короче кадра показался бы фантомным вырезом.
+  return removedRanges(keep, roughCut.sourceDuration, { fps: edit.fps }).map((range) => ({
+    atSec: range.atSec,
+    removedSec: range.removedSec,
+    note: typeof range.note === 'string' ? range.note.slice(0, MAX_CUT_NOTE) : null,
+  }));
+}
+
 function standardEntry(folder, projectDir, manifest, card) {
   const briefEntry = manifest.currentBrief
     ? manifest.briefs.find((brief) => brief.jsonPath === manifest.currentBrief) || null
@@ -115,6 +145,9 @@ function standardEntry(folder, projectDir, manifest, card) {
   const isLessonDraft = Boolean(briefEntry && briefEntry.status === 'draft'
     && (briefEntry.kind || 'lesson') === 'lesson');
   const pendingComments = countNewComments(projectDir);
+  // Черновая нарезка активна для пульта, только пока её копия лежит на диске.
+  const activeCut = activeRoughCut(manifest);
+  const roughCutExists = Boolean(activeCut && projectFile(projectDir, activeCut.filePath));
   const derived = deriveVariantStatus({
     manifest,
     currentBriefStatus: briefEntry ? briefEntry.status : null,
@@ -122,6 +155,7 @@ function standardEntry(folder, projectDir, manifest, card) {
     finalExists: Boolean(projectFile(projectDir, manifest.final)),
     pendingComments,
     approvalBlocker: isLessonDraft && briefBytes ? lessonApprovalBlocker(briefBytes) : null,
+    roughCutExists,
   });
   return {
     key: folder,
@@ -135,6 +169,7 @@ function standardEntry(folder, projectDir, manifest, card) {
     pendingComments,
     reviewable: Boolean(manifest.currentBrief),
     history: renderHistory(projectDir, manifest),
+    roughCutCuts: roughCutExists ? roughCutCuts(projectDir, activeCut) : [],
     ...derived,
   };
 }
@@ -187,6 +222,9 @@ function legacyEntries(folder, projectDir, card) {
       needsFinal: false,
       briefPath: null,
       previewSha256: null,
+      roughCut: null,
+      roughCutConfirmable: false,
+      roughCutCuts: [],
     };
   });
 }

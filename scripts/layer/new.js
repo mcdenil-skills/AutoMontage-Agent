@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { probeMediaPath, probeVideo } = require('../media-probe');
 const { captureTool, runTool } = require('../process');
+const { assertRoughCutSettled } = require('../project/rough-cut-model');
 const { LAYER_NAME, formatNumber, nextLayerName, projectFrom, sha256File, writeJson } = require('./common');
 const { copySfxLibrary, sfxLibraryDir } = require('./sfx-library');
 const { transcriptPath, writeLayerWords } = require('./words');
@@ -210,6 +211,8 @@ async function run(options, deps = {}) {
   const reportError = deps.error || console.error;
   const runToolImpl = deps.runToolImpl || runTool;
   const { projectDir, manifest, sourcePath } = projectFrom(options);
+  // Слой строят на подтверждённых таймингах: до папки слоя, звуков и пробы исходника.
+  assertRoughCutSettled(manifest, 'layer new', { projectDir });
   if (options.dir !== undefined && !LAYER_NAME.test(options.dir)) throw new Error('--dir должен быть вида motion-v01');
   const profile = options.profile || 'avatar';
   if (!PROFILES.includes(profile)) throw new Error('--profile: avatar или live');

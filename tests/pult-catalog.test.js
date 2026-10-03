@@ -5,9 +5,16 @@ const path = require('node:path');
 
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('../scripts/pult/catalog');
 const { addComment } = require('../scripts/pult/comments');
-const { nextRenderPaths, recordRender } = require('../scripts/project/workspace');
+const { nextRenderPaths, readProjectManifest, recordRender } = require('../scripts/project/workspace');
 const {
-  addDraftProject, addLegacyFolder, makePultRoot, unresolvedBrollScenes,
+  addDraftProject,
+  addLegacyFolder,
+  addRoughCutProject,
+  bumpSourceRevision,
+  makePultRoot,
+  republishRoughCut,
+  sha256,
+  unresolvedBrollScenes,
 } = require('./helpers/pult-projects');
 
 function seriesCard() {
@@ -339,4 +346,141 @@ test('folders sort numerically so hook-2 comes before hook-10', (t) => {
   addDraftProject(projectsDir, { folder: 'hook-2' });
   const scan = scanProjects({ projectsDir });
   assert.deepEqual(scan.entries.map((entry) => entry.folder), ['hook-1', 'hook-2', 'hook-10']);
+});
+
+test('an active rough cut waits for the author with its cuts and is never approvable', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'cut-clip' });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.status, 'waiting');
+  assert.equal(entry.nextStep, 'Черновая нарезка – посмотрите и отметьте оговорки');
+  const videoSha = sha256(fs.readFileSync(path.join(projectDir, 'previews', 'roughcut-v01.mp4')));
+  assert.deepEqual(entry.video, { kind: 'roughcut', path: 'previews/roughcut-v01.mp4', sha256: videoSha });
+  assert.equal(entry.approvable, false);
+  assert.equal(entry.roughCutConfirmable, true);
+  assert.deepEqual(entry.roughCut, {
+    editPath: 'edit/roughcut-v01.json',
+    sha256: videoSha,
+    status: 'review',
+    confirmedAt: null,
+  });
+  assert.deepEqual(entry.roughCutCuts, [
+    { atSec: 2, removedSec: 1, note: 'вырезан повтор «Первое»' },
+    { atSec: 4, removedSec: 1, note: null },
+  ]);
+  // Фикстура пишет паспорт с настоящими хешами копии и списка кусков.
+  const record = readProjectManifest(projectDir).roughCut;
+  assert.equal(record.sha256, videoSha);
+  assert.equal(record.editSha256, sha256(fs.readFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'))));
+  assert.equal(record.fps, 25);
+  assert.equal(record.sourceRevision, 1);
+});
+
+test('a confirmed rough cut keeps its confirmation time for the pult mark', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'confirmed-cut', status: 'confirmed', confirmedAt: '2026-10-03T07:11:00.000Z' });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.roughCutConfirmable, false);
+  assert.equal(entry.roughCut.status, 'confirmed');
+  assert.equal(entry.roughCut.confirmedAt, '2026-10-03T07:11:00.000Z');
+});
+
+test('rough cut notes are cut to 500 characters', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, {
+    folder: 'long-note',
+    keep: [{ start: 0, end: 2, note: 'хук' }, { start: 3, end: 5, note: 'я'.repeat(600) }],
+  });
+  const [cut] = scanProjects({ projectsDir }).entries[0].roughCutCuts;
+  assert.equal(cut.note, 'я'.repeat(500));
+});
+
+test('an unreadable cut list leaves the rough cut waiting without a cut summary', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'broken-list' });
+  fs.writeFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'), '{ broken');
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.status, 'waiting');
+  assert.equal(entry.video.kind, 'roughcut');
+  assert.deepEqual(entry.roughCutCuts, []);
+});
+
+test('a cut list edited after the build shows no cut summary and the card stays waiting', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'edited-list' });
+  // Список кусков правят руками уже после сборки: сводка вырезов не должна описывать видео,
+  // которого на экране нет, – хеш байт списка расходится с паспортом, поэтому сводки нет.
+  fs.writeFileSync(path.join(projectDir, 'edit', 'roughcut-v01.json'), `${JSON.stringify({
+    version: 1,
+    sourceRevision: 1,
+    fps: 25,
+    keep: [{ start: 0, end: 5 }],
+  }, null, 2)}\n`);
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.status, 'waiting');
+  assert.equal(entry.video.kind, 'roughcut');
+  assert.equal(entry.roughCutConfirmable, true);
+  assert.deepEqual(entry.roughCutCuts, []);
+});
+
+test('a rough cut without its copy on disk is not active for the pult', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'no-copy' });
+  fs.rmSync(path.join(projectDir, 'previews', 'roughcut-v01.mp4'));
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.notEqual(entry.video?.kind, 'roughcut');
+  assert.equal(entry.status, 'working');
+  assert.equal(entry.roughCut, null);
+  assert.equal(entry.roughCutConfirmable, false);
+  assert.deepEqual(entry.roughCutCuts, []);
+});
+
+test('a confirmed rough cut is with the agent and can no longer be confirmed', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addRoughCutProject(projectsDir, { folder: 'confirmed-cut', status: 'confirmed' });
+  const entry = scanProjects({ projectsDir }).entries[0];
+  assert.equal(entry.status, 'working');
+  assert.equal(entry.nextStep, 'Нарезка подтверждена – агент собирает слой');
+  assert.equal(entry.video.kind, 'roughcut');
+  assert.equal(entry.roughCutConfirmable, false);
+  assert.equal(entry.roughCut.status, 'confirmed');
+});
+
+test('a republished rough cut replaces the shown copy and master makes the stage history', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addRoughCutProject(projectsDir, { folder: 'next-cut' });
+  const first = scanProjects({ projectsDir }).entries[0];
+  republishRoughCut(projectDir, { keep: [{ start: 0, end: 4 }] });
+  const second = scanProjects({ projectsDir }).entries[0];
+  assert.equal(second.status, 'waiting');
+  assert.equal(second.video.path, 'previews/roughcut-v02.mp4');
+  assert.notEqual(second.video.sha256, first.video.sha256);
+  assert.equal(second.roughCut.editPath, 'edit/roughcut-v02.json');
+  assert.deepEqual(second.roughCutCuts, [{ atSec: 4, removedSec: 2, note: null }]);
+
+  bumpSourceRevision(projectDir);
+  const manifest = readProjectManifest(projectDir);
+  assert.equal(manifest.source.revision, 2);
+  assert.equal(manifest.source.localPath, 'input/source-v02.mp4');
+  assert.deepEqual(manifest.source.history, [{
+    revision: 2,
+    localPath: 'input/source-v02.mp4',
+    editPath: 'edit/roughcut-v02.json',
+    transcriptPath: 'transcript/words-v02.json',
+  }]);
+  const after = scanProjects({ projectsDir }).entries[0];
+  assert.equal(after.status, 'working');
+  assert.equal(after.nextStep, 'Агент готовит черновик');
+  assert.equal(after.roughCut, null);
+  assert.deepEqual(after.roughCutCuts, []);
+});
+
+test('legacy variants carry empty rough cut fields', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addLegacyFolder(projectsDir, 'series', { files: { 'out/one.mp4': '1', 'out/two.mp4': '2' }, card: seriesCard() });
+  for (const entry of scanProjects({ projectsDir }).entries) {
+    assert.equal(entry.roughCut, null);
+    assert.equal(entry.roughCutConfirmable, false);
+    assert.deepEqual(entry.roughCutCuts, []);
+  }
 });

@@ -30,6 +30,19 @@ test('public CLI advertises multi-take commands and routes takes to its own scri
   assert.match(takesHelp.stdout, /usage: automontage takes add\|pack/);
 });
 
+test('public CLI advertises the rough cut and routes roughcut to its own script', () => {
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /automontage roughcut --project-dir/);
+  assert.match(help.stdout, /automontage roughcut confirm/);
+  const usage = spawnSync(process.execPath, [cli, 'roughcut'], { encoding: 'utf8' });
+  assert.equal(usage.status, 1);
+  assert.match(usage.stderr, /usage: automontage roughcut --project-dir/);
+  assert.doesNotMatch(usage.stderr, /build\.js|ENOENT/);
+  const roughCutHelp = spawnSync(process.execPath, [cli, 'roughcut', '--help'], { encoding: 'utf8' });
+  assert.equal(roughCutHelp.status, 0, roughCutHelp.stderr);
+  assert.match(roughCutHelp.stdout, /automontage roughcut confirm --project-dir/);
+});
+
 // Step 0 задачи 33: на Windows у Node нет настоящих POSIX-сигналов – child.kill(signal) там делает
 // TerminateProcess, то есть убивает ребёнка мимо его собственной уборки (например, layer new удаляет
 // недостроенную папку по SIGINT). Консольное событие и так доходит до ребёнка напрямую через общую

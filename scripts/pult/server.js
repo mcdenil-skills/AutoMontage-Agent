@@ -3,7 +3,10 @@ const http = require('node:http');
 const path = require('node:path');
 const { createHmac, randomBytes } = require('node:crypto');
 
-const { approveBrief, createOrOpenProject, resolveProjectPath } = require('../project/workspace');
+const { confirmRoughCut } = require('../project/rough-cut');
+const {
+  approveBrief, createOrOpenProject, readProjectManifest, resolveProjectPath,
+} = require('../project/workspace');
 const { startReviewServer } = require('../review/server');
 const { buildCards, cardIdFor } = require('./cards');
 const { ENTRY_KEY, folderFromKey, scanFolder, scanProjects } = require('./catalog');
@@ -49,9 +52,25 @@ const previewDamaged = () => new PultRequestError(
   'Файл preview не совпадает с паспортом ролика – попросите агента пересобрать preview',
 );
 const projectBusy = () => new PultRequestError(409, 'PROJECT_BUSY', 'Агент сейчас меняет этот ролик – попробуйте через минуту');
+// Нарезка сменилась или уже не ждёт автора: обновлённая карточка покажет, что теперь на экране.
+const roughCutChanged = () => new PultRequestError(
+  409,
+  'ROUGHCUT_CHANGED',
+  'Появилась новая черновая нарезка – посмотрите её',
+);
+// Байты копии или списка кусков не совпадают с паспортом: обновление страницы не поможет.
+const roughCutDamaged = () => new PultRequestError(
+  409,
+  'ROUGHCUT_DAMAGED',
+  'Файл нарезки не совпадает с паспортом – попросите агента пересобрать нарезку',
+);
 // Код, которым движок помечает занятый или изменившийся во время записи project.json
 // (scripts/project/workspace.js, manifestConflict). Движок его не экспортирует.
 const ENGINE_MANIFEST_CONFLICT = 'PROJECT_MANIFEST_CONFLICT';
+// Коды отказа confirmRoughCut (scripts/project/rough-cut.js): нарезка не ждёт автора и
+// байты копии или списка кусков не совпадают с паспортом. Движок их тоже не экспортирует.
+const ENGINE_ROUGH_CUT_MISSING = 'ROUGH_CUT_MISSING';
+const ENGINE_ROUGH_CUT_CHANGED = 'ROUGH_CUT_CHANGED';
 
 // Для лога – только имя класса ошибки, и то лишь если оно похоже на имя класса:
 // сообщение и произвольные поля могут содержать абсолютные пути.
@@ -84,6 +103,7 @@ async function startPultServer({
   idleCheckMs = IDLE_CHECK_MS,
   now = () => Date.now(),
   approveBriefImpl = approveBrief,
+  confirmRoughCutImpl = confirmRoughCut,
   revealImpl = revealInFileManager,
   openWindowImpl = openPultWindow,
   startReviewServerImpl = startReviewServer,
@@ -158,6 +178,29 @@ async function startPultServer({
       .digest('base64url');
   }
 
+  // То же для черновой нарезки: страница смотрела копию из паспорта, и подтверждать можно,
+  // только пока её байты на диске совпадают с roughCut.sha256.
+  function servedRoughCutMatches(entry) {
+    if (!entry.video || entry.video.kind !== 'roughcut' || !entry.roughCut) return false;
+    const file = entryFile(entry, entry.video.path);
+    if (!file) return false;
+    try {
+      return hashFile(file) === entry.roughCut.sha256;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Билет «Нарезка готова» привязан к ролику, списку кусков и SHA-256 копии, которую видел
+  // автор: новая нарезка делает его недействительным. Слово `roughcut` в подписи не даёт
+  // выдать билет нарезки за билет утверждения и наоборот.
+  function roughCutTicket(entry) {
+    if (!entry.roughCutConfirmable || !entry.roughCut) return null;
+    return createHmac('sha256', ticketSecret)
+      .update(`${entry.key}\0roughcut\0${entry.roughCut.editPath}\0${entry.roughCut.sha256}`)
+      .digest('base64url');
+  }
+
   // Метка версии видео для URL: адрес `?key=…` одинаков для старого и нового preview, и
   // открытая страница не узнала бы о новом файле. Метка меняется вместе с файлом (SHA-256
   // из паспорта, а у финала и legacy-видео без хеша – размер и время изменения) и
@@ -200,7 +243,7 @@ async function startPultServer({
   }
 
   // Вариант для браузера: без путей, brief и SHA-256 – видео адресуется ключом,
-  // утверждение – непрозрачным билетом.
+  // утверждение и подтверждение нарезки – непрозрачными билетами.
   function browserVariant(entry) {
     const query = `key=${encodeURIComponent(entry.key)}`;
     const videoFile = entry.video ? entryFile(entry, entry.video.path) : null;
@@ -220,6 +263,13 @@ async function startPultServer({
       reviewable: entry.reviewable,
       approvable: entry.approvable && playable,
       approvalTicket: playable ? approvalTicket(entry) : null,
+      // Черновая нарезка: «Нарезка готова» – только для копии, которую страница может показать.
+      roughCutConfirmable: Boolean(entry.roughCutConfirmable) && playable,
+      roughCutTicket: playable ? roughCutTicket(entry) : null,
+      // Время подтверждения нарезки (ISO) – для отметки «Нарезка подтверждена в …» вместо кнопки.
+      roughCutConfirmedAt: entry.roughCut?.status === 'confirmed' ? entry.roughCut.confirmedAt || null : null,
+      // Вырезы нарезки: время в нарезке, сколько убрано и причина – без путей и секунд исходника.
+      roughCutCuts: entry.roughCutCuts || [],
       // Утверждённый brief ещё без финала: на экране – тот самый утверждённый preview.
       needsFinal: Boolean(entry.needsFinal),
       // Карточка утверждена, но лежит в архиве (buildCards, DECISIONS.md D-030): подпись
@@ -473,6 +523,46 @@ async function startPultServer({
         setArchived(resolvedProjectsDir, cardIdFor(entry), false);
       } catch (error) {
         logger.error(`Пульт: не удалось вернуть карточку из архива после утверждения (${errorName(error)})`);
+      }
+      sendJson(response, 201, { ok: true });
+      return;
+    }
+    if (pathname === '/api/roughcut/confirm') {
+      if (!exactKeys(body, ['key', 'ticket', 'confirmViewed'])) throw badRequest();
+      if (body.confirmViewed !== true) {
+        throw new PultRequestError(400, 'CONFIRMATION_REQUIRED', 'Отметьте, что посмотрели нарезку целиком');
+      }
+      const entry = findEntry(body.key);
+      if (!entry) throw notFound();
+      const expected = roughCutTicket(entry);
+      if (!expected || !safeTokenEqual(body.ticket, expected)) throw roughCutChanged();
+      // Билет актуален, но байты отдаваемой копии уже не те, что в паспорте: нужна новая
+      // нарезка от агента, отсюда отдельный код (как PREVIEW_DAMAGED у утверждения).
+      if (!servedRoughCutMatches(entry)) throw roughCutDamaged();
+      try {
+        const projectDir = projectDirOf(entry);
+        const workspace = { dir: projectDir, manifest: readProjectManifest(projectDir) };
+        confirmRoughCutImpl(workspace, { expectedSha256: entry.roughCut.sha256, by: 'pult' });
+      } catch (error) {
+        // Как у утверждения: сначала – не сменилась ли нарезка, пока шло подтверждение.
+        const current = findEntry(body.key);
+        const currentTicket = current ? roughCutTicket(current) : null;
+        const code = error && error.code;
+        let refusal = null;
+        if (!currentTicket || !safeTokenEqual(body.ticket, currentTicket) || code === ENGINE_ROUGH_CUT_MISSING) {
+          refusal = roughCutChanged();
+        } else if (code === ENGINE_ROUGH_CUT_CHANGED) {
+          // Билет тот же, а движок не узнал байты копии или списка кусков (список правили
+          // после сборки): обновление страницы не поможет.
+          refusal = roughCutDamaged();
+        } else if (code === ENGINE_MANIFEST_CONFLICT) {
+          refusal = projectBusy();
+        }
+        // Неожиданный сбой – общий обработчик ответит 500 и сам запишет класс ошибки.
+        if (!refusal) throw error;
+        // В лог – только класс ошибки: сообщение движка содержит пути проекта.
+        logger.error(`Пульт: движок не принял подтверждение нарезки (${errorName(error)})`);
+        throw refusal;
       }
       sendJson(response, 201, { ok: true });
       return;
