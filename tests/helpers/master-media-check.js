@@ -8,6 +8,7 @@ const { addTakes } = require('../../scripts/project/takes');
 const { readProjectManifest } = require('../../scripts/project/workspace');
 const { probeMediaPath, probeVideo, displayDimensions } = require('../../scripts/media-probe');
 const { runTrim, runSegmentsTrim } = require('../../scripts/trim-media');
+const { captureTool } = require('../../scripts/process');
 
 function checkMasterMedia(t, { rotation, takes = false, retainedMatrix = false }) {
   if (!toolAvailable('ffmpeg') || !toolAvailable('ffprobe') || !ffmpegEncoderAvailable('libx264')) {
@@ -50,7 +51,16 @@ function checkMasterMedia(t, { rotation, takes = false, retainedMatrix = false }
   assert.deepEqual([shown.width, shown.height], expected);
   assert.equal(video.fps, 25);
   assert.ok(Math.abs(video.duration - 1.6) <= 0.08, String(video.duration));
-  assert.ok(Math.abs(media.audioDurationSec - media.videoDurationSec) <= 0.03);
+  const drift = Math.abs(media.audioDurationSec - media.videoDurationSec);
+  if (drift > 0.03) {
+    const packets = JSON.parse(captureTool('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_packets', '-show_entries', 'packet=pts_time,duration_time', '-of', 'json', result.sourcePath])).packets;
+    t.diagnostic(JSON.stringify({ audioDurationSec: media.audioDurationSec,
+      videoDurationSec: media.videoDurationSec, drift, packetCount: packets.length,
+      missingPacketDurations: packets.filter((packet) => !packet.duration_time).length,
+      firstPacket: packets[0], lastPacket: packets[packets.length - 1] }));
+  }
+  assert.ok(drift <= 0.03, `audio=${media.audioDurationSec}, video=${media.videoDurationSec}, drift=${drift}`);
   runTool('ffmpeg', ['-v', 'error', '-i', result.sourcePath, '-f', 'null', '-']);
   assert.deepEqual(fs.readFileSync(original), bytes);
   if (!takes) assert.deepEqual(fs.readFileSync(path.join(projectDir, 'transcript/words.json')), transcriptBytes);
