@@ -127,10 +127,16 @@ button, input, textarea { font: inherit; color: inherit; }
 .detail__side .badge { align-self: flex-start; }
 .detail__next { margin: 0; font-size: 1.05rem; }
 
-.actions, .agent-handoff, .approve, .comments { display: flex; flex-direction: column; gap: 0.6rem; padding: 1rem; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
-.actions h3, .agent-handoff h3, .approve h3, .comments h3 { margin: 0; font-size: 1rem; }
+.actions, .agent-handoff, .approve, .roughcut, .roughcut-cuts, .comments { display: flex; flex-direction: column; gap: 0.6rem; padding: 1rem; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
+.actions h3, .agent-handoff h3, .approve h3, .roughcut h3, .roughcut-cuts h3, .comments h3 { margin: 0; font-size: 1rem; }
 /* Отступы задаёт gap колонки – собственные поля <p> удваивали бы расстояние. */
-.agent-handoff .hint { margin: 0; }
+.agent-handoff .hint, .roughcut .hint { margin: 0; }
+/* Нарезка ждёт решения автора – рамка того же янтаря, что у карточки «Ждёт меня». */
+.roughcut { border-color: hsl(var(--amber) / 0.7); }
+.cut-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.cut { width: 100%; padding: 0.45rem 0.6rem; text-align: left; cursor: pointer; background: hsl(var(--card-raised)); border: 1px solid transparent; border-radius: 0.5rem; }
+.cut:hover { border-color: hsl(var(--border)); }
+.cut__time { color: hsl(var(--focus)); font-variant-numeric: tabular-nums; }
 .check { display: flex; gap: 0.5rem; align-items: center; }
 .phrase { width: 100%; padding: 0.5rem; font-size: 0.85rem; font-family: inherit; resize: vertical; background: hsl(var(--card-raised)); border: 1px solid hsl(var(--border)); border-radius: 0.5rem; }
 .copy-status { font-size: 0.85rem; color: hsl(var(--teal)); }
