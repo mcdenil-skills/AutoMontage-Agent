@@ -13,6 +13,7 @@
 //                       Осмысленно только с --scenario (блоки берутся из готового листа).
 //   --title "текст"   : заголовок видео для шаблона lesson (плашка сверху).
 const fs = require('fs');
+const { normalizeTranscriptFile } = require('./transcript-words');
 const { randomUUID } = require('node:crypto');
 const path = require('path');
 const {
@@ -255,6 +256,7 @@ if (lessonAction === 'render') {
       transcriptPath,
       model,
     ], { cwd: ROOT, stage: 'transcription' });
+    normalizeTranscriptFile(transcriptPath);
   }
 }
 

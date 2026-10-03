@@ -141,6 +141,7 @@ async function startPultServer({
     getOrigin: () => origin,
     findEntry,
     projectDirOf,
+    videoViewFor: (entry) => browserVariant(entry).video,
     mediaOptions,
     revealImpl,
     logger,

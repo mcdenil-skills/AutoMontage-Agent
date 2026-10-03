@@ -700,7 +700,7 @@ test('the sandboxed page reaches neither the pult, nor its parent, nor storage',
 
 test('the promise quote in the wizard can seek the current video', async ({ page }) => {
   await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
-  await startWith();
+  await startWith((dir) => materializeClipVideo(dir));
   const offersFile = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
   const offers = JSON.parse(fs.readFileSync(offersFile, 'utf8'));
   offers.offers[0].startSec = 60;
@@ -718,7 +718,7 @@ test('wizard playback failure is explained inside the dialog', async ({ page }) 
   await page.addInitScript(() => {
     HTMLMediaElement.prototype.play = () => Promise.reject(new Error('NotAllowedError: browser internals'));
   });
-  await startWith();
+  await startWith((dir) => materializeClipVideo(dir));
   const offersFile = path.join(projectsDir, 'clip', 'lead-magnet', 'offers.json');
   const offers = JSON.parse(fs.readFileSync(offersFile, 'utf8'));
   offers.offers[0].startSec = 60;
@@ -771,3 +771,129 @@ for (const mode of ['brand', 'none']) {
     expect(create.params.cta).toEqual({ mode, title: '', label: '', url: '' });
   });
 }
+
+function roughPromiseFixture(dir, { keep = [{ start: 0, end: 2 }, { start: 5, end: 12 }], history = false } = {}) {
+  const videoPath = path.join(path.dirname(dir), 'promise-fixture.mp4');
+  require('./helpers/media-fixtures').runTool('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i',
+    'color=c=blue:s=160x90:r=25:d=12', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', videoPath]);
+  let projectDir;
+  if (history) {
+    ({ projectDir } = require('./helpers/pult-projects').addDraftProject(dir, {
+      folder: 'rough', name: 'Обещание в нарезке', approve: true, final: true,
+    }));
+    require('./helpers/pult-projects').republishRoughCut(projectDir, { version: 1, keep, videoBytes: fs.readFileSync(videoPath) });
+  } else {
+    ({ projectDir } = require('./helpers/pult-projects').addRoughCutProject(dir, {
+      folder: 'rough', name: 'Обещание в нарезке', sourceDuration: 12, keep, videoBytes: fs.readFileSync(videoPath),
+    }));
+  }
+  const words = QUOTE.split(' ').map((w, i) => ({ w, s: 8 + i * 0.08, e: 8.05 + i * 0.08 }));
+  fs.writeFileSync(path.join(projectDir, 'transcript/words.json'), JSON.stringify([{ words }]));
+  addOffer(projectDir, { codeWord: 'ГАЙД', kind: 'comment-keyword', quote: QUOTE, units: UNITS,
+    suggest: { format: 'guide', audience: 'новички' } });
+  return { projectDir, videoBytes: fs.readFileSync(videoPath) };
+}
+async function openRoughPromise(page) {
+  await page.goto(session.url);
+  await page.locator('.card', { hasText: 'Обещание в нарезке' }).click();
+  await expect(page.locator('[data-player]')).toHaveJSProperty('readyState', 4);
+  await expect(page.locator('[data-lm-offer]')).toBeVisible();
+}
+for (const place of ['banner', 'wizard']) test(`rough cut ${place} playback uses the shortened timeline`, async ({ page }) => {
+  await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
+  await startWith((dir) => roughPromiseFixture(dir));
+  await openRoughPromise(page);
+  let box = page.locator('[data-lm-offer]');
+  if (place === 'wizard') {
+    await box.getByRole('button', { name: 'Разработать новый' }).click();
+    box = page.locator('[data-lm-wizard]');
+  }
+  await box.getByRole('button', { name: '▶ послушать' }).click();
+  await expect(page.locator('[data-player]')).toHaveJSProperty('currentTime', 5);
+});
+test('rough cut deleted promise quote cannot start playback', async ({ page }) => {
+  await startWith((dir) => roughPromiseFixture(dir, { keep: [{ start: 0, end: 2 }] }));
+  await openRoughPromise(page);
+  await expect(page.locator('[data-lm-offer]').getByRole('button', { name: '▶ послушать' })).toBeDisabled();
+  await expect(page.locator('[data-lm-offer]')).toContainText('вырезано');
+});
+
+function materializeClipVideo(dir) {
+  const projectDir = path.join(dir, 'clip');
+  const manifest = require('../scripts/project/workspace').readProjectManifest(projectDir);
+  const target = path.join(projectDir, manifest.currentPreview.filePath);
+  require('./helpers/media-fixtures').runTool('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i',
+    'color=c=blue:s=160x90:r=25:d=65', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', target]);
+}
+
+test('rough cut new playback target refresh keeps the unfinished video comment', async ({ page }) => {
+  await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
+  const fixture = await startWith((dir) => roughPromiseFixture(dir));
+  await openRoughPromise(page);
+  const comment = page.locator('[data-comment-text]');
+  await comment.fill('Не потерять мой комментарий');
+  require('./helpers/pult-projects').republishRoughCut(fixture.projectDir, {
+    keep: [{ start: 0, end: 1 }, { start: 5, end: 12 }], videoBytes: fixture.videoBytes,
+  });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await expect(comment).toHaveValue('Не потерять мой комментарий');
+  await page.locator('[data-lm-offer]').getByRole('button', { name: '▶ послушать' }).click();
+  await expect(page.locator('[data-player]')).toHaveJSProperty('currentTime', 4);
+
+});
+
+test('rough cut promise playback is disabled in History and restored on return', async ({ page }) => {
+  await page.addInitScript(() => { HTMLMediaElement.prototype.play = () => Promise.resolve(); });
+  await startWith((dir) => {
+    const fixture = roughPromiseFixture(dir, { history: true, keep: [{ start: 0, end: 2 }, { start: 5, end: 6 }] });
+    return fixture;
+  });
+  // Quote is deliberately unavailable in this short cut; use a direct preview offer to exercise History.
+  const file = path.join(projectsDir, 'rough', 'lead-magnet/offers.json');
+  const data = JSON.parse(fs.readFileSync(file));
+  data.offers[0].startSec = 0.5; data.offers[0].endSec = 1;
+  fs.writeFileSync(file, JSON.stringify(data));
+  await openRoughPromise(page);
+  const listen = page.locator('[data-lm-offer]').getByRole('button', { name: '▶ послушать' });
+  await expect(listen).toBeEnabled();
+  await page.getByRole('button', { name: /История \(/ }).click();
+  await page.locator('.history button').first().click();
+  await expect(listen).toBeDisabled();
+  await expect(page.locator('[data-lm-offer]')).toContainText('Вернитесь к текущей версии');
+  await page.getByRole('button', { name: 'Вернуться к текущей' }).click();
+  await expect(listen).toBeEnabled();
+});
+
+test('an open wizard cannot play its detached player after a new rough cut arrives', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.playedPlayers = [];
+    HTMLMediaElement.prototype.play = function () { window.playedPlayers.push({ connected: this.isConnected, src: this.src }); return Promise.resolve(); };
+  });
+  const fixture = await startWith((dir) => roughPromiseFixture(dir));
+  await openRoughPromise(page);
+  await page.locator('[data-lm-offer]').getByRole('button', { name: 'Разработать новый' }).click();
+  const wizard = page.locator('[data-lm-wizard]');
+  await wizard.locator('[data-lm-wishes]').fill('Сохранить мои пожелания');
+  await page.evaluate(() => {
+    window.oldPlayer = document.querySelector('[data-player]');
+    Object.defineProperty(window.oldPlayer, 'readyState', { configurable: true, get: () => 0 });
+  });
+  await wizard.getByRole('button', { name: '▶ послушать' }).click();
+  require('./helpers/pult-projects').republishRoughCut(fixture.projectDir, {
+    keep: [{ start: 0, end: 1 }, { start: 5, end: 12 }], videoBytes: fixture.videoBytes,
+  });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await page.evaluate(() => window.oldPlayer.dispatchEvent(new Event('loadedmetadata')));
+  await expect(wizard.locator('[data-lm-wishes]')).toHaveValue('Сохранить мои пожелания');
+  const listen = wizard.getByRole('button', { name: '▶ послушать' });
+  // Direct callback invocation also proves safety during a pending metadata wait.
+  await listen.evaluate((element) => element.dispatchEvent(new MouseEvent('click')));
+  expect(await page.evaluate(() => window.playedPlayers)).toEqual([]);
+  await expect(listen).toBeDisabled();
+  await expect(wizard).toContainText('Ролик обновился');
+  await wizard.getByRole('button', { name: 'Отмена', exact: true }).click();
+  await page.locator('[data-lm-offer]').getByRole('button', { name: 'Разработать новый' }).click();
+  await page.locator('[data-lm-wizard]').getByRole('button', { name: '▶ послушать' }).click();
+  await expect(page.locator('[data-player]')).toHaveJSProperty('currentTime', 4);
+  expect((await page.evaluate(() => window.playedPlayers)).every((item) => item.connected)).toBe(true);
+});

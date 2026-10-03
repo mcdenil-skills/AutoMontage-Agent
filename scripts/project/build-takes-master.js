@@ -3,6 +3,7 @@ const { workingSize, parseQuality } = require('../working-quality');
 
 const { frameRateFromFps } = require('../review/media-time');
 const { collectWords } = require('../tighten');
+const { normalizeWordTimings } = require('../transcript-words');
 const { publishSourceRevision, roundedTime } = require('./source-revision');
 const { analyzeLevels, isSilentSpan, snapRangesToPauses } = require('./take-pauses');
 const { assertCompatibleTakes, describeTake } = require('./takes');
@@ -61,7 +62,7 @@ function buildTakesMaster({ workspace, edit, editRelative, source, quality = '10
   // Слова нужны уже поиску паузы: границу двух слов без паузы между ними уровни не видят.
   const wordsByTake = new Map(used.map((take) => {
     try {
-      return [take.id, collectWords(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8')))];
+      return [take.id, collectWords(normalizeWordTimings(JSON.parse(fileSystem.readFileSync(take.transcriptPath, 'utf8'))))];
     } catch (error) {
       // Без имени дубля непонятно, у какого из нескольких кусков сломан транскрипт.
       error.message = `${take.id} transcript: ${error.message}`;

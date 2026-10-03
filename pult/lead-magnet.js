@@ -45,6 +45,71 @@ function lmCardTag(card) {
   return tag;
 }
 
+const LM_HISTORY_PLAYBACK = 'Вернитесь к текущей версии ролика, чтобы послушать обещание';
+const LM_STALE_PLAYBACK = 'Ролик обновился. Откройте лид-магнит заново, чтобы послушать обещание';
+function lmPlaybackReason(offer, getVideo) {
+  const target = offer.playback;
+  if (!target || target.unavailableReason || target.startSec === null) return target?.unavailableReason || 'Время обещания недоступно';
+  const video = getVideo && getVideo();
+  if (video && (!video.isConnected || document.querySelector('[data-player]') !== video)) return LM_STALE_PLAYBACK;
+  const url = new URL(mediaUrl(target.videoUrl), window.location.origin).href;
+  return video && video.src === url ? null : LM_HISTORY_PLAYBACK;
+}
+
+async function lmListenToOffer(offer, getVideo, onError) {
+  try {
+    const reason = lmPlaybackReason(offer, getVideo);
+    if (reason) throw new Error(reason);
+    const video = getVideo();
+    if (video.readyState < 1) {
+      await new Promise((resolve, reject) => {
+        const done = (error) => {
+          clearTimeout(timer);
+          video.removeEventListener('loadedmetadata', ready);
+          video.removeEventListener('error', fail);
+          error ? reject(error) : resolve();
+        };
+        const ready = () => done();
+        const fail = () => done(new Error('Не удалось воспроизвести видео. Попробуйте запустить его в плеере.'));
+        const timer = setTimeout(fail, 5000);
+        video.addEventListener('loadedmetadata', ready, { once: true });
+        video.addEventListener('error', fail, { once: true });
+      });
+    }
+    if (getVideo() !== video || lmPlaybackReason(offer, getVideo)) throw new Error(LM_HISTORY_PLAYBACK);
+    video.currentTime = offer.playback.startSec;
+    try { await video.play(); } catch (_) {
+      throw new Error('Не удалось воспроизвести видео. Попробуйте запустить его в плеере.');
+    }
+  } catch (error) { onError(error.message); }
+}
+
+function lmPlaybackControl(offer, getVideo, onError) {
+  const wrap = el('span', 'lm-row');
+  wrap.dataset.lmPlayback = '';
+  const listen = el('button', 'link-button', '▶ послушать');
+  listen.type = 'button';
+  let pending = false;
+  const hint = el('span', 'hint');
+  const update = () => {
+    const reason = lmPlaybackReason(offer, getVideo);
+    listen.disabled = pending || Boolean(reason);
+    hint.textContent = reason || '';
+    hint.hidden = !reason;
+  };
+  listen.addEventListener('click', async () => {
+    if (listen.disabled) return;
+    pending = true;
+    update();
+    try { await lmListenToOffer(offer, getVideo, onError); }
+    finally { pending = false; update(); }
+  });
+  wrap.setHistoryMode = update;
+  wrap.append(listen, hint);
+  update();
+  return wrap;
+}
+
 // Плашка «Разработать лид-магнит?» над статусом видео. Раздел карточки она не меняет.
 async function lmRenderBanner(slot, variant, getVideo) {
   if (!variant.leadMagnet || !variant.leadMagnet.ask) return;
@@ -63,17 +128,10 @@ async function lmRenderBanner(slot, variant, getVideo) {
 function lmOfferBanner(variant, leadState, offer, getVideo) {
   const box = el('div', 'lm-offer');
   box.dataset.lmOffer = offer.codeWord;
-  box.append(el('h3', '', `🎁 В ролике есть обещание${offer.startSec === null ? '' : ` · ${lmClock(offer.startSec)}`}`));
+  box.append(el('h3', '', `🎁 В ролике есть обещание${offer.playback?.startSec == null ? '' : ` · ${lmClock(offer.playback.startSec)}`}`));
   box.append(el('blockquote', 'lm-quote', `«${offer.quote}»`));
   const facts = el('div', 'lm-row');
-  if (offer.startSec !== null) {
-    facts.append(button('▶ послушать', async () => {
-      const video = getVideo();
-      if (!video) return;
-      video.currentTime = offer.startSec;
-      await video.play();
-    }, 'link-button'));
-  }
+  facts.append(lmPlaybackControl(offer, getVideo, (message) => notify(message, 'error')));
   facts.append(el('span', 'hint', `кодовое слово: ${offer.codeWord}`));
   box.append(facts);
   const matches = leadState.library.filter((item) => item.codeWords.includes(offer.codeWord));
@@ -213,20 +271,9 @@ function lmOpenWizard(variant, leadState, offer, getVideo) {
     promise = lmChoice('checkbox', 'lm-promise', 'yes', `Делаем ровно под это обещание: ${lmUnitsText(offer.units)}`, false);
     promise.input.dataset.lmPromise = '';
     const promiseParts = [el('blockquote', 'lm-quote', `«${offer.quote}»`)];
-    if (offer.startSec !== null) {
-      promiseParts.push(button('▶ послушать', async () => {
-        const video = getVideo && getVideo();
-        if (!video) return;
-        video.currentTime = offer.startSec;
-        try {
-          await video.play();
-        } catch (_) {
-          say('Не удалось воспроизвести видео. Попробуйте запустить его в плеере.');
-        }
-      }, 'link-button'));
-    }
+    promiseParts.push(lmPlaybackControl(offer, getVideo, say));
     promiseParts.push(promise.wrap);
-    body.append(lmFieldset(1, `Обещание из ролика${offer.startSec === null ? '' : ` · ${lmClock(offer.startSec)}`}`,
+    body.append(lmFieldset(1, `Обещание из ролика${offer.playback?.startSec == null ? '' : ` · ${lmClock(offer.playback.startSec)}`}`,
       promiseParts));
   }
   const codeWord = lmTextInput(offer ? offer.codeWord : '', 'Кодовое слово', { maxLength: 40 });

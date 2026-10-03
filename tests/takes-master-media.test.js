@@ -260,3 +260,10 @@ test('real takes master moves cuts inside speech into the nearest pause', { time
   const words = JSON.parse(fs.readFileSync(result.transcriptPath, 'utf8'))[0].words;
   assert.deepEqual(words.map((word) => word.w), ['один', 'три']);
 });
+
+for (const rotation of [0, 90, 270, 180]) {
+  test(`real takes master publishes upright ${rotation}° with synchronized audio`, { timeout: 180000 },
+    (t) => require('./helpers/master-media-check').checkMasterMedia(t, { rotation, takes: true }));
+}
+test('real takes master strips a simulated retained 90° matrix', { timeout: 180000 },
+  (t) => require('./helpers/master-media-check').checkMasterMedia(t, { rotation: 90, takes: true, retainedMatrix: true }));
