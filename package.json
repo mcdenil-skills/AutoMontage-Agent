@@ -37,7 +37,7 @@
     "@remotion/cli": "^4.0.504",
     "@remotion/fonts": "^4.0.504",
     "@remotion/layout-utils": "^4.0.504",
-    "@remotion/transitions": "^4.0.504",
+    "@remotion/transitions": "^4.0.529",
     "ajv": "^8.20.0",
     "esbuild": "0.28.1",
     "react": "19.0.0",
