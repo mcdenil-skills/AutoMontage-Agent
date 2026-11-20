@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { ROOT, resolveRemotionCommand } = require('../env');
 const { remotionLayerRenderCommand } = require('../build-commands');
-const { layerGpuPlan, LAYER_OFFTHREAD_CACHE_BYTES } = require('../gpu');
+const { layerGpuPlan, scanLayerWebgl, LAYER_OFFTHREAD_CACHE_BYTES } = require('../gpu');
 const { probeMediaPath, probeVideo } = require('../media-probe');
 const { hashBytes } = require('../pult/files');
 const { runTool, captureTool } = require('../process');
@@ -109,14 +109,14 @@ function normalizeAudioArgs(raw, out, samples) {
 }
 
 // deps: log/warn – вывод; runToolImpl – запуск Remotion и ffmpeg (подмена рендера в тестах); checkImpl –
-// layer check; acquireSlot – занятие слота общей очереди (контракт acquireHeavySlot); gpuPlan – план GPU без
-// аргументов (layerGpuPlan), бросает при неверном AUTOMONTAGE_GPU.
+// layer check; acquireSlot – занятие слота общей очереди (контракт acquireHeavySlot); gpuPlan – план GPU
+// ({ webgl } → { gl, fallbackGl, reason }, как layerGpuPlan), бросает при неверном AUTOMONTAGE_GPU.
 async function run(options, deps = {}) {
   const log = deps.log || console.log;
   const warn = deps.warn || console.error;
   const runToolImpl = deps.runToolImpl || runTool;
   const checkImpl = deps.checkImpl || check.run;
-  const gpuPlan = deps.gpuPlan || (() => layerGpuPlan());
+  const gpuPlan = deps.gpuPlan || ((planOptions) => layerGpuPlan(planOptions));
   const { projectDir, layerDir, layerName, sourcePath } = resolveLayer(options);
 
   const checkOptions = { 'project-dir': projectDir, layer: layerName, ...(options.profile ? { profile: options.profile } : {}) };
@@ -127,8 +127,14 @@ async function run(options, deps = {}) {
   };
   let code = await runCheck();
   if (code !== 0) return code;
+  // 3D-слой (#150) без WebGL не рисуется: признак – импорт @remotion/three, three или @react-three/* в src слоя.
+  const webglScan = scanLayerWebgl(path.join(layerDir, 'src'));
+  if (webglScan.clockHooks.length) {
+    const where = webglScan.clockHooks.map((hook) => `${hook.file}:${hook.line} ${hook.token}`).join(', ');
+    warn(`⚠️ 3D-слой: часы реального времени (${where}) – кадр может отличаться между рендерами; двигай сцену от useCurrentFrame(), случайность – random(seed) из remotion`);
+  }
   // Неверный AUTOMONTAGE_GPU – отказ до слота очереди.
-  const plan = gpuPlan();
+  const plan = gpuPlan({ webgl: webglScan.webgl });
   log(plan.gl ? `GPU рендера: ${plan.gl} – ${plan.reason}` : `GPU рендера: нет – ${plan.reason}`);
   const config = heavyQueueConfig();
   if (options['no-wait']) config.waitMs = 0;
@@ -163,7 +169,9 @@ async function run(options, deps = {}) {
         gl, offthreadCacheBytes: LAYER_OFFTHREAD_CACHE_BYTES,
       });
       return renderClaimed({ projectDir, layerName, sourcePath, profile, profileName, held, claim, samples,
-        reportName: reportName(claim.n), command: build(plan.gl), fallbackCommand: plan.gl ? build(null) : null,
+        reportName: reportName(claim.n), command: build(plan.gl),
+        // Повтор нужен только после GPU (angle); 3D-слою и в повторе нужен WebGL – swangle из плана.
+        fallbackCommand: plan.gl === 'angle' ? build(plan.fallbackGl ?? null) : null,
         runToolImpl, log, warn });
     } finally {
       claim.release();

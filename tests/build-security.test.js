@@ -178,7 +178,7 @@ test('remotionLayerRenderCommand validates concurrency the same way remotionRend
   }
 });
 
-test('remotionLayerRenderCommand: gl только angle, кэш только целое в разумных границах', () => {
+test('remotionLayerRenderCommand: gl только angle или swangle (3D, #150), кэш только целое в разумных границах', () => {
   const resolved = { command: process.execPath, argsPrefix: ['/repo/remotion-cli.js', '--env-file=/repo/config/remotion-public.env'] };
   const base = { entry: 'motion-v01/src/index.jsx', composition: 'Layer', output: '/tmp/layer.mp4', publicDir: '/tmp/layer-public' };
   const plain = remotionLayerRenderCommand(resolved, base);
@@ -186,7 +186,8 @@ test('remotionLayerRenderCommand: gl только angle, кэш только ц�
   const gpu = remotionLayerRenderCommand(resolved, { ...base, gl: 'angle', offthreadCacheBytes: 2147483648 });
   assert.ok(gpu.args.includes('--gl=angle'));
   assert.ok(gpu.args.includes('--offthreadvideo-cache-size-in-bytes=2147483648'));
-  for (const gl of ['swangle', 'vulkan', 'angle;touch sentinel', 'angle --log=verbose', '', 1, true]) {
+  assert.ok(remotionLayerRenderCommand(resolved, { ...base, gl: 'swangle' }).args.includes('--gl=swangle'));
+  for (const gl of ['vulkan', 'egl', 'angle;touch sentinel', 'swangle --log=verbose', 'angle --log=verbose', '', 1, true]) {
     assert.throws(() => remotionLayerRenderCommand(resolved, { ...base, gl }), /gl/i);
   }
   for (const offthreadCacheBytes of [0, 1024, 268435455, 68719476737, 1.5, '2147483648', NaN, -1]) {

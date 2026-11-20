@@ -34,18 +34,21 @@
   },
   "dependencies": {
     "@material/material-color-utilities": "^0.4.0",
+    "@react-three/fiber": "9.8.2",
     "@remotion/bundler": "4.0.536",
     "@remotion/cli": "4.0.536",
     "@remotion/fonts": "4.0.536",
     "@remotion/layout-utils": "4.0.536",
     "@remotion/paths": "4.0.536",
     "@remotion/renderer": "4.0.536",
+    "@remotion/three": "4.0.536",
     "@remotion/transitions": "4.0.536",
     "ajv": "^8.20.0",
     "esbuild": "0.28.1",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "remotion": "4.0.536"
+    "remotion": "4.0.536",
+    "three": "0.187.0"
   },
   "devDependencies": {
     "playwright": "^1.62.1"

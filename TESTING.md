@@ -1144,6 +1144,17 @@ AUTOMONTAGE_TEST_MOTION_RENDER=1 node --test tests/layer-gpu-equivalence.test.js
 Он рендерит 50 кадров слоя с `--gl=angle` и на CPU и требует SSIM каждого кадра не ниже 0,99
 (на M1 Pro проходит за 17 с). На других платформах тест пропускается.
 
+3D-сцена слоя (#150, D-053) проверяется настоящим рендером на любой платформе:
+
+```bash
+AUTOMONTAGE_TEST_MOTION_RENDER=1 node --test tests/layer-3d-render.test.js
+```
+
+Тест рендерит кадр крошечной сцены `tests/fixtures/three-scene` с тем же `--gl`, что выбрал бы
+`layer render` (`angle` на Apple Silicon, иначе `swangle`), дважды: кадр не пустой (куб занимает
+больше 5 % кадра) и совпадает байт в байт. Выбор `--gl` и поиск 3D-импорта в коде слоя покрыты
+быстрыми тестами `tests/gpu.test.js` и `tests/layer-render.test.js`.
+
 `motion-kit-render.test.js` проверяет, что кегль субтитров одинаков на каждом кадре и текст не
 обрезается, а `FontLoader` рядом с субтитрами, а не вокруг слоя, роняет рендер.
 `layer-render-still.test.js` снимает кадры 15, 40, 90 и 160 шаблона и требует на них ожидаемые

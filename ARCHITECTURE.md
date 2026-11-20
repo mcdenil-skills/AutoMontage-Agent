@@ -1059,7 +1059,13 @@ flowchart TD
   render передаёт `--offthreadvideo-cache-size-in-bytes=2147483648` (2 ГиБ). Если Remotion с
   `--gl=angle` упал, печатается одно предупреждение и рендер один раз повторяется на CPU в ту же
   заявку `renders/layer-NN.raw.mp4`; сбой CPU-рендера – прежний отчёт с ошибкой и код 2. Формат
-  отчёта `qa/layer-*-render-NN.json` не меняется (D-052). Только `layer render` передаёт
+  отчёта `qa/layer-*-render-NN.json` не меняется (D-052). 3D-слой (D-053): `scanLayerWebgl`
+  (`scripts/gpu.js`) без исполнения читает `src/` слоя (без ссылок и `node_modules`, с лимитом
+  файлов и размера) и ищет импорт `@remotion/three`, `three` или `@react-three/*`. Тогда план
+  получает `webgl: true`: `angle` с запасным `swangle` на `darwin`/`arm64` в режиме `auto`, иначе
+  `swangle` без повтора; строитель команды пропускает только `angle` и `swangle`. Найденные в
+  3D-коде `useFrame`, `Math.random`, `Date.now`, `performance.now`, `requestAnimationFrame`
+  печатаются предупреждением с файлом и строкой. Только `layer render` передаёт
   `AUTOMONTAGE_LAYER_LIMITED_RANGE=1` вместе с остальным окружением: override
   `scripts/remotion-ffmpeg-override.js` добавляет limited range/yuv420p в кодирование libx264
   самого Remotion. Затем ffprobe проверяет `pix_fmt=yuv420p` и `color_range=tv`: ffmpeg копирует

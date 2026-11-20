@@ -130,8 +130,8 @@ function remotionLayerRenderCommand(resolved, { entry, composition, output, publ
   )) {
     throw new Error('Remotion concurrency is invalid');
   }
-  // GPU-режим: единственный допустимый бэкенд – ANGLE; любые другие строки в командную строку не попадают.
-  if (gl !== null && gl !== 'angle') throw new Error('Remotion gl is invalid: допустимо только «angle»');
+  // WebGL-бэкенд: ANGLE (GPU, D-052) или swangle (программный, для 3D-слоёв #150); другие строки в командную строку не попадают.
+  if (gl !== null && gl !== 'angle' && gl !== 'swangle') throw new Error('Remotion gl is invalid: допустимо только «angle» или «swangle»');
   // Лимит кэша OffthreadVideo в байтах: от 256 МиБ до 64 ГиБ, только целое число.
   if (offthreadCacheBytes !== null && !(
     Number.isSafeInteger(offthreadCacheBytes)

@@ -134,6 +134,7 @@ automontage layer sheet --project-dir projects/<ролик>
    вместо примерно 60, кадры совпадают с CPU (SSIM не ниже 0,99). `AUTOMONTAGE_GPU=off` возвращает
    CPU; на других платформах CPU и так. Если GPU-рендер упал, команда один раз повторяет его на CPU
    и печатает предупреждение. Режим показывает `npm run doctor` (строка «Рендер слоя»).
+   Слой с 3D-сценой рендерится с WebGL всегда – см. «3D-сцены в слое» ниже.
 5. **`layer import`** принимает только проверенный рендер и кладёт его в ассеты проекта
    (`assets/broll/video/<id>/media.mp4`) тем же путём, что импорт в Review. Запись о слое
    попадает в реестр `qa/layer-imports.json` – по нему preview узнаёт слой kit.
@@ -377,6 +378,38 @@ motion-vNN/
   звук затвора: kit держит заметные звуки не чаще раза в секунду, значит и вспышки не чаще.
 - Шрифты ролика выбирает `scenes.jsx` (`FONTS`, `CAPTION_FONT`). `CAPTION_FONT` обязан быть
   среди `FONTS`, иначе `Root.jsx` остановится с понятной ошибкой.
+
+## 3D-сцены в слое
+
+С 3D работает тот же слой kit: `projects/<id>/motion-vNN/src/` может импортировать
+`@remotion/three` (`<ThreeCanvas>`), `three` и `@react-three/fiber` – они стоят в зависимостях движка
+(D-053). Отдельной команды нет: `layer render` сам находит импорт этих пакетов в `src/` и включает
+WebGL.
+
+| Где рендерится | `--gl` | Повтор при сбое |
+|---|---|---|
+| Apple Silicon, `AUTOMONTAGE_GPU=auto` | `angle` (Metal) | один раз `swangle` |
+| Apple Silicon с `AUTOMONTAGE_GPU=off`, Linux, Intel Mac | `swangle` (SwiftShader, CPU) | нет |
+
+Правила 3D-кода:
+
+- Всё движение – от `useCurrentFrame()` и `interpolate`/`spring`: камера, повороты, появление,
+  свет. Хук `useFrame` из `@react-three/fiber` идёт от реального времени и даёт разные кадры при
+  повторном рендере – `layer render` печатает предупреждение с файлом и строкой. То же для
+  `Math.random`, `Date.now`, `performance.now`, `requestAnimationFrame`; случайность –
+  `random(seed)` из `remotion`.
+- `<ThreeCanvas width height>` берёт размер из `useVideoConfig()`; фон сцены задаёт `style`.
+- Текст поверх 3D – обычный HTML-слой kit над `<ThreeCanvas>` (кириллица, safe-zone и G5 работают
+  как обычно). Объёмный 3D-текст, постобработка (bloom) и свои GLSL-шейдеры движок пока не
+  поддерживает отдельно: сначала простая геометрия, материалы, свет и камера.
+- Модели и текстуры – только из `public/` слоя, не из сети: рендер не должен зависеть от сайта.
+- 3D-сцена – пик ролика, а не фон на всю длину: правила пика и числа – в
+  [`motion-craft.md`](../skills/reel-turnkey/references/motion-craft.md#3d-сцены).
+
+Проверка: `AUTOMONTAGE_TEST_MOTION_RENDER=1 node --test tests/layer-3d-render.test.js` рендерит
+крошечную сцену с кубом тем же `--gl`, что выбрал бы `layer render`, и требует непустой кадр,
+совпадающий при повторном рендере. Готовые 3D-приёмы и порядок переноса – в
+[`motion-library.md`](../skills/reel-turnkey/references/motion-library.md#3d-приёмы).
 
 ## Проверки G1–G12, G16 и G17
 

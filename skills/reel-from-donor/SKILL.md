@@ -41,6 +41,7 @@ metadata:
 
 Прочитай [`reel-turnkey/references/creative-motion.md`](../reel-turnkey/references/creative-motion.md).
 Прочитай [`reel-turnkey/references/motion-craft.md`](../reel-turnkey/references/motion-craft.md) – числа и запреты движения.
+Приём под каждую фразу речи подбирай по [`reel-turnkey/references/motion-library.md`](../reel-turnkey/references/motion-library.md) – каталог 703 анимаций Opus 5.5: что сказал спикер → приём → пример и как перенести.
 Если маршрут ещё не выбран, сразу покажи карточку **«Что делаем?»** (вопрос «Как монтируем?»)
 только с неясными вопросами: уникальный Creative Motion (рекомендуется), Creative Motion +
 оверлеи Higgsfield (смета и «да» до генерации), готовый установленный стиль или «Решай сам».
