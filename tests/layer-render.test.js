@@ -592,3 +592,51 @@ test('layer render: AUTOMONTAGE_GPU=gpu → отказ до слота очер�
   }), /AUTOMONTAGE_GPU/);
   assert.equal(acquired, 0);
 });
+
+// 3D-слой (#150): признак 3D уходит в план GPU; swangle – одна попытка, angle падает → повтор со swangle;
+// часы реального времени в 3D-коде – предупреждение с файлом и строкой.
+function make3dLayer(layerDir, body = "export const Scene = () => null;\n") {
+  fs.writeFileSync(path.join(layerDir, 'src', 'Scene3d.jsx'), `import { ThreeCanvas } from '@remotion/three';\n${body}`);
+}
+
+test('layer render: 3D-слой → gpuPlan получает webgl: true, обычный – false', { skip: !hasFfmpeg }, async (t) => {
+  const plain = await scaffold(t);
+  const seen = [];
+  const spy = (options) => { seen.push(options?.webgl); return CPU_PLAN(); };
+  assert.equal(await plain.run({ runToolImpl: fakeRemotion(6, () => effectsOf(plain.projectDir, 6)).runToolImpl, gpuPlan: spy }), 0);
+  const three = await scaffold(t);
+  make3dLayer(three.layerDir);
+  assert.equal(await three.run({ runToolImpl: fakeRemotion(6, () => effectsOf(three.projectDir, 6)).runToolImpl, gpuPlan: spy }), 0);
+  assert.deepEqual(seen, [false, true]);
+});
+
+test('layer render: план swangle → --gl=swangle, одна попытка без reapOnFailure', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, layerDir, run } = await scaffold(t);
+  make3dLayer(layerDir);
+  const wrapped = gpuFailing(fakeRemotion(6, () => effectsOf(projectDir, 6)));
+  assert.equal(await run({ runToolImpl: wrapped.runToolImpl, gpuPlan: () => ({ gl: 'swangle', fallbackGl: null, reason: '3D: тест' }) }), 0);
+  assert.equal(wrapped.seen.length, 1);
+  assert.ok(wrapped.seen[0].args.includes('--gl=swangle'));
+  assert.equal(wrapped.seen[0].options.reapOnFailure, undefined);
+});
+
+test('layer render: 3D на angle упал → повтор с --gl=swangle, а не без gl', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, layerDir, run, report } = await scaffold(t);
+  make3dLayer(layerDir);
+  const wrapped = gpuFailing(fakeRemotion(6, () => effectsOf(projectDir, 6)));
+  assert.equal(await run({ runToolImpl: wrapped.runToolImpl, gpuPlan: () => ({ gl: 'angle', fallbackGl: 'swangle', reason: '3D mac: тест' }) }), 0);
+  assert.equal(wrapped.seen.length, 2);
+  assert.ok(wrapped.seen[0].args.includes('--gl=angle'));
+  assert.ok(wrapped.seen[1].args.includes('--gl=swangle'));
+  assert.equal(report().error, null);
+});
+
+test('layer render: useFrame и Math.random в 3D-слое – предупреждение, рендер идёт', { skip: !hasFfmpeg }, async (t) => {
+  const { projectDir, layerDir, logs, run } = await scaffold(t);
+  make3dLayer(layerDir, "export const Scene = () => { useFrame(() => Math.random()); return null; };\n");
+  assert.equal(await run({ runToolImpl: fakeRemotion(6, () => effectsOf(projectDir, 6)).runToolImpl, gpuPlan: CPU_PLAN }), 0);
+  const line = logs.find((l) => l.includes('3D-слой') && l.includes('useFrame'));
+  assert.ok(line, logs.join('\n'));
+  assert.match(line, /Scene3d\.jsx:2/);
+  assert.match(line, /Math\.random/);
+});

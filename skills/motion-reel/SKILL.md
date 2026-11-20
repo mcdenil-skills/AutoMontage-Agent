@@ -20,6 +20,7 @@ OpenAI/Anthropic API для сценария, режиссуры или монт
 
 Прочитай [`reel-turnkey/references/creative-motion.md`](../reel-turnkey/references/creative-motion.md).
 Прочитай [`reel-turnkey/references/motion-craft.md`](../reel-turnkey/references/motion-craft.md) – числа и запреты движения.
+Приём под каждую фразу речи подбирай по [`reel-turnkey/references/motion-library.md`](../reel-turnkey/references/motion-library.md) – каталог 703 анимаций Opus 5.5: что сказал спикер → приём → пример и как перенести.
 Если пользователь ещё не выбрал маршрут, сразу покажи карточку **«Что делаем?»** (вопрос «Как монтируем?»)
 только с неясными вопросами: формат (вертикаль 9:16 или горизонталь 16:9 – `--aspect horizontal`)
 и способ монтажа – уникальный Creative Motion (рекомендуется), Creative Motion + оверлеи

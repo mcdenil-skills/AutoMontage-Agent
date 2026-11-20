@@ -190,7 +190,10 @@ preview. Обязательные пользовательские точки �
 
 Полный контракт выбора, автономности, уникального дизайна и QA находится в
 `skills/reel-turnkey/references/creative-motion.md`, числа и запреты движения – в
-[`skills/reel-turnkey/references/motion-craft.md`](skills/reel-turnkey/references/motion-craft.md), порядок черновой нарезки – в
+[`skills/reel-turnkey/references/motion-craft.md`](skills/reel-turnkey/references/motion-craft.md), каталог приёмов под фразы речи
+(703 анимации Opus 5.5, включая 3D) – в
+[`skills/reel-turnkey/references/motion-library.md`](skills/reel-turnkey/references/motion-library.md): агент сам предлагает
+приём и пример под каждую смысловую фразу, порядок черновой нарезки – в
 `skills/reel-turnkey/references/rough-cut.md`. Навыки `reel-turnkey`, `reel-from-donor` и
 `motion-reel` обязаны применять их в своих маршрутах.
 

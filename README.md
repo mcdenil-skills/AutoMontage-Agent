@@ -703,6 +703,13 @@ CPU. `AUTOMONTAGE_GPU=off` в окружении команды возвраща
 `npm run doctor` в строке «Рендер слоя». Значение кроме `auto` и `off` – ошибка, `layer render`
 останавливается до очереди.
 
+**3D-сцены в слое.** Компонент слоя может рисовать 3D через `@remotion/three` (`<ThreeCanvas>`,
+`three`, `@react-three/fiber` уже в зависимостях движка). `layer render` сам видит импорт этих
+пакетов в `src/` слоя и включает WebGL: на Apple Silicon `--gl=angle` (повтор при сбое –
+`--gl=swangle`), на других платформах и при `AUTOMONTAGE_GPU=off` – программный `--gl=swangle`.
+Сцена должна двигаться только от `useCurrentFrame()`: часы `useFrame`, `Math.random`, `Date.now`
+в 3D-коде дают предупреждение. Подробно: [`docs/MOTION-KIT.md`](docs/MOTION-KIT.md#3d-сцены-в-слое).
+
 ### Очередь тяжёлых задач
 
 `layer render`, `layer import`, preview, final (lesson и Dynamic), `master` и `roughcut` занимают

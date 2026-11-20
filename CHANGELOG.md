@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- 3D-сцены в motion-слое: `@remotion/three`, `three` и `@react-three/fiber` в зависимостях движка.
+  `layer render` сам находит 3D-импорт в коде слоя и включает WebGL (`angle` на Apple Silicon с
+  повтором на `swangle`, иначе `swangle`); часы реального времени в 3D-коде (`useFrame`,
+  `Math.random`, `Date.now`) – предупреждение с файлом и строкой. `npm run doctor` называет бэкенд
+  3D-слоёв. Рендер-тест `tests/layer-3d-render.test.js` (#150, D-053).
+- Каталог приёмов `skills/reel-turnkey/references/motion-library.md` (+ `motion-library.json`) по
+  открытой библиотеке 703 анимаций Claude Opus 5.5 (MIT): что сказал спикер → какой приём → пример
+  и как перенести покадрово. Навыки Creative Motion, `motion-reel`, `ai-promo`, `reel-from-donor`
+  предлагают приём и пример под фразы речи и записывают источник в brief (#149).
+
+### Безопасность
+
+- `zod` принудительно 4.6.6 через `overrides` в `package.json`: Remotion 4.0.536 закрепляет 4.5.4 с
+  уязвимостью GHSA-mrhx-c7xc-m3w5 (исчерпание памяти при проверке больших коллекций), из-за
+  которой CI-шаг `npm audit --audit-level=high` падал и на `main`. Обновление самого Remotion –
+  отдельной задачей.
+
 ## [1.26.0] - 2026-10-23
 
 Главное в этом релизе – спокойная камера для горизонтальных роликов 16:9: план спикера держится
