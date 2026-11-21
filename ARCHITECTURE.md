@@ -56,6 +56,9 @@ FPS, включая NTSC `30000/1001` и `24000/1001`, вычисляет `durat
 
 Точка оркестрации – `scripts/build.js`. Без `--scenario` он создаёт черновой монтажный
 лист; смысловую расстановку блоков агент затем правит и запускает повторно с готовым JSON.
+Из готового листа кроме `blocks`, `beatZoom`, `beatSec` и `stillWindows` в props переходят
+`audio` (фоновая музыка) и `theme` – через `scripts/scenario-extras.js`; флаг `--theme` важнее
+темы листа.
 
 В project-режиме `scripts/project/workspace.js` оборачивает render, finish, music и
 публикацию в единый lifecycle. Ошибка переводит текущую версию из `started` в `failed`,

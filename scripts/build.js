@@ -37,6 +37,7 @@ const { parseVideoProbe } = require('./media-probe');
 const { resolveSourceTiming } = require('./source-timing');
 const { captureTool, runNodeTool, runTool } = require('./process');
 const { loadExtTheme } = require('./load-ext-theme');
+const { scenarioExtras } = require('./scenario-extras');
 const { resolveOutputGeometry } = require('./lesson/aspect');
 const { REMOTION_AUDIO_ADVANCE_MS } = require('./finish-audio');
 const {
@@ -552,10 +553,12 @@ log(`субтитров: ${CAPTIONS.length} групп`);
 // 5. монтажный лист (+ зум-ритм beatZoom)
 // приоритет: флаг --beat → из scenario-файла → выкл по умолчанию
 let blocks, beatZoom = false, beatSec = buildOptions.beatSec, stillWindows = [];
+let scenarioData = null;
 let activeScenarioPath = null;
 if (scenarioFile) {
   activeScenarioPath = buildContext.resolveBrief(scenarioFile);
   const sc = JSON.parse(fs.readFileSync(activeScenarioPath, 'utf8'));
+  scenarioData = sc;
   blocks = sc.blocks;
   if (sc.beatZoom != null) beatZoom = !!sc.beatZoom;
   if (sc.beatSec != null) {
@@ -605,6 +608,9 @@ if (args.includes('--autopos')) {
 
 // 5c. (опц.) внешний бренд-пак – тема из THEMES_EXT/<id>/theme.json (приватный стиль)
 let themeVal = resolveTheme(theme);
+// audio и theme из монтажного листа (PR #14): флаг --theme важнее темы листа.
+const extras = scenarioExtras(scenarioData, { themeFlag: args.includes('--theme'), resolveTheme });
+if (extras.theme != null) themeVal = extras.theme;
 
 // 5d. (опц.) autotheme – тема из палитры видео (Фаза 4.4-4.6)
 if (args.includes('--autotheme')) {
@@ -623,6 +629,7 @@ if (args.includes('--autotheme')) {
 
 // 7. props
 const props = { source: 'source.mp4', theme: themeVal, blocks, width: W, height: H, fps: FPS, durationInFrames: durF, beatZoom, beatSec, stillWindows };
+if (extras.audio) props.audio = extras.audio;
 
 // 7b. валидация листа ДО рендера (Фаза 2.1)
 const { validate } = require('./validate');

@@ -278,7 +278,8 @@ function writeManifestAtomic(directory, manifest, {
   let handle = null;
   try {
     fileSystem.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    handle = fileSystem.openSync(temporaryPath, 'r');
+    // 'r+', а не 'r': Windows отклоняет fsync дескриптора, открытого только на чтение (EPERM, PR #14).
+    handle = fileSystem.openSync(temporaryPath, 'r+');
     fileSystem.fsyncSync(handle);
     fileSystem.closeSync(handle);
     handle = null;
