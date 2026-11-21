@@ -1129,7 +1129,7 @@ Remotion (анимация плашек кодом), faster-whisper (распо�
 
 ### Версии и история изменений
 
-Текущая версия исходников: **v1.26.0**. Опубликованные сборки находятся на странице
+Текущая версия исходников: **v1.27.0**. Опубликованные сборки находятся на странице
 [GitHub Releases](https://github.com/mcdenil-skills/AutoMontage-Agent/releases). Источник номера
 в репозитории – `version` в `package.json` и корневая запись в `package-lock.json`; состав
 релиза описан в [CHANGELOG.md](CHANGELOG.md).
