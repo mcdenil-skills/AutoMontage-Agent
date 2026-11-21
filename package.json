@@ -45,7 +45,7 @@
     "@remotion/transitions": "4.0.536",
     "ajv": "^8.20.0",
     "esbuild": "0.28.1",
-    "react": "19.0.0",
+    "react": "19.3.1",
     "react-dom": "19.0.0",
     "remotion": "4.0.536",
     "three": "0.187.0"
