@@ -151,3 +151,15 @@ test('cards get a light summary only where there is something to show', (t) => {
   assert.deepEqual(clip.leadMagnet, { ask: true, status: null, nextStep: null });
   assert.equal(Object.hasOwn(plain, 'leadMagnet'), false);
 });
+
+test('folder offer view computes playback from the raw offer without exposing its source', (t) => {
+  const { projectsDir } = makePultRoot(t);
+  addVideoWithOffer(projectsDir, { folder: 'clip' });
+  let raw = null;
+  const result = folderLeadMagnet(projectsDir, 'clip', buildLeadMagnetIndex(projectsDir), {
+    playbackFor(offer) { raw = offer; return { videoUrl: '/media/video?key=clip', startSec: 5, endSec: 6, unavailableReason: null }; },
+  });
+  assert.ok(raw.source);
+  assert.equal(result.offers[0].playback.startSec, 5);
+  assert.equal(result.offers[0].source, undefined);
+});
