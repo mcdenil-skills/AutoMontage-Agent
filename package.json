@@ -35,7 +35,7 @@
   "dependencies": {
     "@material/material-color-utilities": "^0.4.0",
     "@react-three/fiber": "9.8.2",
-    "@remotion/bundler": "4.0.536",
+    "@remotion/bundler": "4.0.545",
     "@remotion/cli": "4.0.536",
     "@remotion/fonts": "4.0.536",
     "@remotion/layout-utils": "4.0.536",
