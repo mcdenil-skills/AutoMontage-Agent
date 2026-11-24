@@ -1009,6 +1009,7 @@ function renderDetail() {
 // когда агент прислал новую версию.
 function rerenderDetailKeepingDraft() {
   rememberVideoDraft();
+  lmRememberCaret();
   renderDetail();
 }
 

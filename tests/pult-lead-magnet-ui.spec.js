@@ -6,6 +6,7 @@ const { test, expect } = require('playwright/test');
 
 const { approveLeadMagnet } = require('../scripts/lead-magnet/approve');
 const { resolveBrand } = require('../scripts/lead-magnet/brand');
+const { addLeadMagnetComment } = require('../scripts/lead-magnet/comments');
 const library = require('../scripts/lead-magnet/library');
 const { addOffer } = require('../scripts/lead-magnet/offers');
 const { readDecisions } = require('../scripts/lead-magnet/requests');
@@ -511,6 +512,141 @@ test('outside review mode a click on the page does not start a comment, links ar
   await page.frameLocator('[data-lm-frame]').locator('[data-lm-link]').click();
   await expect(page.locator('[data-notice]')).toContainText('https://example.com/practicum');
   await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Сайт без кода');
+});
+
+// Регрессии #165: клик по странице в режиме правок не должен пропадать молча.
+const lmSave = (page) => page.locator('.lm-comments button', { hasText: 'Добавить правку' });
+const lmBlock = (page) => page.frameLocator('[data-lm-frame]').locator('[data-lm-block="steps"] h2');
+
+test('review mode survives a saved edit, so the next block click selects a place right away', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-view="phone"]').click();
+  await page.locator('[data-lm-review-mode]').check();
+  await lmBlock(page).click();
+  await page.locator('[data-lm-comment-text]').fill('Первая правка');
+  await lmSave(page).click();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(1);
+  await expect(page.locator('[data-lm-review-mode]')).toBeChecked();
+  await expect(page.locator('[data-lm-frame]')).toHaveAttribute('data-view', 'phone');
+  await expect(page.locator('[data-lm-comment-text]')).toHaveValue('');
+  await lmBlock(page).click();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «steps» · телефон');
+  await page.locator('[data-lm-comment-text]').fill('Вторая правка');
+  await lmSave(page).click();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(2);
+});
+
+test('a background update of the same revision keeps the mode, the place and the unfinished edit', async ({ page }) => {
+  const { id } = await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await lmBlock(page).click();
+  await page.locator('[data-lm-comment-text]').fill('Не потерять правку');
+  addLeadMagnetComment(projectsDir, id, { revision: 1, target: { kind: 'text', text: 'dm' }, text: 'Чужая правка', snapshotBytes: null });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(1);
+  await expect(page.locator('[data-lm-review-mode]')).toBeChecked();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «steps» · компьютер');
+  await expect(page.locator('[data-lm-comment-text]')).toHaveValue('Не потерять правку');
+  await expect(lmSave(page)).toBeEnabled();
+  // Фокус и каретка вернулись: человек продолжает печатать в том же поле.
+  await expect(page.locator('[data-lm-comment-text]')).toBeFocused();
+  await page.keyboard.type('!');
+  await expect(page.locator('[data-lm-comment-text]')).toHaveValue('Не потерять правку!');
+});
+
+test('a saved edit never stays in the form when another block was picked during the request', async ({ page }) => {
+  await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await lmBlock(page).click();
+  await page.locator('[data-lm-comment-text]').fill('Отправленная правка');
+  let release;
+  let requested;
+  const pending = new Promise((resolve) => { requested = resolve; });
+  await page.route('**/api/lead-magnet/comment', async (route) => {
+    requested();
+    await new Promise((resolve) => { release = resolve; });
+    await route.continue();
+  });
+  await lmSave(page).click();
+  await pending;
+  await page.frameLocator('[data-lm-frame]').locator('[data-lm-block="hero"] h1').click();
+  release();
+  await expect(page.locator('[data-lm-comments] .comment')).toHaveCount(1);
+  await expect(page.locator('[data-lm-comment-text]')).toHaveValue('');
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «hero» · компьютер');
+  await expect(lmSave(page)).toBeDisabled();
+});
+
+test('a click that selects nothing is announced even when a place is already chosen', async ({ page }) => {
+  await startWith((dir) => withDraft(dir, { page: goodPage({ extra: '<p data-outside>Вне блоков</p>' }) }));
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await lmBlock(page).click();
+  await page.frameLocator('[data-lm-frame]').locator('[data-outside]').click();
+  await expect(page.locator('[data-lm-target]')).toContainText('К блоку «steps» · компьютер. Здесь нет блока');
+  await lmBlock(page).click();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «steps» · компьютер');
+});
+
+test('a new revision keeps the text but asks to pick the block again', async ({ page }) => {
+  const { id } = await startWith(withDraft);
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await lmBlock(page).click();
+  await page.locator('[data-lm-comment-text]').fill('Не потерять правку');
+  publishCheckedRevision(projectsDir, id, { page: goodPage({ title: 'Новая версия' }) });
+  await page.evaluate(() => refresh({ keepDetail: true }));
+  await expect(page.locator('.lm-viewer')).toContainText('Версия v02');
+  await expect(page.locator('[data-lm-comment-text]')).toHaveValue('Не потерять правку');
+  await expect(page.locator('[data-lm-target]')).toContainText('Страница обновилась');
+  await expect(lmSave(page)).toBeDisabled();
+  await lmBlock(page).click();
+  await expect(lmSave(page)).toBeEnabled();
+});
+
+test('a link inside a block is a place for an edit in review mode', async ({ page }) => {
+  const link = '<section data-lm-block="offer"><a data-lm-link href="https://example.com/practicum">Практикум</a></section>';
+  await startWith((dir) => withDraft(dir, { page: goodPage({ extra: link }) }));
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await page.frameLocator('[data-lm-frame]').locator('[data-lm-link]').click();
+  await expect(page.locator('[data-lm-target]')).toHaveText('К блоку «offer» · компьютер');
+  await expect(page.frameLocator('[data-lm-frame]').locator('h1')).toHaveText('Сайт без кода');
+});
+
+test('the pult says what to do: mode off, mode on, a click outside blocks, text without a place', async ({ page }) => {
+  const outside = '<p data-outside>Текст вне блоков</p>';
+  await startWith((dir) => withDraft(dir, { page: goodPage({ extra: outside }) }));
+  await openLeadTab(page);
+  const target = page.locator('[data-lm-target]');
+  await expect(target).toContainText('Включите «Режим правок»');
+  await expect(target).not.toHaveAttribute('data-attention', '');
+  await lmBlock(page).click();
+  await expect(target).toContainText('сейчас клик по блоку ничего не выбирает');
+  await expect(target).toHaveAttribute('data-attention', '');
+  await page.locator('[data-lm-review-mode]').check();
+  await expect(target).toContainText('Кликните по блоку страницы');
+  await page.frameLocator('[data-lm-frame]').locator('[data-outside]').click();
+  await expect(target).toContainText('Здесь нет блока');
+  await expect(target).toHaveAttribute('data-attention', '');
+  await page.locator('[data-lm-comment-text]').fill('Что-то поправить');
+  await expect(target).toContainText('Место правки не выбрано');
+  await expect(lmSave(page)).toBeDisabled();
+  await lmBlock(page).click();
+  await expect(target).toHaveText('К блоку «steps» · компьютер');
+  await expect(target).not.toHaveAttribute('data-attention', '');
+  await expect(lmSave(page)).toBeEnabled();
+});
+
+test('a page that never answers review mode is reported instead of silence', async ({ page }) => {
+  await startWith(withDraft);
+  await page.route('**/lm/page?**', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Пусто</h1>' }));
+  await openLeadTab(page);
+  await page.locator('[data-lm-review-mode]').check();
+  await expect(page.locator('[data-lm-target]')).toContainText('Страница не ответила', { timeout: 8000 });
 });
 
 test('approval needs the checkbox and then shows the files', async ({ page }) => {

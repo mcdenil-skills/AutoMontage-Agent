@@ -381,7 +381,9 @@ Remotion-слой такого ролика рендерится без звук
 демо, TTS и возобновляемый preview/final. До первой записи source/manifest сохраняются новая
 цепочка каталогов и локальный `.gitignore` с последним правилом `*`; существующие bytes правил
 сохраняются. Проверка Git отклоняет корень репозитория и tracked-содержимое; no-follow/identity
-guards отклоняют symlinks и подмену каталогов/ignore. Source staging, canonical words и draft
+guards отклоняют symlinks и подмену каталогов/ignore. Открытый на запись `.gitignore` сверяется по
+inode, размеру, mtime, числу ссылок и самим байтам через дескриптор, но не по `ctime`: macOS меняет
+его уже при открытии (`com.apple.provenance`), и первое «Утверждаю» в пульте отказывало (#164). Source staging, canonical words и draft
 повторяют guard; неудачная начальная запись удаляет принадлежащие ей частичные файлы.
 
 Опциональная async-ветка `motion --script --voice elevenlabs --accept-provider-cost` использует

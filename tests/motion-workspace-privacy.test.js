@@ -112,3 +112,65 @@ for (const race of ['ignore-sync', 'source-stage-open', 'source-write']) test(`p
   assert.equal(fs.existsSync(path.join(f.projectDir, 'project.json')), false);
   assert.equal(untracked(f.consumer), '');
 });
+
+// Регрессия #164: на macOS само открытие файла на запись обновляет com.apple.provenance, а с ним ctime –
+// содержимое, inode, размер и mtime прежние. Охрана принимала это за подмену, и первое «Утверждаю» в
+// пульте на motion-ролике всегда падало. fchmod с тем же режимом меняет ctime так же на любой POSIX.
+function bumpCtimeOnWriteOpen(t, ignore, after = () => {}) {
+  const open = fs.openSync;
+  let opened = 0;
+  t.mock.method(fs, 'openSync', (filename, flags, ...rest) => {
+    const fd = open(filename, flags, ...rest);
+    const writes = typeof flags === 'number' && (flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR));
+    if (String(filename) === ignore && writes) {
+      opened += 1;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      if (process.platform !== 'win32') fs.fchmodSync(fd, fs.fstatSync(fd).mode & 0o777);
+      after();
+    }
+    return fd;
+  });
+  return () => opened;
+}
+
+for (const [label, original, expected] of [
+  ['already protected', '*\n', '*\n'],
+  ['still missing the blanket rule', '*.log\n', '*.log\n\n*\n'],
+]) test(`a ctime change from opening an ignore file ${label} is not treated as tampering`, { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); fs.mkdirSync(f.projectDir, { recursive: true });
+  const ignore = path.join(f.projectDir, '.gitignore');
+  fs.writeFileSync(ignore, original);
+  const opened = bumpCtimeOnWriteOpen(t, ignore);
+  preparePrivateWorkspace(f.projectDir).assertCurrent();
+  assert.equal(opened(), 1, 'the write-open must be reproduced');
+  assert.equal(fs.readFileSync(ignore, 'utf8'), expected);
+});
+
+// Негативная пара: содержимое подменили между чтением и записью с тем же размером и mtime – отказ,
+// и чужие байты не затёрты.
+test('an ignore file rewritten in place between the check and the write is still refused', t => {
+  const f = fixture(t); fs.mkdirSync(f.projectDir, { recursive: true });
+  const ignore = path.join(f.projectDir, '.gitignore');
+  fs.writeFileSync(ignore, '*.log\n');
+  // Целые секунды: иначе utimes округлит mtime и отказ даст сверка времени, а не байтов.
+  fs.utimesSync(ignore, 1e9, 1e9);
+  const before = fs.statSync(ignore);
+  const opened = bumpCtimeOnWriteOpen(t, ignore, () => {
+    fs.writeFileSync(ignore, '!.env\n');
+    fs.utimesSync(ignore, 1e9, 1e9);
+    const after = fs.statSync(ignore);
+    assert.deepEqual([after.ino, after.size, after.mtimeMs, after.nlink], [before.ino, before.size, before.mtimeMs, before.nlink]);
+  });
+  assert.throws(() => preparePrivateWorkspace(f.projectDir), /private|workspace/i);
+  assert.equal(opened(), 1);
+  assert.equal(fs.readFileSync(ignore, 'utf8'), '!.env\n');
+});
+
+test('an ignore file that gained a hard link between the check and the write is refused', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); fs.mkdirSync(f.projectDir, { recursive: true });
+  const ignore = path.join(f.projectDir, '.gitignore');
+  fs.writeFileSync(ignore, '*.log\n');
+  bumpCtimeOnWriteOpen(t, ignore, () => fs.linkSync(ignore, path.join(f.root, 'outside')));
+  assert.throws(() => preparePrivateWorkspace(f.projectDir), /private|workspace/i);
+  assert.equal(fs.readFileSync(path.join(f.root, 'outside'), 'utf8'), '*.log\n');
+});

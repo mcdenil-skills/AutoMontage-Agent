@@ -17,6 +17,7 @@ const {
   ROOT,
   addDraftProject,
   addLegacyFolder,
+  addMotionDraftProject,
   addRoughCutProject,
   addSecondRevision,
   makePultRoot,
@@ -477,6 +478,32 @@ test('approve requires confirmation and the exact previewed video', async (t) =>
   const briefs = fs.readdirSync(path.join(projectsDir, 'waiting-clip', 'brief'));
   assert.ok(briefs.some((name) => /-approved\.lesson\.json$/.test(name)));
   assert.equal((await post(session, '/api/approve', { key: 'waiting-clip', ticket, confirmPreviewViewed: true })).status, 409);
+});
+
+// Регрессия #164: macOS меняет ctime файла уже при открытии на запись (com.apple.provenance), и первое
+// «Утверждаю» на motion-ролике отвечало 422, а второе проходило. fchmod повторяет это на любой POSIX.
+test('the first approval of a motion reel succeeds even when opening .gitignore changes its ctime', { skip: process.platform === 'win32' }, async (t) => {
+  const { projectsDir } = makePultRoot(t);
+  const { projectDir } = addMotionDraftProject(projectsDir, { folder: 'motion-clip' });
+  const { session } = await startTest(t, projectsDir, { finalizeApprovalImpl: () => ({ promoted: false }) });
+  const { approvalTicket } = await variantOf(session, 'motion-clip');
+  const ignore = path.join(projectDir, '.gitignore');
+  const open = fs.openSync;
+  let first = true;
+  t.mock.method(fs, 'openSync', (filename, flags, ...rest) => {
+    const fd = open(filename, flags, ...rest);
+    if (first && String(filename) === ignore && typeof flags === 'number'
+      && (flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR))) {
+      first = false;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      fs.fchmodSync(fd, fs.fstatSync(fd).mode & 0o777);
+    }
+    return fd;
+  });
+  const result = await approve(session, 'motion-clip', approvalTicket);
+  assert.equal(first, false, 'the write-open must be reproduced');
+  assert.equal(result.status, 201, JSON.stringify(result.json));
+  assert.equal(approvedBriefs(projectsDir, 'motion-clip').length, 2);
 });
 
 test('a draft waiting for the author to pick b-roll gets no approval ticket', async (t) => {
