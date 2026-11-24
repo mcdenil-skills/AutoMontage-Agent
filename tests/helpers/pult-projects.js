@@ -116,6 +116,34 @@ function addDraftProject(projectsDir, {
   return { projectDir: workspace.dir, workspace, draft, preview: previewResult, approved };
 }
 
+// motion-reel, который ждёт утверждения: закадровый голос, черновик без медиа и полный preview.
+function addMotionDraftProject(projectsDir, { folder, name = folder } = {}) {
+  const sourcePath = path.join(path.dirname(projectsDir), `${folder}-narration.wav`);
+  fs.writeFileSync(sourcePath, `narration ${folder}`);
+  let workspace = createOrOpenProject({
+    projectDir: path.join(projectsDir, folder), name, sourcePath, projectKind: 'motion-reel', mediaKind: 'audio',
+    now: new Date('2026-09-20T10:00:00.000Z'),
+  });
+  const brief = {
+    version: 1, kind: 'motion-reel', status: 'draft', source: workspace.manifest.source.localPath,
+    theme: 'motion-neutral', title: name,
+    output: { aspect: 'vertical', width: 1080, height: 1920, fps: 30, durationInFrames: 120 },
+    scenes: [{ scene: 'card', start: 0, end: 4, title: 'Пульт', body: 'Проверка утверждения' }],
+  };
+  const draft = publishBriefRevision(workspace, { brief, markdown: `# ${name}`, kind: 'motion-reel' });
+  workspace = reopen(workspace.dir);
+  const plan = planPreview(workspace, {
+    briefPath: draft.jsonPath, briefSha256: sha256(fs.readFileSync(draft.jsonPath)),
+    range: { kind: 'full', fromSec: 0, toSec: 4 },
+  });
+  const staged = path.join(workspace.dir, 'previews', 'stage.mp4');
+  fs.writeFileSync(staged, `preview ${folder}`);
+  publishCurrentPreview(workspace, plan, staged, {
+    width: 1080, height: 1920, fps: 30, generatedAt: '2026-09-20T10:05:00.000Z', quality: 'final',
+  });
+  return { projectDir: workspace.dir, draft };
+}
+
 // Публикует ВТОРОЙ черновик и полный preview поверх уже утверждённого и отрендеренного
 // проекта: ролик возвращается в «Ждёт меня», а рендер v01 и его финал остаются на диске.
 // previewBytes – содержимое нового preview: по умолчанию текст, а там, где тесту нужно
@@ -327,6 +355,7 @@ module.exports = {
   ROOT,
   moveCurrentBriefToSubfolder,
   addDraftProject,
+  addMotionDraftProject,
   addLegacyFolder,
   addRoughCutProject,
   addSecondRevision,

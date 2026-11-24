@@ -79,17 +79,31 @@ function reviewScript(pultOrigin) {
     if (event.source !== window.parent || !event.data || event.data.type !== 'lm-review') return;
     reviewing = Boolean(event.data.on);
     document.documentElement.toggleAttribute('data-lm-review', reviewing);
+    // Ответ пульту: режим дошёл до страницы. Без него пульт скажет, что страница не отвечает.
+    window.parent.postMessage({ type: 'lm-ready', on: reviewing, blocks: document.querySelectorAll('[data-lm-block]').length }, pultOrigin);
   });
   document.addEventListener('click', (event) => {
     const link = event.target.closest('a[href]');
-    if (link && !link.getAttribute('href').startsWith('#')) {
+    // В режиме правок ссылка – такое же место для правки, как и остальной блок (#165).
+    if (!reviewing && link && !link.getAttribute('href').startsWith('#')) {
       event.preventDefault();
       window.parent.postMessage({ type: 'lm-link', href: link.href }, pultOrigin);
       return;
     }
-    if (!reviewing) return;
     const block = event.target.closest('[data-lm-block]');
-    if (!block) return;
+    if (!reviewing) {
+      // Обычное чтение: рабочие кнопки и якоря страницы пульт не комментирует.
+      if (block && !event.target.closest('a,button,summary,label,input,select,textarea')) {
+        window.parent.postMessage({ type: 'lm-idle' }, pultOrigin);
+      }
+      return;
+    }
+    if (!block) {
+      // Кнопки и аккордеоны вне блоков работают; уйти по ссылке страница не должна.
+      if (link && !link.getAttribute('href').startsWith('#')) event.preventDefault();
+      window.parent.postMessage({ type: 'lm-miss' }, pultOrigin);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     const box = block.getBoundingClientRect();
@@ -99,6 +113,8 @@ function reviewScript(pultOrigin) {
       rect: { x: Math.max(0, box.left + window.scrollX), y: Math.max(0, box.top + window.scrollY), w: box.width, h: box.height },
     }, pultOrigin);
   }, true);
+  // Скрипт страницы готов: пульт сразу пришлёт режим, не дожидаясь полной загрузки (load).
+  window.parent.postMessage({ type: 'lm-hello' }, pultOrigin);
 }
 
 function injectReview(html, pultOrigin) {

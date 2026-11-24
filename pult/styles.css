@@ -242,3 +242,5 @@ button, input, textarea { font: inherit; color: inherit; }
 .lm-checks [data-ok="false"] { color: hsl(var(--danger)); }
 .lm-comments textarea { resize: vertical; }
 .lm-comments .comment-form .hint { margin: 0; }
+/* Правку пока нельзя сохранить: подсказка говорит, что сделать, и должна быть заметной. */
+.lm-comments .comment-form .hint[data-attention] { padding: 0.45rem 0.6rem; border-left: 3px solid hsl(var(--amber)); color: hsl(var(--foreground)); }

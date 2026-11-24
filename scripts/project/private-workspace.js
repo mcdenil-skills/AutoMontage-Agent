@@ -43,6 +43,15 @@ function readIgnore(filename, fileSystem) {
   } finally { fileSystem.closeSync(fd); }
 }
 
+// Через тот же дескриптор и с явной позицией: текущая позиция остаётся в начале для записи.
+function openedBytesEqual(fd, expected, fileSystem) {
+  const bytes = Buffer.alloc(expected.length + 1);
+  let total = 0;
+  let read;
+  while (total < bytes.length && (read = fileSystem.readSync(fd, bytes, total, bytes.length - total, total)) > 0) total += read;
+  return total === expected.length && bytes.subarray(0, total).equals(expected);
+}
+
 function preparePrivateWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl = spawnSync } = {}) {
   try {
     if (typeof projectDir !== 'string' || !projectDir) fail();
@@ -77,7 +86,7 @@ function preparePrivateWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl = 
       : Buffer.concat([previous?.bytes || Buffer.alloc(0), Buffer.from(previous?.bytes.length ? '\n*\n' : '*\n')]);
     chain.assertCurrent();
     const constants = fileSystem.constants || fs.constants;
-    const fd = fileSystem.openSync(ignore, constants.O_WRONLY | (constants.O_NOFOLLOW || 0)
+    const fd = fileSystem.openSync(ignore, constants.O_RDWR | (constants.O_NOFOLLOW || 0)
       | (previous ? 0 : constants.O_CREAT | constants.O_EXCL), 0o600);
     try {
       const opened = fileSystem.fstatSync(fd);
@@ -85,7 +94,11 @@ function preparePrivateWorkspace(projectDir, { fileSystem = fs, spawnSyncImpl = 
       chain.assertCurrent();
       if (!opened.isFile() || current.isSymbolicLink() || !same(opened, current)
         || (previous && (!same(previous.stat, opened) || previous.stat.size !== opened.size
-          || previous.stat.mtimeMs !== opened.mtimeMs || previous.stat.ctimeMs !== opened.ctimeMs))) fail();
+          || previous.stat.mtimeMs !== opened.mtimeMs || opened.nlink !== 1
+          // ctime здесь не сравниваем (#164): macOS обновляет его уже при открытии на запись
+          // (атрибут com.apple.provenance), и первое «Утверждаю» в пульте падало. Подмену ловят
+          // сами байты, прочитанные через открытый дескриптор.
+          || !openedBytesEqual(fd, previous.bytes, fileSystem)))) fail();
       if (!previous || !bytes.equals(previous.bytes)) fileSystem.writeFileSync(fd, bytes);
       fileSystem.fsyncSync(fd);
     } finally { fileSystem.closeSync(fd); }

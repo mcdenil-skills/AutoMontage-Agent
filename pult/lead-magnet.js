@@ -509,6 +509,16 @@ const LM_FILE_LABELS = {
 const lmChosen = new Map();
 // Активная страница за стеклом: только её сообщения принимаются (задача 5).
 let lmActive = null;
+// Недописанная правка лид-магнита: вкладку перерисовывает каждый опрос с новыми данными и
+// каждая сохранённая правка, а режим, вид, место и текст человек терять не должен (#165).
+const lmDrafts = new Map();
+
+function lmDraft(magnet) {
+  if (!lmDrafts.has(magnet.id)) {
+    lmDrafts.set(magnet.id, { view: 'desktop', reviewing: false, text: '', target: null, revision: null, outdated: false, submitting: false });
+  }
+  return lmDrafts.get(magnet.id);
+}
 
 async function lmCopyText(text) {
   try {
@@ -553,7 +563,27 @@ async function lmPollTab(container, variant) {
   }
 }
 
+// Человек печатает правку, а вкладку перерисовывает опрос: запоминаем каретку, чтобы вернуть её.
+let lmCaret = null;
+function lmRememberCaret() {
+  const field = document.activeElement;
+  if (field && field.dataset && field.dataset.lmMagnet) {
+    lmCaret = { id: field.dataset.lmMagnet, start: field.selectionStart, end: field.selectionEnd };
+  }
+}
+
+function lmRestoreCaret(container) {
+  const caret = lmCaret;
+  lmCaret = null;
+  const field = container.querySelector('[data-lm-comment-text]');
+  // Человек уже перешёл в другое поле – не отбираем фокус.
+  if (!caret || !field || field.dataset.lmMagnet !== caret.id || document.activeElement !== document.body) return;
+  field.focus({ preventScroll: true });
+  field.setSelectionRange(caret.start, caret.end);
+}
+
 async function lmRenderTab(container, variant, loadedState = null) {
+  lmRememberCaret();
   const cardId = state.openCardId;
   const request = lmNextLoad(container);
   // Пока виден индикатор загрузки, прежний state уже не представлен в DOM.
@@ -601,7 +631,7 @@ async function lmRenderTab(container, variant, loadedState = null) {
   const main = el('div', 'lm-main');
   const side = el('div', 'detail__side');
   const comments = lmCommentsPanel(magnet);
-  main.append(lmViewer(magnet, (target) => comments.setTarget(target)), lmTextsPanel(magnet, comments));
+  main.append(lmViewer(magnet, comments), lmTextsPanel(magnet, comments));
   const badge = el('p', `badge badge--${magnet.status}`, LM_STATUS_LABELS[magnet.status]);
   const next = el('p', 'detail__next', magnet.nextStep);
   next.dataset.lmStatus = '';
@@ -612,9 +642,10 @@ async function lmRenderTab(container, variant, loadedState = null) {
   side.append(lmHandoff(variant, magnet));
   layout.append(main, side);
   container.append(layout);
+  lmRestoreCaret(container);
 }
 
-function lmViewer(magnet, onBlock) {
+function lmViewer(magnet, comments) {
   const box = el('div', 'lm-viewer');
   const { revision } = magnet;
   if (!revision || !revision.pageUrl) {
@@ -623,8 +654,8 @@ function lmViewer(magnet, onBlock) {
     box.append(empty);
     return box;
   }
-  let view = 'desktop';
-  let reviewing = false;
+  const draft = lmDraft(magnet);
+  let { view, reviewing } = draft;
   const wrap = el('div', 'lm-frame-wrap');
   const frame = el('iframe', 'lm-frame');
   frame.title = 'Страница лид-магнита';
@@ -645,9 +676,15 @@ function lmViewer(magnet, onBlock) {
     frame.style.left = `${Math.max(0, (available - width * scale) / 2)}px`;
     frame.dataset.view = view;
   };
+  let answerTimer = null;
   const sendReview = () => {
     // Страница в песочнице без своего origin: адресовать сообщение можно только '*'.
     if (frame.contentWindow) frame.contentWindow.postMessage({ type: 'lm-review', on: reviewing }, '*');
+    clearTimeout(answerTimer);
+    comments.setMode(reviewing ? 'on' : 'off');
+    if (reviewing) {
+      answerTimer = setTimeout(() => { if (frame.isConnected) comments.setMode('silent'); }, LM_REVIEW_ANSWER_MS);
+    }
   };
   const bar = el('div', 'lm-row');
   const views = el('div', 'detail-tabs');
@@ -658,21 +695,38 @@ function lmViewer(magnet, onBlock) {
     tab.setAttribute('aria-pressed', String(key === view));
     tab.addEventListener('click', () => {
       view = key;
+      draft.view = key;
       viewButtons.forEach((other) => other.setAttribute('aria-pressed', String(other === tab)));
       layoutFrame();
     });
     return tab;
   });
   views.append(...viewButtons);
-  const reviewToggle = lmChoice('checkbox', 'lm-review', 'on', 'Режим правок – кликните по блоку', false);
+  const reviewToggle = lmChoice('checkbox', 'lm-review', 'on', 'Режим правок – кликните по блоку', reviewing);
   reviewToggle.input.dataset.lmReviewMode = '';
-  reviewToggle.input.addEventListener('change', () => { reviewing = reviewToggle.input.checked; sendReview(); });
+  reviewToggle.input.addEventListener('change', () => {
+    reviewing = reviewToggle.input.checked;
+    draft.reviewing = reviewing;
+    sendReview();
+  });
   frame.addEventListener('load', sendReview);
   bar.append(views, reviewToggle.wrap, el('span', 'hint', `Версия ${lmRevisionLabel(revision.n)}`));
   box.append(bar, wrap);
   new ResizeObserver(layoutFrame).observe(wrap);
   layoutFrame();
-  lmActive = { frame, view: () => view, onBlock };
+  lmActive = {
+    frame,
+    view: () => view,
+    onBlock: (target) => comments.setTarget(target),
+    onHello: sendReview,
+    onMiss: () => { if (reviewing) comments.setMode('miss'); },
+    onIdle: () => { if (!reviewing) comments.setMode('idle'); },
+    onReady: (on, blocks) => {
+      if (!on || !reviewing) return;
+      clearTimeout(answerTimer);
+      comments.setMode(blocks ? 'on' : 'empty');
+    },
+  };
   return box;
 }
 
@@ -826,35 +880,74 @@ function lmTargetTo(target) {
     : `К тексту «${LM_TEXT_LABELS[target.text]}»`;
 }
 
+// Сколько ждать ответа страницы на включение режима, прежде чем сказать, что она молчит.
+const LM_REVIEW_ANSWER_MS = 3000;
+// Что сделать, пока место правки не выбрано. attention – подсказку надо заметить.
+const LM_PLACE_HINTS = {
+  off: { text: 'Включите «Режим правок» и кликните по блоку страницы или нажмите «Правка к тексту».' },
+  idle: { text: 'Включите «Режим правок» над страницей – сейчас клик по блоку ничего не выбирает.', attention: true },
+  on: { text: 'Кликните по блоку страницы – при наведении появится рамка – или нажмите «Правка к тексту».' },
+  miss: { text: 'Здесь нет блока. Наведите курсор на текст или карточку: появится рамка – и кликните.', attention: true },
+  empty: { text: 'На этой странице нет блоков для правок. Нажмите «Правка к тексту» или опишите правку агенту.', attention: true },
+  silent: { text: 'Страница не ответила на «Режим правок». Обновите окно пульта (⌘R или Ctrl+R) или нажмите «Правка к тексту».', attention: true },
+};
+
 function lmCommentsPanel(magnet) {
   const box = el('div', 'lm-panel lm-comments');
   box.append(el('h3', '', 'Правки'));
-  let target = null;
-  const where = el('p', 'hint', 'Включите «Режим правок» и кликните по блоку страницы или нажмите «Правка к тексту».');
+  const draft = lmDraft(magnet);
+  const revisionNow = magnet.revision ? magnet.revision.n : null;
+  // Место выбрано на прежней версии: на новой блок мог сдвинуться, а текст – измениться.
+  if (draft.target && draft.revision !== revisionNow) {
+    draft.target = null;
+    draft.outdated = true;
+  }
+  let { target } = draft;
+  let mode = draft.reviewing ? 'on' : 'off';
+  const where = el('p', 'hint');
   where.dataset.lmTarget = '';
-  const text = lmTextInput('', 'Текст правки', { multiline: true, maxLength: 1000 });
+  const text = lmTextInput(draft.text, 'Текст правки', { multiline: true, maxLength: 1000 });
   text.placeholder = 'Что поправить?';
   text.dataset.lmCommentText = '';
+  text.dataset.lmMagnet = magnet.id;
   const save = el('button', 'secondary', 'Добавить правку');
   save.type = 'button';
   save.disabled = true;
-  let submitting = false;
-  const canSave = () => { save.disabled = submitting || !target || !text.value.trim() || !magnet.revision; };
-  text.addEventListener('input', canSave);
-  save.addEventListener('click', async () => {
-    if (submitting || save.disabled) return;
-    submitting = true;
+  const canSave = () => {
+    save.disabled = draft.submitting || !target || !text.value.trim() || !magnet.revision;
+    const hint = LM_PLACE_HINTS[mode];
+    const prefix = draft.outdated ? 'Страница обновилась – выберите место заново. '
+      : text.value.trim() ? 'Место правки не выбрано. ' : '';
+    // Место уже выбрано, но последний клик ничего не выбрал – правка не должна молча уйти в прежнее.
+    const placed = target && (hint.attention ? `${lmTargetTo(target)}. ${hint.text}` : lmTargetTo(target));
+    where.textContent = placed || `${prefix}${hint.text}`;
+    where.toggleAttribute('data-attention', Boolean(hint.attention || (!target && prefix)));
+  };
+  text.addEventListener('input', () => {
+    draft.text = text.value;
     canSave();
+  });
+  save.addEventListener('click', async () => {
+    if (draft.submitting || save.disabled) return;
+    draft.submitting = true;
+    canSave();
+    const sent = text.value;
+    const sentTarget = target;
     try {
       await api('/api/lead-magnet/comment', {
-        method: 'POST', body: { id: magnet.id, revision: magnet.revision.n, target, text: text.value.trim() },
+        method: 'POST', body: { id: magnet.id, revision: magnet.revision.n, target, text: sent.trim() },
       });
+      // Правка записана – черновик больше не нужен; то, что изменили за время запроса, остаётся.
+      // Текст и место сбрасываем раздельно: новый выбор места не оставляет отправленный текст.
+      if (draft.text === sent) draft.text = '';
+      if (draft.target === sentTarget) draft.target = null;
+      draft.submitting = false;
       notify('Правка сохранена. Когда закончите, скопируйте фразу для агента.');
       await refresh();
     } catch (error) {
       notify(error.message, 'error');
     } finally {
-      submitting = false;
+      draft.submitting = false;
       canSave();
     }
   });
@@ -885,11 +978,19 @@ function lmCommentsPanel(magnet) {
     list.append(item);
   });
   box.append(form, list);
+  canSave();
   return {
     box,
+    setMode(next) {
+      mode = next;
+      canSave();
+    },
     setTarget(next) {
       target = next;
-      where.textContent = lmTargetTo(next);
+      mode = draft.reviewing ? 'on' : 'off';
+      draft.outdated = false;
+      draft.target = next;
+      draft.revision = revisionNow;
       canSave();
       text.focus();
     },
@@ -906,6 +1007,13 @@ function lmHandleMessage(event) {
     notify(`Ссылка на странице: ${data.href.slice(0, 300)} – зритель откроет её после публикации.`);
     return;
   }
+  if (data.type === 'lm-hello') { lmActive.onHello(); return; }
+  if (data.type === 'lm-ready') {
+    lmActive.onReady(data.on === true, Number.isSafeInteger(data.blocks) && data.blocks > 0);
+    return;
+  }
+  if (data.type === 'lm-miss') { lmActive.onMiss(); return; }
+  if (data.type === 'lm-idle') { lmActive.onIdle(); return; }
   const { rect } = data;
   const rectOk = rect && typeof rect === 'object' && ['x', 'y', 'w', 'h'].every((key) => Number.isFinite(rect[key]) && rect[key] >= 0);
   if (data.type !== 'lm-block' || typeof data.blockId !== 'string' || !LM_BLOCK_ID.test(data.blockId) || !rectOk) return;
