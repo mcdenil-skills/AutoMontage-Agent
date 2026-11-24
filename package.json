@@ -37,7 +37,7 @@
     "@react-three/fiber": "9.8.2",
     "@remotion/bundler": "4.0.536",
     "@remotion/cli": "4.0.536",
-    "@remotion/fonts": "4.0.536",
+    "@remotion/fonts": "4.0.545",
     "@remotion/layout-utils": "4.0.536",
     "@remotion/paths": "4.0.536",
     "@remotion/renderer": "4.0.536",
